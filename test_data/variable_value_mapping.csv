@@ -1,0 +1,8 @@
+variable_source_code,value_source_code,target_concept_id,target_concept_name,valid_start_date,valid_end_date,invalid_reason
+diag6m,1.0,435783,Schizophrenia,1970-01-01,2099-12-31,
+diag6m,2.0,4182683,Brief reactive psychosis,1970-01-01,2099-12-31,
+diag6m,3.0,444434,Schizophreniform disorder,1970-01-01,2099-12-31,
+diag6m,4.0,4219134,Schizoaffective disorder,1970-01-01,2099-12-31,
+diag6m,5.0,436073,Delusional disorder,1970-01-01,2099-12-31,
+hospita,1.0,8715,Inpatient hospitalization,1970-01-01,2099-12-31,
+hospita,2.0,9202,Outpatient visit,1970-01-01,2099-12-31,

@@ -1,0 +1,13 @@
+The observation_period table defines the time span during which a patient was observed.
+
+Key rules:
+1. observation_period_id: sequential integer
+2. person_id: looked up from person DataFrame
+3. observation_period_start_date: from start_date_col, parsed with project date format
+4. observation_period_end_date: from end_date_col if non-empty, else fall back to start_date (end_date_fallback = "start_date")
+5. period_type_concept_id: from config (e.g. 32879 = Registry)
+6. FILTER: skip rows where start_date_col is missing
+
+Output columns (in this order):
+observation_period_id, person_id, observation_period_start_date, observation_period_end_date,
+period_type_concept_id

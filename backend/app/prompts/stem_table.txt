@@ -1,0 +1,44 @@
+The stem_table is a central staging table. It accumulates ALL clinical observations before domain routing.
+
+Architecture:
+- Iterate over each source row (patient)
+- For each variable column in the row, determine which variable_group it belongs to (e.g. "onset" or "followup_10y")
+- Skip variables not in any group
+- Use VariableConceptMapper to resolve concept_id and value fields
+- Create one stem_table row per (patient, variable)
+
+VariableConceptMapper logic (implement inline):
+```python
+def lookup_concept(variable, value, var_map, val_map, var_val_map):
+    key_vv = (variable.lower(), str(value))
+    if key_vv in var_val_map:
+        return {"concept_id": var_val_map[key_vv], "value_as_concept_id": None, "value_as_number": None, "unit_concept_id": None}
+    concept_id = var_map.get(variable.lower(), 0)
+    value_as_concept_id = val_map.get(key_vv)
+    if value_as_concept_id is not None:
+        return {"concept_id": concept_id, "value_as_concept_id": int(value_as_concept_id), "value_as_number": None, "unit_concept_id": None}
+    try:
+        return {"concept_id": concept_id, "value_as_concept_id": None, "value_as_number": float(value), "unit_concept_id": None}
+    except (ValueError, TypeError):
+        return {"concept_id": concept_id, "value_as_concept_id": None, "value_as_number": None, "unit_concept_id": None}
+```
+
+Apply special_overrides AFTER the base lookup:
+- If override has field="unit_concept_id", set that field to override value
+- If override has value_map, lookup the source value in the map and apply the returned dict (e.g. operator_concept_id, value_as_number)
+- String overrides: if override has "value_as_string", set that string unconditionally
+
+Visit assignment:
+- Use the variable_groups to determine which visit_type the variable belongs to
+- Build record_source_value as "{person_id}-basedata-{visit_group_label}" and look up visit_occurrence_id from the visits lookup dict
+
+Date assignment:
+- Each variable_group has an associated date column (from visit_definitions): use that date as start_date
+
+stem_table columns (output order):
+id (sequential), domain_id (leave blank, filled during routing), person_id, visit_occurrence_id,
+visit_detail_id, concept_id, start_date, start_datetime, end_date, end_datetime,
+type_concept_id (=32879), operator_concept_id, value_as_number, value_as_string,
+value_as_concept_id, unit_concept_id, range_low, range_high, provider_id,
+modifier_concept_id, quantity, value_source_value, source_value, source_concept_id,
+record_source_value

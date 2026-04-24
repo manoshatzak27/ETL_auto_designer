@@ -1,0 +1,10 @@
+variable_source_code,value_source_code,source_code_description,target_concept_id,target_concept_name,valid_start_date,valid_end_date,invalid_reason
+Contact10y,1.0,,44811375,Concept 44811375,1970-01-01,2099-12-31,
+Contact10y,2.0,,44810920,Concept 44810920,1970-01-01,2099-12-31,
+UNEMPL,1.0,,4251171,Unemployed,1970-01-01,2099-12-31,
+UNEMPL,2.0,,4076340,Concept 4076340,1970-01-01,2099-12-31,
+diag6m,1.0,,435783,Concept 435783,1970-01-01,2099-12-31,
+diag6m,2.0,,4182683,Concept 4182683,1970-01-01,2099-12-31,
+diag6m,4.0,,444434,Concept 444434,1970-01-01,2099-12-31,
+hospita,1.0,,8715,Concept 8715,1970-01-01,2099-12-31,
+hospita,2.0,,44792129,Concept 44792129,1970-01-01,2099-12-31,

@@ -1,0 +1,21 @@
+The visit_occurrence table creates one or more visits per patient based on the configured visit_definitions.
+
+Key rules:
+1. For each visit_definition in the config, create one row per patient IF the date column is not empty
+2. visit_occurrence_id: generate sequential integers (use enumerate or a counter)
+3. person_id: looked up from the already-built person DataFrame (match on source ID column)
+4. visit_concept_id: from the visit_definition config (e.g. 9202 = Outpatient Visit)
+5. visit_start_date and visit_end_date: same date from the configured date_col, parsed with the project date format
+6. visit_type_concept_id: from config (e.g. 32879 = Registry)
+7. visit_source_value: the label string from config (e.g. "ONSET Visit")
+8. record_source_value (custom extension): "{person_id}-basedata-{visit_label_normalized}" — used as a join key for stem_table
+9. For optional visits (optional: true): only create the row if the date column is non-empty
+
+Build and keep an in-memory lookup dict: record_source_value → visit_occurrence_id
+This dict is used by the stem_table step to assign visit_occurrence_id to each stem record.
+
+Output columns (in this order):
+visit_occurrence_id, person_id, visit_concept_id, visit_start_date, visit_start_datetime,
+visit_end_date, visit_end_datetime, visit_type_concept_id, provider_id, care_site_id,
+visit_source_value, visit_source_concept_id, admitted_from_concept_id, admitted_from_source_value,
+discharged_to_concept_id, discharged_to_source_value, preceding_visit_occurrence_id

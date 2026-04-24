@@ -1,0 +1,15 @@
+The death table records patient death events.
+
+Key rules:
+1. Filter: only create a death record when filter_col == filter_value (e.g. contact10y == "5.0")
+2. person_id: looked up from person DataFrame
+3. death_date and death_datetime:
+   - If date_method == "onset_plus_years": parse the onset_col date and add years_offset * 365.25 days
+   - If date_method == "direct_col": use the value in the configured date_col directly
+4. death_type_concept_id: from config (e.g. 32879 = Registry)
+5. cause_concept_id: 0 (not captured unless configured)
+6. cause_source_concept_id: 0
+
+Output columns (in this order):
+person_id, death_date, death_datetime, death_type_concept_id, cause_concept_id,
+cause_source_value, cause_source_concept_id

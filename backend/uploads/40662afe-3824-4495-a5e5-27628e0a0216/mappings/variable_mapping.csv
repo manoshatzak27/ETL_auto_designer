@@ -1,0 +1,7 @@
+variable_source_code,source_code_description,target_concept_id,target_concept_name,valid_start_date,valid_end_date,invalid_reason
+BPRS0,,4155657,Brief psychiatric rating scale - 1962,1970-01-01,2099-12-31,
+BPRS10y,,4155657,Concept 4155657,1970-01-01,2099-12-31,
+EDUCLVL,,42528763,Concept 42528763,1970-01-01,2099-12-31,
+SANS0,,40219484,Concept 40219484,1970-01-01,2099-12-31,
+SAPS0,,40219529,Concept 40219529,1970-01-01,2099-12-31,
+SINGLE,,3046344,Concept 3046344,1970-01-01,2099-12-31,

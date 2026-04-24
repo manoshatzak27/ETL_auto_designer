@@ -1,0 +1,17 @@
+The person table maps one row per patient. Key transformation rules:
+
+1. person_id: cast the source ID column via int(float(value)) — source IDs may be stored as floats like "1.0"
+2. person_source_value: same as the raw source ID value (string)
+3. gender_concept_id: use the value_map from config (e.g. {"1.0": 8507, "2.0": 8532} where 8507=Male, 8532=Female)
+4. gender_source_value: raw source gender value
+5. year_of_birth, month_of_birth, day_of_birth: parsed from date_of_birth column using the configured date_format (typically "%Y-%m-%d")
+6. race_concept_id: 0 unless mapped
+7. ethnicity_concept_id: 0 unless mapped
+8. All *_source_concept_id fields: 0
+9. FILTER: skip rows where required_source_cols are missing or empty
+
+Output columns (in this order):
+person_id, gender_concept_id, year_of_birth, month_of_birth, day_of_birth, birth_datetime,
+race_concept_id, ethnicity_concept_id, location_id, provider_id, care_site_id,
+person_source_value, gender_source_value, race_source_value, race_source_concept_id,
+ethnicity_source_value, ethnicity_source_concept_id
