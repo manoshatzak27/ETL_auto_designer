@@ -1,7 +1,9 @@
 The person table maps one row per patient. Key transformation rules:
 
-1. person_id: cast the source ID column via int(float(value)) — source IDs may be stored as floats like "1.0"
-2. person_source_value: same as the raw source ID value (string)
+1. person_id: two modes depending on the config:
+   a) Normal mode (auto_increment == false or absent): cast the source ID column via int(float(value)) — source IDs may be stored as floats like "1.0". person_source_value = raw source ID value (string).
+   b) Auto-increment mode (auto_increment == true): assign sequential integers starting from 1 for each output row (do NOT read any source column). person_source_value = string of that sequential integer.
+2. person_source_value: see rule 1 above — depends on the chosen mode
 3. gender_concept_id: use the value_map from config (e.g. {"1.0": 8507, "2.0": 8532} where 8507=Male, 8532=Female)
 4. gender_source_value: raw source gender value
 5. year_of_birth, month_of_birth, day_of_birth: parsed from date_of_birth column using the configured date_format (typically "%Y-%m-%d")

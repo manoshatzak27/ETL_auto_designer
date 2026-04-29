@@ -137,6 +137,19 @@ def _build_table_prompt(project, table: str) -> str:
         "",
     ]
 
+    # ── Person ID auto-increment note ────────────────────────────────────
+    if table == "person":
+        person_id_cfg = config.get("mappings", {}).get("person_id", {})
+        if person_id_cfg.get("auto_increment"):
+            lines += [
+                "## PERSON ID — AUTO-INCREMENT MODE",
+                "The user has enabled auto-increment for person_id.",
+                "IMPORTANT: Do NOT read person_id from any source column.",
+                "Assign sequential integers starting from 1 for each output row (e.g. use enumerate).",
+                "Set person_source_value to the string representation of that sequential integer.",
+                "",
+            ]
+
     # ── Concept decisions summary (relevant to this table) ───────────────
     if concept_decisions:
         lines += [
