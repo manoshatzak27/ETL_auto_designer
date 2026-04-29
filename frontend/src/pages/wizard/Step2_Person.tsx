@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig } from '../../api/client'
+import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../api/client'
 import type { Project, PersonConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+
+interface ConceptRef { concept_id: number; concept_name: string }
+interface VariableDecision { value_concepts: Record<string, ConceptRef> }
 
 interface Props {
   project: Project
@@ -34,9 +37,14 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [genderValues, setGenderValues] = useState<string[]>([])
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [conceptDecisions, setConceptDecisions] = useState<Record<string, VariableDecision>>({})
 
   useEffect(() => {
-    getTableConfig(project.id, 'person').then((existing: PersonConfig & { extra_instructions?: string }) => {
+    Promise.all([
+      getTableConfig(project.id, 'person'),
+      getConceptDecisions(project.id),
+    ]).then(([existing, decisions]: [PersonConfig & { extra_instructions?: string }, Record<string, VariableDecision>]) => {
+      setConceptDecisions(decisions || {})
       if (existing && Object.keys(existing).length > 0) {
         setExtraInstructions(existing.extra_instructions || '')
         setCfg(existing)
@@ -54,6 +62,18 @@ export default function Step2Person({ project, onUpdate }: Props) {
       cur[path[path.length - 1]] = value
       return next
     })
+  }
+
+  const handleGenderColChange = (col: string) => {
+    setField(['mappings', 'gender_concept_id', 'source_col'], col)
+    const decision = conceptDecisions[col]
+    const valueConcepts = decision?.value_concepts ?? {}
+    const entries = Object.entries(valueConcepts)
+    if (entries.length > 0) {
+      const valueMap = Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id]))
+      setField(['mappings', 'gender_concept_id', 'value_map'], valueMap)
+      setGenderValues(entries.map(([k]) => k))
+    }
   }
 
   const addGenderValue = () => {
@@ -146,7 +166,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
             label="Gender column"
             sourceColumns={cols}
             value={cfg.mappings.gender_concept_id.source_col}
-            onChange={v => setField(['mappings', 'gender_concept_id', 'source_col'], v)}
+            onChange={handleGenderColChange}
             required
             hint="The source column that indicates biological sex."
           />
@@ -157,11 +177,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
               <button onClick={addGenderValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
             </div>
             <p className="text-xs text-gray-500">Common: 8507 = Male, 8532 = Female</p>
-            {genderValues.length === 0 && Object.keys(cfg.mappings.gender_concept_id.value_map).length === 0 ? (
+            {genderValues.length === 0 && Object.keys(cfg.mappings.gender_concept_id.value_map).length === 0 && (
               <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-700">
                 Default mapping loaded: 1.0 → 8507 (Male), 2.0 → 8532 (Female). Click "+ Add value" to add source values.
               </div>
-            ) : null}
+            )}
             <ValueConceptMapper
               label=""
               sourceValues={genderValues.length > 0 ? genderValues : Object.keys(cfg.mappings.gender_concept_id.value_map)}
