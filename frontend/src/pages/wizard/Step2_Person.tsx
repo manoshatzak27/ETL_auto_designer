@@ -154,7 +154,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Core Identifiers</h3>
+          <h3 className="font-medium text-gray-800">Person id</h3>
 
           <label className="flex items-center gap-3 cursor-pointer select-none">
             <input
@@ -196,7 +196,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Demographics</h3>
+          <h3 className="font-medium text-gray-800">Gender</h3>
 
           <FieldMapper
             label="Gender column"
@@ -225,6 +225,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
               onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
             />
           </div>
+
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <h3 className="font-medium text-gray-800">Date of Birth</h3>
 
           <FieldMapper
             label="Date of birth column"
@@ -257,82 +262,74 @@ export default function Step2Person({ project, onUpdate }: Props) {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
-          <h3 className="font-medium text-gray-800">Race & Ethnicity</h3>
+          <h3 className="font-medium text-gray-800">Race</h3>
 
-          {/* Race */}
-          <div className="flex flex-col gap-3">
-            <h4 className="text-sm font-semibold text-gray-700">Race</h4>
+          <FieldMapper
+            label="Race column"
+            sourceColumns={cols}
+            value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
+            onChange={handleRaceColChange}
+            hint="Source column for race. Leave empty to use the default concept ID for all rows."
+          />
 
-            <FieldMapper
-              label="Race column"
-              sourceColumns={cols}
-              value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
-              onChange={handleRaceColChange}
-              hint="Source column for race. Leave empty to use the default concept ID for all rows."
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Race value → OMOP concept mapping</label>
+              <button onClick={addRaceValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+            </div>
+            <ValueConceptMapper
+              label=""
+              sourceValues={raceValues.length > 0 ? raceValues : Object.keys((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
+              mapping={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
+              onChange={m => setField(['mappings', 'race_concept_id', 'value_map'], m)}
             />
-
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700">Race value → OMOP concept mapping</label>
-                <button onClick={addRaceValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
-              </div>
-              <ValueConceptMapper
-                label=""
-                sourceValues={raceValues.length > 0 ? raceValues : Object.keys((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
-                mapping={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
-                onChange={m => setField(['mappings', 'race_concept_id', 'value_map'], m)}
-              />
-            </div>
-
-            <div>
-              <label className="text-sm font-medium text-gray-700">Default race_concept_id</label>
-              <input
-                type="number"
-                value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
-                onChange={e => setField(['mappings', 'race_concept_id', 'default'], parseInt(e.target.value))}
-                className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
-            </div>
           </div>
 
-          <div className="border-t border-gray-100" />
-
-          {/* Ethnicity */}
-          <div className="flex flex-col gap-3">
-            <h4 className="text-sm font-semibold text-gray-700">Ethnicity</h4>
-
-            <FieldMapper
-              label="Ethnicity column"
-              sourceColumns={cols}
-              value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
-              onChange={handleEthnicityColChange}
-              hint="Source column for ethnicity. Leave empty to use the default concept ID for all rows."
+          <div>
+            <label className="text-sm font-medium text-gray-700">Default race_concept_id</label>
+            <input
+              type="number"
+              value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
+              onChange={e => setField(['mappings', 'race_concept_id', 'default'], parseInt(e.target.value))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+          </div>
+        </div>
 
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700">Ethnicity value → OMOP concept mapping</label>
-                <button onClick={addEthnicityValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
-              </div>
-              <ValueConceptMapper
-                label=""
-                sourceValues={ethnicityValues.length > 0 ? ethnicityValues : Object.keys((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
-                mapping={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
-                onChange={m => setField(['mappings', 'ethnicity_concept_id', 'value_map'], m)}
-              />
-            </div>
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
+          <h3 className="font-medium text-gray-800">Ethnicity</h3>
 
-            <div>
-              <label className="text-sm font-medium text-gray-700">Default ethnicity_concept_id</label>
-              <input
-                type="number"
-                value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
-                onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
-                className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+          <FieldMapper
+            label="Ethnicity column"
+            sourceColumns={cols}
+            value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
+            onChange={handleEthnicityColChange}
+            hint="Source column for ethnicity. Leave empty to use the default concept ID for all rows."
+          />
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Ethnicity value → OMOP concept mapping</label>
+              <button onClick={addEthnicityValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
             </div>
+            <ValueConceptMapper
+              label=""
+              sourceValues={ethnicityValues.length > 0 ? ethnicityValues : Object.keys((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
+              mapping={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
+              onChange={m => setField(['mappings', 'ethnicity_concept_id', 'value_map'], m)}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Default ethnicity_concept_id</label>
+            <input
+              type="number"
+              value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
+              onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
         </div>
 
