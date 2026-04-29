@@ -37,8 +37,8 @@ export interface PersonConfig {
     year_of_birth: DateFieldMapping
     month_of_birth?: DateFieldMapping
     day_of_birth?: DateFieldMapping
-    race_concept_id?: ConstantMapping
-    ethnicity_concept_id?: ConstantMapping
+    race_concept_id?: RaceEthnicityMapping | ConstantMapping
+    ethnicity_concept_id?: RaceEthnicityMapping | ConstantMapping
   }
   required_source_cols: string[]
 }
@@ -61,6 +61,12 @@ export interface DateFieldMapping extends FieldMapping {
 
 export interface ConstantMapping {
   constant: number
+}
+
+export interface RaceEthnicityMapping {
+  source_col: string
+  value_map: Record<string, number>
+  default: number
 }
 
 export interface VisitDefinition {
