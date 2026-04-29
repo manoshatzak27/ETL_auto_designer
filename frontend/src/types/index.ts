@@ -46,6 +46,7 @@ export interface PersonConfig {
 export interface FieldMapping {
   source_col: string
   transform?: string
+  auto_increment?: boolean
 }
 
 export interface FieldMappingWithValueMap extends FieldMapping {

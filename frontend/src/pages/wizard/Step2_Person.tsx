@@ -16,7 +16,7 @@ interface Props {
 const DEFAULTS: PersonConfig = {
   enabled: true,
   mappings: {
-    person_id: { source_col: '', transform: 'int_float' },
+    person_id: { source_col: '', transform: 'int_float', auto_increment: false },
     gender_concept_id: { source_col: '', value_map: { '1.0': 8507, '2.0': 8532 }, default: 0 },
     year_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_year' },
     month_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_month' },
@@ -62,7 +62,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
   }
 
   const saveConfig = async () => {
-    const required = [cfg.mappings.person_id.source_col, cfg.mappings.gender_concept_id.source_col, cfg.mappings.year_of_birth.source_col].filter(Boolean)
+    const required = [
+      !cfg.mappings.person_id.auto_increment ? cfg.mappings.person_id.source_col : null,
+      cfg.mappings.gender_concept_id.source_col,
+      cfg.mappings.year_of_birth.source_col,
+    ].filter(Boolean)
     const updated = { ...cfg, required_source_cols: required as string[], extra_instructions: extraInstructions }
     const p = await updateTableConfig(project.id, 'person', updated)
     onUpdate(p)
@@ -96,27 +100,43 @@ export default function Step2Person({ project, onUpdate }: Props) {
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
           <h3 className="font-medium text-gray-800">Core Identifiers</h3>
 
-          <FieldMapper
-            label="Patient ID column"
-            sourceColumns={cols}
-            value={cfg.mappings.person_id.source_col}
-            onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
-            required
-            hint="Will be cast to int(float(value)). Used as person_id."
-          />
+          <label className="flex items-center gap-3 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={cfg.mappings.person_id.auto_increment ?? false}
+              onChange={e => setField(['mappings', 'person_id', 'auto_increment'], e.target.checked)}
+              className="w-4 h-4 accent-blue-600 rounded"
+            />
+            <span className="text-sm text-gray-700">
+              Auto-increment Patient ID — assign sequential IDs (1, 2, 3…) without mapping to a source column
+            </span>
+          </label>
 
-          <div>
-            <label className="text-sm font-medium text-gray-700">patient ID transform</label>
-            <select
-              value={cfg.mappings.person_id.transform}
-              onChange={e => setField(['mappings', 'person_id', 'transform'], e.target.value)}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
-              <option value="int">int(x) — for "1", "2" style IDs</option>
-              <option value="str">str(x) — keep as string</option>
-            </select>
-          </div>
+          {!cfg.mappings.person_id.auto_increment && (
+            <>
+              <FieldMapper
+                label="Patient ID column"
+                sourceColumns={cols}
+                value={cfg.mappings.person_id.source_col}
+                onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
+                required
+                hint="Will be cast to int(float(value)). Used as person_id."
+              />
+
+              <div>
+                <label className="text-sm font-medium text-gray-700">Patient ID transform</label>
+                <select
+                  value={cfg.mappings.person_id.transform}
+                  onChange={e => setField(['mappings', 'person_id', 'transform'], e.target.value)}
+                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
+                  <option value="int">int(x) — for "1", "2" style IDs</option>
+                  <option value="str">str(x) — keep as string</option>
+                </select>
+              </div>
+            </>
+          )}
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
