@@ -26,6 +26,9 @@ const DEFAULTS: PersonConfig = {
     day_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_day' },
     race_concept_id: { source_col: '', value_map: {}, default: 0 },
     ethnicity_concept_id: { source_col: '', value_map: {}, default: 0 },
+    location_id: { source_col: '', value_map: {}, default: 0 },
+    provider_id: { source_col: '', value_map: {}, default: 0 },
+    care_site_id: { source_col: '', value_map: {}, default: 0 },
   },
   required_source_cols: [],
 }
@@ -38,6 +41,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [genderValues, setGenderValues] = useState<string[]>([])
   const [raceValues, setRaceValues] = useState<string[]>([])
   const [ethnicityValues, setEthnicityValues] = useState<string[]>([])
+  const [locationValues, setLocationValues] = useState<string[]>([])
+  const [providerValues, setProviderValues] = useState<string[]>([])
+  const [careSiteValues, setCareSiteValues] = useState<string[]>([])
   const [extraInstructions, setExtraInstructions] = useState('')
   const [conceptDecisions, setConceptDecisions] = useState<Record<string, VariableDecision>>({})
 
@@ -49,19 +55,20 @@ export default function Step2Person({ project, onUpdate }: Props) {
       setConceptDecisions(decisions || {})
       if (existing && Object.keys(existing).length > 0) {
         setExtraInstructions(existing.extra_instructions || '')
-        // normalise old { constant: N } format to the new shape
         const m = existing.mappings
         if (m.race_concept_id && 'constant' in m.race_concept_id)
           (m as unknown as Record<string, unknown>).race_concept_id = { source_col: '', value_map: {}, default: (m.race_concept_id as { constant: number }).constant }
         if (m.ethnicity_concept_id && 'constant' in m.ethnicity_concept_id)
           (m as unknown as Record<string, unknown>).ethnicity_concept_id = { source_col: '', value_map: {}, default: (m.ethnicity_concept_id as { constant: number }).constant }
-        setCfg(existing)
+        setCfg({
+          ...DEFAULTS,
+          ...existing,
+          mappings: { ...DEFAULTS.mappings, ...existing.mappings },
+        })
       }
     })
   }, [project.id])
 
-  // derive unique gender values from source columns hint
-  // user can add them manually
   const setField = (path: string[], value: unknown) => {
     setCfg(prev => {
       const next = JSON.parse(JSON.stringify(prev))
@@ -74,12 +81,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleGenderColChange = (col: string) => {
     setField(['mappings', 'gender_concept_id', 'source_col'], col)
-    const decision = conceptDecisions[col]
-    const valueConcepts = decision?.value_concepts ?? {}
-    const entries = Object.entries(valueConcepts)
+    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
-      const valueMap = Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id]))
-      setField(['mappings', 'gender_concept_id', 'value_map'], valueMap)
+      setField(['mappings', 'gender_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
       setGenderValues(entries.map(([k]) => k))
     }
   }
@@ -115,6 +119,48 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const addEthnicityValue = () => {
     const val = prompt('Enter a source ethnicity value:')
     if (val) setEthnicityValues(prev => [...new Set([...prev, val])])
+  }
+
+  const handleLocationColChange = (col: string) => {
+    setField(['mappings', 'location_id', 'source_col'], col)
+    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
+    if (entries.length > 0) {
+      setField(['mappings', 'location_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
+      setLocationValues(entries.map(([k]) => k))
+    }
+  }
+
+  const addLocationValue = () => {
+    const val = prompt('Enter a source location value:')
+    if (val) setLocationValues(prev => [...new Set([...prev, val])])
+  }
+
+  const handleProviderColChange = (col: string) => {
+    setField(['mappings', 'provider_id', 'source_col'], col)
+    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
+    if (entries.length > 0) {
+      setField(['mappings', 'provider_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
+      setProviderValues(entries.map(([k]) => k))
+    }
+  }
+
+  const addProviderValue = () => {
+    const val = prompt('Enter a source provider value:')
+    if (val) setProviderValues(prev => [...new Set([...prev, val])])
+  }
+
+  const handleCareSiteColChange = (col: string) => {
+    setField(['mappings', 'care_site_id', 'source_col'], col)
+    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
+    if (entries.length > 0) {
+      setField(['mappings', 'care_site_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
+      setCareSiteValues(entries.map(([k]) => k))
+    }
+  }
+
+  const addCareSiteValue = () => {
+    const val = prompt('Enter a source care site value:')
+    if (val) setCareSiteValues(prev => [...new Set([...prev, val])])
   }
 
   const saveConfig = async () => {
@@ -153,6 +199,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           </p>
         </div>
 
+        {/* Person ID */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
           <h3 className="font-medium text-gray-800">Person id</h3>
 
@@ -195,6 +242,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           )}
         </div>
 
+        {/* Gender */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
           <h3 className="font-medium text-gray-800">Gender</h3>
 
@@ -225,9 +273,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
               onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
             />
           </div>
-
         </div>
 
+        {/* Date of Birth */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
           <h3 className="font-medium text-gray-800">Date of Birth</h3>
 
@@ -261,6 +309,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           </div>
         </div>
 
+        {/* Race */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
           <h3 className="font-medium text-gray-800">Race</h3>
 
@@ -297,6 +346,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           </div>
         </div>
 
+        {/* Ethnicity */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
           <h3 className="font-medium text-gray-800">Ethnicity</h3>
 
@@ -327,6 +377,117 @@ export default function Step2Person({ project, onUpdate }: Props) {
               type="number"
               value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
               onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+          </div>
+        </div>
+
+        {/* Location ID */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
+          <h3 className="font-medium text-gray-800">Location ID</h3>
+
+          <FieldMapper
+            label="Location ID column"
+            sourceColumns={cols}
+            value={(cfg.mappings.location_id as RaceEthnicityMapping)?.source_col ?? ''}
+            onChange={handleLocationColChange}
+            hint="Source column for location_id. Leave empty to skip."
+          />
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Location value → ID mapping</label>
+              <button onClick={addLocationValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+            </div>
+            <ValueConceptMapper
+              label=""
+              sourceValues={locationValues.length > 0 ? locationValues : Object.keys((cfg.mappings.location_id as RaceEthnicityMapping)?.value_map ?? {})}
+              mapping={(cfg.mappings.location_id as RaceEthnicityMapping)?.value_map ?? {}}
+              onChange={m => setField(['mappings', 'location_id', 'value_map'], m)}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Default location_id</label>
+            <input
+              type="number"
+              value={(cfg.mappings.location_id as RaceEthnicityMapping)?.default ?? 0}
+              onChange={e => setField(['mappings', 'location_id', 'default'], parseInt(e.target.value))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+          </div>
+        </div>
+
+        {/* Provider ID */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
+          <h3 className="font-medium text-gray-800">Provider ID</h3>
+
+          <FieldMapper
+            label="Provider ID column"
+            sourceColumns={cols}
+            value={(cfg.mappings.provider_id as RaceEthnicityMapping)?.source_col ?? ''}
+            onChange={handleProviderColChange}
+            hint="Source column for provider_id. Leave empty to skip."
+          />
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Provider value → ID mapping</label>
+              <button onClick={addProviderValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+            </div>
+            <ValueConceptMapper
+              label=""
+              sourceValues={providerValues.length > 0 ? providerValues : Object.keys((cfg.mappings.provider_id as RaceEthnicityMapping)?.value_map ?? {})}
+              mapping={(cfg.mappings.provider_id as RaceEthnicityMapping)?.value_map ?? {}}
+              onChange={m => setField(['mappings', 'provider_id', 'value_map'], m)}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Default provider_id</label>
+            <input
+              type="number"
+              value={(cfg.mappings.provider_id as RaceEthnicityMapping)?.default ?? 0}
+              onChange={e => setField(['mappings', 'provider_id', 'default'], parseInt(e.target.value))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+          </div>
+        </div>
+
+        {/* Care Site ID */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
+          <h3 className="font-medium text-gray-800">Care Site ID</h3>
+
+          <FieldMapper
+            label="Care Site ID column"
+            sourceColumns={cols}
+            value={(cfg.mappings.care_site_id as RaceEthnicityMapping)?.source_col ?? ''}
+            onChange={handleCareSiteColChange}
+            hint="Source column for care_site_id. Leave empty to skip."
+          />
+
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <label className="text-sm font-medium text-gray-700">Care site value → ID mapping</label>
+              <button onClick={addCareSiteValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+            </div>
+            <ValueConceptMapper
+              label=""
+              sourceValues={careSiteValues.length > 0 ? careSiteValues : Object.keys((cfg.mappings.care_site_id as RaceEthnicityMapping)?.value_map ?? {})}
+              mapping={(cfg.mappings.care_site_id as RaceEthnicityMapping)?.value_map ?? {}}
+              onChange={m => setField(['mappings', 'care_site_id', 'value_map'], m)}
+            />
+          </div>
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Default care_site_id</label>
+            <input
+              type="number"
+              value={(cfg.mappings.care_site_id as RaceEthnicityMapping)?.default ?? 0}
+              onChange={e => setField(['mappings', 'care_site_id', 'default'], parseInt(e.target.value))}
               className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
             <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>

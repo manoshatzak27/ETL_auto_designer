@@ -39,6 +39,9 @@ export interface PersonConfig {
     day_of_birth?: DateFieldMapping
     race_concept_id?: RaceEthnicityMapping | ConstantMapping
     ethnicity_concept_id?: RaceEthnicityMapping | ConstantMapping
+    location_id?: RaceEthnicityMapping
+    provider_id?: RaceEthnicityMapping
+    care_site_id?: RaceEthnicityMapping
   }
   required_source_cols: string[]
 }
