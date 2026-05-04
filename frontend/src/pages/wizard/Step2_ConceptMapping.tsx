@@ -55,7 +55,6 @@ const STRATEGY_META: Record<Strategy, { label: string; icon: React.ReactNode; co
   skip:         { label: 'Skip',         icon: <SkipForward className="w-3.5 h-3.5" />, color: 'bg-gray-100 text-gray-400' },
 }
 
-const SKIP_HINTS = ['code', 'id', 'fecha', 'date', 'contact']
 
 // ── Mini concept search hook ───────────────────────────────────────────────
 
@@ -636,8 +635,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
         if (saved[col]) {
           init[col] = saved[col]
         } else {
-          const isSkip = SKIP_HINTS.some(h => col.toLowerCase().includes(h))
-          init[col] = { strategy: isSkip ? 'skip' : 'map_variable', variable_concept: null, value_concepts: {} }
+            init[col] = { strategy: 'skip', variable_concept: null, value_concepts: {} }
         }
       }
       setDecisions(init)
