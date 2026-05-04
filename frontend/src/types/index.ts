@@ -133,3 +133,10 @@ export interface ConceptLink {
   score: number
   justification?: string
 }
+
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  table?: string
+  code_updated?: boolean
+}

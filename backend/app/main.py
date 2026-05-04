@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.database import create_tables
-from app.api import projects, sources, mappings, codegen, execution, concept_mapping
+from app.api import projects, sources, mappings, codegen, execution, concept_mapping, chat
 
 app = FastAPI(
     title="OMOP ETL Auto-Designer API",
@@ -23,6 +23,7 @@ app.include_router(mappings.router, prefix="/api")
 app.include_router(concept_mapping.router, prefix="/api")
 app.include_router(codegen.router, prefix="/api")
 app.include_router(execution.router, prefix="/api")
+app.include_router(chat.router, prefix="/api")
 
 
 @app.on_event("startup")

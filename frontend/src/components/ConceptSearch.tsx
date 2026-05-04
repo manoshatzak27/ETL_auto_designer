@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { conceptSearch } from '../api/client'
 import type { ConceptLink } from '../types'
-import { Search, Loader2, AlertTriangle, ExternalLink } from 'lucide-react'
+import { Search, Loader2, AlertTriangle } from 'lucide-react'
 
 interface Props {
   projectId: string

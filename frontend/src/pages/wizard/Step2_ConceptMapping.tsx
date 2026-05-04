@@ -94,7 +94,7 @@ function useConceptSearch(projectId: string) {
 
 function ConceptPicker({
   projectId,
-  label,
+  label: _label,
   defaultQuery,
   value,
   onSelect,

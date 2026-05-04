@@ -73,4 +73,14 @@ export const downloadOutput = (projectId: string, filename: string) => {
   window.open(`/api/projects/${projectId}/download/${filename}`, '_blank')
 }
 
+// ---- AI Chat ----
+export const getChatHistory = (projectId: string) =>
+  api.get(`/projects/${projectId}/chat`).then(r => r.data)
+
+export const sendChatMessage = (projectId: string, message: string, table: string) =>
+  api.post(`/projects/${projectId}/chat`, { message, table }).then(r => r.data)
+
+export const clearChatHistory = (projectId: string) =>
+  api.delete(`/projects/${projectId}/chat`).then(r => r.data)
+
 export default api

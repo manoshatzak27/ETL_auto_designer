@@ -9,6 +9,7 @@ import Step5ObsPeriod from './pages/wizard/Step4_ObsPeriod'
 import Step6StemTable from './pages/wizard/Step5_StemTable'
 import Step7Death from './pages/wizard/Step6_Death'
 import Step8Generate from './pages/wizard/Step7_Generate'
+import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
 
@@ -38,17 +39,26 @@ function ProjectWizard() {
 
   const update = (p: Project) => setProject(p)
 
-  switch (step) {
-    case '1': return <Step1Upload project={project} onUpdate={update} />
-    case '2': return <Step2ConceptMapping project={project} onUpdate={update} />
-    case '3': return <Step3Person project={project} onUpdate={update} />
-    case '4': return <Step4Visit project={project} onUpdate={update} />
-    case '5': return <Step5ObsPeriod project={project} onUpdate={update} />
-    case '6': return <Step6StemTable project={project} onUpdate={update} />
-    case '7': return <Step7Death project={project} onUpdate={update} />
-    case '8': return <Step8Generate project={project} onUpdate={update} />
-    default:  return <Navigate to={`/project/${projectId}/step/1`} replace />
-  }
+  const stepEl = (() => {
+    switch (step) {
+      case '1': return <Step1Upload project={project} onUpdate={update} />
+      case '2': return <Step2ConceptMapping project={project} onUpdate={update} />
+      case '3': return <Step3Person project={project} onUpdate={update} />
+      case '4': return <Step4Visit project={project} onUpdate={update} />
+      case '5': return <Step5ObsPeriod project={project} onUpdate={update} />
+      case '6': return <Step6StemTable project={project} onUpdate={update} />
+      case '7': return <Step7Death project={project} onUpdate={update} />
+      case '8': return <Step8Generate project={project} onUpdate={update} />
+      default:  return <Navigate to={`/project/${projectId}/step/1`} replace />
+    }
+  })()
+
+  return (
+    <>
+      {stepEl}
+      <ChatPanel project={project} onUpdate={update} />
+    </>
+  )
 }
 
 export default function App() {
