@@ -47,6 +47,10 @@ async def upload_source(
     project.source_encoding = schema["encoding"]
     project.source_columns = schema["columns"]
     project.source_row_count = schema["row_count"]
+    project.concept_decisions = {}
+    project.etl_config = {}
+    project.generated_scripts = {}
+    project.mapping_files = {}
     db.commit()
     db.refresh(project)
     return project
