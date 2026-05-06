@@ -119,7 +119,7 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
       {!open && (
         <button
           onClick={() => setOpen(true)}
-          className="fixed bottom-6 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all font-medium text-sm"
+          className="fixed bottom-20 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all font-medium text-sm"
         >
           <MessageSquare className="w-4 h-4" />
           Chat with AI
