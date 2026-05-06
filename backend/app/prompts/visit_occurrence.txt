@@ -1,18 +1,58 @@
 The visit_occurrence table creates one or more visits per patient based on the configured visit_definitions.
 
 Key rules:
-1. For each visit_definition in the config, create one row per patient IF the date column is not empty
-2. visit_occurrence_id: generate sequential integers (use enumerate or a counter)
-3. person_id: looked up from the already-built person DataFrame (match on source ID column)
-4. visit_concept_id: from the visit_definition config (e.g. 9202 = Outpatient Visit)
-5. visit_start_date and visit_end_date: same date from the configured date_col, parsed with the project date format
-6. visit_type_concept_id: from config (e.g. 32879 = Registry)
-7. visit_source_value: the label string from config (e.g. "ONSET Visit")
-8. record_source_value (custom extension): "{person_id}-basedata-{visit_label_normalized}" — used as a join key for stem_table
-9. For optional visits (optional: true): only create the row if the date column is non-empty
+1. For each visit_definition in the config, create one row per patient IF the date column is not empty.
+2. visit_occurrence_id: generate sequential integers (use enumerate or a counter).
+3. person_id: looked up from the already-built person DataFrame (match on source ID column).
+4. visit_concept_id: from the visit_definition config (e.g. 9202 = Outpatient Visit).
 
-Build and keep an in-memory lookup dict: record_source_value → visit_occurrence_id
+visit_start_date / visit_start_datetime:
+- Parse visit_start_date from the configured date_col using the project date format.
+- visit_start_datetime: set to midnight (00:00:00) if no time component is present in the source.
+
+visit_end_date / visit_end_datetime:
+- If the visit_definition has an end_date_col, parse visit_end_date from that column.
+- Otherwise apply the following defaults based on visit_concept_id:
+    * Inpatient Visit (9201), Emergency Room + Inpatient (262), Non-hospital institution (42898160):
+      visit_end_date must be derived from a separate column or activity; if unavailable, leave NULL or use date of ETL run.
+    * Emergency Room Visit (9203): visit_end_date = visit_start_date.
+    * All other visit types (Outpatient, Home, Telehealth, Pharmacy, Laboratory, Ambulance, Case Management):
+      visit_end_date = visit_start_date.
+- visit_end_datetime: set to midnight (00:00:00) if no time component is present.
+- For Inpatient Visits still ongoing at ETL run time (no end date in source), set visit_end_date to today's date
+  and visit_type_concept_id to 32220 ("Still patient").
+
+visit_type_concept_id: from config (e.g. 32879 = Registry).
+visit_source_value: the source_value string from config (e.g. "ONSET Visit").
+visit_source_concept_id: leave as 0 (no OMOP-supported source vocabulary).
+
+admitted_from_concept_id / admitted_from_source_value:
+- If the visit_definition config contains admitted_from_concept_id (integer) or admitted_from_source_value (string), use them.
+- Default to 0 / NULL if not provided.
+- Only relevant for multi-day visits (Inpatient, Non-hospital institution).
+
+discharged_to_concept_id / discharged_to_source_value:
+- If the visit_definition config contains discharged_to_concept_id (integer) or discharged_to_source_value (string), use them.
+- Default to 0 / NULL if not provided.
+- Only relevant for multi-day visits.
+
+preceding_visit_occurrence_id:
+- For each person, sort their visits by visit_start_date ascending.
+- For each visit (except the first), set preceding_visit_occurrence_id to the visit_occurrence_id of the immediately preceding visit for that person.
+- Leave NULL (or 0) for the first visit of each person.
+
+provider_id: leave as NULL (not configured in this UI step).
+care_site_id: leave as NULL (not configured in this UI step).
+
+record_source_value (custom extension):
+- Format: "{person_source_value}-basedata-{visit_label_normalized}"
+- visit_label_normalized = visit label lowercased with spaces replaced by underscores.
+- This field is NOT part of the OMOP CDM; it is a lookup key used by stem_table and death scripts.
+
+Build and keep an in-memory lookup dict: record_source_value → visit_occurrence_id.
 This dict is used by the stem_table step to assign visit_occurrence_id to each stem record.
+
+For optional visits (optional: true): only create the row if the date column value is non-empty/non-null.
 
 Output columns (in this order):
 visit_occurrence_id, person_id, visit_concept_id, visit_start_date, visit_start_datetime,
