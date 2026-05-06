@@ -305,6 +305,20 @@ function VariableRow({
   const mappedValueCount = Object.keys(decision.value_concepts).length
   const hasVariableConcept = !!decision.variable_concept
 
+  const mappingCompleteness = (() => {
+    if (decision.strategy === 'skip') return 100
+    if (decision.strategy === 'map_variable') return hasVariableConcept ? 100 : 0
+    if (decision.strategy === 'map_values') {
+      const total = (info?.distinct_count ?? 0) 
+      return Math.round(((mappedValueCount) / total) * 100)
+    }
+    if (decision.strategy === 'map_both') {
+      const total = (info?.distinct_count ?? 0) + 1
+      return Math.round(((mappedValueCount + (hasVariableConcept ? 1 : 0)) / total) * 100)
+    }
+    return 0
+  })()
+
   const isMapped =
     decision.strategy === 'skip' ||
     (decision.strategy === 'map_variable' && hasVariableConcept) ||
@@ -379,7 +393,7 @@ function VariableRow({
                   <p className="text-xs text-gray-500">Null values</p>
                 </div>
                 <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-                  <p className="text-lg font-bold text-gray-800">{info.completion_rate}%</p>
+                  <p className="text-lg font-bold text-gray-800">{mappingCompleteness}%</p>
                   <p className="text-xs text-gray-500">Completeness</p>
                 </div>
               </div>
