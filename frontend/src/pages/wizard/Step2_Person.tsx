@@ -268,7 +268,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
                 value={cfg.mappings.person_id.source_col}
                 onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
                 required
-                hint="Will be cast to int(float(value)). Used as person_id."
+                hint={`Will be cast using the transform selected below. Used as person_id.`}
               />
 
               <div>
