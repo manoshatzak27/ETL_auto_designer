@@ -1,0 +1,11 @@
+person_id,gender,birth_datetime,race,ethnicity,location,provider,care_site
+1,M,1980-05-12,White,Not Hispanic,LocA,ProvA,Site1
+2,F,1975-08-23,Black,Not Hispanic,LocB,ProvB,Site2
+3,M,1990-01-03,Asian,Not Hispanic,LocC,ProvC,Site3
+4,F,1988-11-30,Hispanic,Hispanic,LocD,ProvD,Site1
+5,M,2000-06-15,White,Not Hispanic,LocE,ProvA,Site2
+6,F,1995-03-09 ,Black,Not Hispanic,LocF,ProvB,Site3
+7,M,1982-09-21,Asian,Not Hispanic,LocG,ProvC,Site1
+8,F,1978-12-01,White,Not Hispanic,LocH,ProvD,Site2
+9,M,1992-04-18,Hispanic,Hispanic,LocI,ProvA,Site3
+10,F,1985-07-27,Black,Not Hispanic,LocJ,ProvB,Site1
