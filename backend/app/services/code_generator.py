@@ -165,6 +165,16 @@ def _build_table_prompt(project, table: str) -> str:
                 "",
             ]
 
+        dob_cfg = config.get("mappings", {}).get("year_of_birth", {})
+        date_format = dob_cfg.get("date_format", "%Y-%m-%d")
+        lines += [
+            "## DATE OF BIRTH — FORMAT",
+            f"The user has configured date_format: `{date_format}`",
+            f"Parse the date of birth column using exactly: `datetime.strptime(value, '{date_format}')`",
+            "Do NOT use a different format string — respect the user's choice.",
+            "",
+        ]
+
     # ── Concept decisions summary (relevant to this table) ───────────────
     if concept_decisions:
         lines += [

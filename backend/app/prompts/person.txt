@@ -1,12 +1,17 @@
 The person table maps one row per patient. Key transformation rules:
 
 1. person_id: two modes depending on the config:
-   a) Normal mode (auto_increment == false or absent): cast the source ID column via int(float(value)) — source IDs may be stored as floats like "1.0". person_source_value = raw source ID value (string).
+   a) Normal mode (auto_increment == false or absent): cast the source ID column using the `transform` field in the config:
+      - "int_float" (default): int(float(value)) — for IDs stored as floats like "1.0"
+      - "int": int(value) — for IDs stored as plain integers like "1"
+      - "str": str(value) — keep as string
+      IMPORTANT: always use the transform value from the config JSON, not a hardcoded cast.
+      person_source_value = raw source ID value (string).
    b) Auto-increment mode (auto_increment == true): assign sequential integers starting from 1 for each output row (do NOT read any source column). person_source_value = string of that sequential integer.
 2. person_source_value: see rule 1 above — depends on the chosen mode
 3. gender_concept_id: use the value_map from config (e.g. {"1.0": 8507, "2.0": 8532} where 8507=Male, 8532=Female)
 4. gender_source_value: raw source gender value
-5. year_of_birth, month_of_birth, day_of_birth: parsed from date_of_birth column using the configured date_format (typically "%Y-%m-%d")
+5. year_of_birth, month_of_birth, day_of_birth: parsed from date_of_birth column using the `date_format` value from the config (e.g. year_of_birth.date_format). IMPORTANT: always use the exact format string from the config — do NOT default to "%Y-%m-%d" unless that is what the config actually contains.
 6. race_concept_id: 0 unless mapped
 7. ethnicity_concept_id: 0 unless mapped
 8. All *_source_concept_id fields: 0
