@@ -1,12 +1,29 @@
-The observation_period table defines the time span during which a patient was observed.
+The observation_period table defines spans of time during which a person was actively observed.
+Two conditions must hold within these spans: (i) clinical events that happened are recorded in
+the event tables, and (ii) absence of records means the events did not occur.
 
-Key rules:
-1. observation_period_id: sequential integer
-2. person_id: looked up from person DataFrame
-3. observation_period_start_date: from start_date_col, parsed with project date format
-4. observation_period_end_date: from end_date_col if non-empty, else fall back to start_date (end_date_fallback = "start_date")
-5. period_type_concept_id: from config (e.g. 32879 = Registry)
-6. FILTER: skip rows where start_date_col is missing
+Key OMOP rules:
+- Each person must have at least one OBSERVATION_PERIOD record.
+- No two periods for the same person may overlap or be directly adjacent (back-to-back). Merge any such records.
+- Observation periods can be as short as one day.
+- Incidence/prevalence rates should only be calculated during active observation periods.
+
+Field rules:
+1. observation_period_id: sequential integer, unique across all records.
+2. person_id: looked up from the person.csv output (person_source_value → person_id).
+3. observation_period_start_date: from start_date_col (parsed using project date format).
+   If no explicit enrollment/start concept exists in the source, infer as the earliest available
+   clinical event date for the person.
+4. observation_period_end_date: from end_date_col if non-empty; otherwise fall back per
+   end_date_fallback config:
+     - "start_date" → same as start date (single-day period)
+     - "today"      → today's date at script run time
+   If no explicit end concept exists, infer as the last available clinical event date for the person.
+5. period_type_concept_id: from config. Choose the concept that best represents how the period
+   was determined (e.g. 32879 = Registry, 32817 = EHR, 32880 = Estimated,
+   32813 = Insurance enrollment).
+6. FILTER: skip rows where start_date_col is missing or empty.
+7. After building all records for a person, merge any overlapping or adjacent intervals into one.
 
 Output columns (in this order):
 observation_period_id, person_id, observation_period_start_date, observation_period_end_date,

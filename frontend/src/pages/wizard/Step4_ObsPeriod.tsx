@@ -24,6 +24,8 @@ const TYPE_CONCEPTS = [
   { id: 32879, label: '32879 — Registry' },
   { id: 32817, label: '32817 — EHR' },
   { id: 32880, label: '32880 — Estimated' },
+  { id: 32813, label: '32813 — Insurance enrollment' },
+  { id: 32815, label: '32815 — Provider financial record' },
 ]
 
 export default function Step4ObsPeriod({ project, onUpdate }: Props) {
@@ -68,7 +70,10 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
         <div>
           <h2 className="text-xl font-semibold text-gray-900">Observation Period Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
-            Define the span of time during which each patient was observed.
+            Define the time spans during which each patient was actively observed. Within these
+            spans, clinical events are assumed to be fully recorded — absence of a record means
+            the event did not occur. Each person must have at least one observation period.
+            Overlapping or adjacent periods are automatically merged.
           </p>
         </div>
 
@@ -79,7 +84,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
             value={cfg.start_date_col}
             onChange={v => setCfg(prev => ({ ...prev, start_date_col: v }))}
             required
-            hint="Typically the onset / study entry date"
+            hint="Enrollment/study entry date. If absent in source, the earliest clinical event date per person will be used."
           />
 
           <FieldMapper
@@ -87,7 +92,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
             sourceColumns={cols}
             value={cfg.end_date_col}
             onChange={v => setCfg(prev => ({ ...prev, end_date_col: v }))}
-            hint="Leave blank if no follow-up date is available"
+            hint="Enrollment end / last follow-up date. If absent, the last clinical event date or fallback below is used."
           />
 
           <div>
@@ -103,7 +108,10 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">period_type_concept_id</label>
+            <label className="text-sm font-medium text-gray-700">
+              period_type_concept_id
+              <span className="ml-1 font-normal text-gray-400">— how the period was determined</span>
+            </label>
             <select
               value={cfg.period_type_concept_id}
               onChange={e => setCfg(prev => ({ ...prev, period_type_concept_id: parseInt(e.target.value) }))}
