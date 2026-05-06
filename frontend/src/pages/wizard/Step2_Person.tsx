@@ -20,7 +20,7 @@ const DEFAULTS: PersonConfig = {
   enabled: true,
   mappings: {
     person_id: { source_col: '', transform: 'int_float', auto_increment: false },
-    gender_concept_id: { source_col: '', value_map: { '1.0': 8507, '2.0': 8532 }, default: 0 },
+    gender_concept_id: { source_col: '', value_map: {}, default: 0 },
     year_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_year' },
     month_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_month' },
     day_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_day' },
@@ -60,6 +60,21 @@ export default function Step2Person({ project, onUpdate }: Props) {
           (m as unknown as Record<string, unknown>).race_concept_id = { source_col: '', value_map: {}, default: (m.race_concept_id as { constant: number }).constant }
         if (m.ethnicity_concept_id && 'constant' in m.ethnicity_concept_id)
           (m as unknown as Record<string, unknown>).ethnicity_concept_id = { source_col: '', value_map: {}, default: (m.ethnicity_concept_id as { constant: number }).constant }
+        const genderCol = m.gender_concept_id?.source_col
+        if (genderCol) {
+          const decisionEntries = Object.entries((decisions || {})[genderCol]?.value_concepts ?? {})
+          if (decisionEntries.length > 0) {
+            (m as unknown as Record<string, unknown>).gender_concept_id = {
+              ...m.gender_concept_id,
+              value_map: Object.fromEntries(decisionEntries.map(([k, v]) => [k, (v as ConceptRef).concept_id])),
+            }
+            setGenderValues(decisionEntries.map(([k]) => k))
+          } else {
+            setGenderValues(Object.keys(m.gender_concept_id?.value_map ?? {}))
+          }
+        } else {
+          (m as unknown as Record<string, unknown>).gender_concept_id = { ...m.gender_concept_id, value_map: {} }
+        }
         setCfg({
           ...DEFAULTS,
           ...existing,
@@ -81,6 +96,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleGenderColChange = (col: string) => {
     setField(['mappings', 'gender_concept_id', 'source_col'], col)
+    if (!col) {
+      setField(['mappings', 'gender_concept_id', 'value_map'], {})
+      setGenderValues([])
+      return
+    }
     const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
       setField(['mappings', 'gender_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
@@ -95,6 +115,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleRaceColChange = (col: string) => {
     setField(['mappings', 'race_concept_id', 'source_col'], col)
+    if (!col) {
+      setField(['mappings', 'race_concept_id', 'value_map'], {})
+      setRaceValues([])
+      return
+    }
     const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
       setField(['mappings', 'race_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
@@ -109,6 +134,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleEthnicityColChange = (col: string) => {
     setField(['mappings', 'ethnicity_concept_id', 'source_col'], col)
+    if (!col) {
+      setField(['mappings', 'ethnicity_concept_id', 'value_map'], {})
+      setEthnicityValues([])
+      return
+    }
     const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
       setField(['mappings', 'ethnicity_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
@@ -123,6 +153,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleLocationColChange = (col: string) => {
     setField(['mappings', 'location_id', 'source_col'], col)
+    if (!col) {
+      setField(['mappings', 'location_id', 'value_map'], {})
+      setLocationValues([])
+      return
+    }
     const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
       setField(['mappings', 'location_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
@@ -137,6 +172,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleProviderColChange = (col: string) => {
     setField(['mappings', 'provider_id', 'source_col'], col)
+    if (!col) {
+      setField(['mappings', 'provider_id', 'value_map'], {})
+      setProviderValues([])
+      return
+    }
     const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
       setField(['mappings', 'provider_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
@@ -151,6 +191,11 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
   const handleCareSiteColChange = (col: string) => {
     setField(['mappings', 'care_site_id', 'source_col'], col)
+    if (!col) {
+      setField(['mappings', 'care_site_id', 'value_map'], {})
+      setCareSiteValues([])
+      return
+    }
     const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
     if (entries.length > 0) {
       setField(['mappings', 'care_site_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
@@ -255,23 +300,31 @@ export default function Step2Person({ project, onUpdate }: Props) {
             hint="The source column that indicates biological sex."
           />
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-gray-700">Gender value → OMOP concept mapping</label>
-              <button onClick={addGenderValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
-            </div>
-            <p className="text-xs text-gray-500">Common: 8507 = Male, 8532 = Female</p>
-            {genderValues.length === 0 && Object.keys(cfg.mappings.gender_concept_id.value_map).length === 0 && (
-              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3 text-xs text-yellow-700">
-                Default mapping loaded: 1.0 → 8507 (Male), 2.0 → 8532 (Female). Click "+ Add value" to add source values.
+          {cfg.mappings.gender_concept_id.source_col && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700">Gender value → OMOP concept mapping</label>
+                <button onClick={addGenderValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
               </div>
-            )}
-            <ValueConceptMapper
-              label=""
-              sourceValues={genderValues.length > 0 ? genderValues : Object.keys(cfg.mappings.gender_concept_id.value_map)}
-              mapping={cfg.mappings.gender_concept_id.value_map}
-              onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
+              <p className="text-xs text-gray-500">Common: 8507 = Male, 8532 = Female</p>
+              <ValueConceptMapper
+                label=""
+                sourceValues={genderValues.length > 0 ? genderValues : Object.keys(cfg.mappings.gender_concept_id.value_map)}
+                mapping={cfg.mappings.gender_concept_id.value_map}
+                onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
+              />
+            </div>
+          )}
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">Default gender_concept_id</label>
+            <input
+              type="number"
+              value={cfg.mappings.gender_concept_id.default ?? 0}
+              onChange={e => setField(['mappings', 'gender_concept_id', 'default'], parseInt(e.target.value))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
         </div>
 
