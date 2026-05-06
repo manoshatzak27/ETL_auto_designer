@@ -75,10 +75,15 @@ export interface RaceEthnicityMapping {
 export interface VisitDefinition {
   label: string
   date_col: string
+  end_date_col?: string
   visit_concept_id: number
   type_concept_id: number
   source_value: string
   optional: boolean
+  admitted_from_concept_id?: number
+  admitted_from_source_value?: string
+  discharged_to_concept_id?: number
+  discharged_to_source_value?: string
 }
 
 export interface VisitOccurrenceConfig {
