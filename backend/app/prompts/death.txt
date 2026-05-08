@@ -1,14 +1,19 @@
-The death table records patient death events.
+The DEATH table records the clinical event of when and how a person dies.
+A person can have at most one death record.
 
-Key rules:
-1. Filter: only create a death record when filter_col == filter_value (e.g. contact10y == "5.0")
-2. person_id: looked up from person DataFrame
-3. death_date and death_datetime:
-   - If date_method == "onset_plus_years": parse the onset_col date and add years_offset * 365.25 days
-   - If date_method == "direct_col": use the value in the configured date_col directly
-4. death_type_concept_id: from config (e.g. 32879 = Registry)
-5. cause_concept_id: 0 (not captured unless configured)
-6. cause_source_concept_id: 0
+Key OMOP conventions:
+1. Filter: only create a death record when filter_col == filter_value (string comparison).
+2. person_id: looked up from person.csv using person_source_value as the key.
+3. death_date (required): parse from death_date_col.
+   - If precise day/month is unknown, use December 31 as the default day/month per OMOP convention.
+4. death_datetime (optional): parse from death_datetime_col if configured and non-empty; otherwise leave NULL.
+5. death_type_concept_id: from config — reflects the provenance of the death record (e.g. 32879 = Registry, 32817 = EHR).
+   Do NOT assume this matches the visit type.
+6. cause_concept_id: Standard OMOP concept for cause of death. No domain restriction.
+   Use the configured value if provided; default to 0 if not available.
+7. cause_source_value: raw source code for cause of death from cause_source_value_col (max 50 chars). NULL if not configured.
+8. cause_source_concept_id: CONCEPT_ID from OMOP vocabularies for the cause source code.
+   Use the configured value if provided; default to 0 if not applicable.
 
 Output columns (in this order):
 person_id, death_date, death_datetime, death_type_concept_id, cause_concept_id,

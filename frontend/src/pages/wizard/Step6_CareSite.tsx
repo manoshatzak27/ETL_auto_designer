@@ -1,0 +1,154 @@
+import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { updateTableConfig, getTableConfig } from '../../api/client'
+import type { Project, CareSiteConfig } from '../../types'
+import WizardLayout from './WizardLayout'
+import FieldMapper from '../../components/FieldMapper'
+import ExtraInstructions from '../../components/ExtraInstructions'
+import ScriptGenerator from '../../components/ScriptGenerator'
+
+interface Props {
+  project: Project
+  onUpdate: (p: Project) => void
+}
+
+const DEFAULTS: CareSiteConfig = {
+  enabled: true,
+  care_site_name_col: '',
+  place_of_service_concept_id: null,
+  location_source_value_col: '',
+  care_site_source_value_col: '',
+  place_of_service_source_value_col: '',
+}
+
+const PLACE_OF_SERVICE_OPTIONS = [
+  { id: null,   label: '— not set —' },
+  { id: 9202,   label: '9202 — Outpatient Visit' },
+  { id: 9201,   label: '9201 — Inpatient Visit' },
+  { id: 9203,   label: '9203 — Emergency Room Visit' },
+  { id: 262,    label: '262 — Emergency Room and Inpatient Visit' },
+  { id: 5083,   label: '5083 — Telehealth Visit' },
+  { id: 581476, label: '581476 — Home Visit' },
+  { id: 8756,   label: '8756 — Outpatient Hospital' },
+]
+
+export default function Step6CareSite({ project, onUpdate }: Props) {
+  const navigate = useNavigate()
+  const cols = project.source_columns || []
+  const [cfg, setCfg] = useState<CareSiteConfig>(DEFAULTS)
+  const [saving, setSaving] = useState(false)
+  const [extraInstructions, setExtraInstructions] = useState('')
+
+  useEffect(() => {
+    getTableConfig(project.id, 'care_site').then((ex: CareSiteConfig & { extra_instructions?: string }) => {
+      if (ex && Object.keys(ex).length > 0) {
+        setExtraInstructions(ex.extra_instructions || '')
+        setCfg(ex)
+      }
+    })
+  }, [project.id])
+
+  const saveConfig = async () => {
+    const p = await updateTableConfig(project.id, 'care_site', { ...cfg, extra_instructions: extraInstructions })
+    onUpdate(p)
+  }
+
+  const handleNext = async () => {
+    setSaving(true)
+    await saveConfig()
+    setSaving(false)
+    navigate(`/project/${project.id}/step/7`)
+  }
+
+  const set = (field: keyof CareSiteConfig) => (v: string) =>
+    setCfg(prev => ({ ...prev, [field]: v }))
+
+  return (
+    <WizardLayout
+      projectId={project.id}
+      projectName={project.name}
+      currentStep={6}
+      onBack={() => navigate(`/project/${project.id}/step/5`)}
+      onNext={handleNext}
+      nextLabel="Next: Provider →"
+      saving={saving}
+    >
+      <div className="flex flex-col gap-6">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-900">Care Site Mapping</h2>
+          <p className="text-sm text-gray-500 mt-1">
+            Map source columns to the OMOP CARE_SITE table. A Care Site is a unique combination
+            of a physical location and the nature of the site (e.g. clinic, ward, hospital).
+            Individual provider information belongs in the PROVIDER table, not here.
+          </p>
+        </div>
+
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <FieldMapper
+            label="care_site_name"
+            sourceColumns={cols}
+            value={cfg.care_site_name_col}
+            onChange={set('care_site_name_col')}
+            hint="Name of the care site as it appears in the source (max 255 chars)."
+          />
+
+          <FieldMapper
+            label="care_site_source_value"
+            sourceColumns={cols}
+            value={cfg.care_site_source_value_col}
+            onChange={set('care_site_source_value_col')}
+            hint="Verbatim care site identifier from the source. Used as the deduplication key."
+          />
+
+          <FieldMapper
+            label="location_source_value column"
+            sourceColumns={cols}
+            value={cfg.location_source_value_col}
+            onChange={set('location_source_value_col')}
+            hint="Column whose value matches location_source_value in location.csv — used to look up location_id."
+          />
+
+          <div>
+            <label className="text-sm font-medium text-gray-700">
+              place_of_service_concept_id
+              <span className="ml-1 font-normal text-gray-400">— predominant care setting (Visit domain)</span>
+            </label>
+            <select
+              value={cfg.place_of_service_concept_id ?? ''}
+              onChange={e => setCfg(prev => ({
+                ...prev,
+                place_of_service_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
+              }))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              {PLACE_OF_SERVICE_OPTIONS.map(o => (
+                <option key={o.id ?? 'null'} value={o.id ?? ''}>{o.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <FieldMapper
+            label="place_of_service_source_value"
+            sourceColumns={cols}
+            value={cfg.place_of_service_source_value_col}
+            onChange={set('place_of_service_source_value_col')}
+            hint="Verbatim place-of-service value from the source (max 50 chars)."
+          />
+        </div>
+
+        <ExtraInstructions
+          tableName="care_site"
+          value={extraInstructions}
+          onChange={setExtraInstructions}
+        />
+
+        <ScriptGenerator
+          project={project}
+          table="care_site"
+          onUpdate={onUpdate}
+          beforeGenerate={saveConfig}
+        />
+      </div>
+    </WizardLayout>
+  )
+}

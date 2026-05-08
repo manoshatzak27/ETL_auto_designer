@@ -111,15 +111,15 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/5`)
+    navigate(`/project/${project.id}/step/4`)
   }
 
   return (
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={4}
-      onBack={() => navigate(`/project/${project.id}/step/3`)}
+      currentStep={3}
+      onBack={() => navigate(`/project/${project.id}/step/2`)}
       onNext={handleNext}
       nextLabel="Next: Observation Period →"
       saving={saving}

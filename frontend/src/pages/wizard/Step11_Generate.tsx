@@ -20,6 +20,9 @@ const TABLES = [
   { key: 'person',             label: 'person.py',             description: 'Patient demographics' },
   { key: 'visit_occurrence',   label: 'visit_occurrence.py',   description: 'Clinical visits / timepoints' },
   { key: 'observation_period', label: 'observation_period.py', description: 'Patient observation windows' },
+  { key: 'location',           label: 'location.py',           description: 'Physical address / location records' },
+  { key: 'care_site',          label: 'care_site.py',          description: 'Institutional care site records' },
+  { key: 'provider',           label: 'provider.py',           description: 'Healthcare provider records' },
   { key: 'stem_table',         label: 'stem_table.py',         description: 'Clinical measurements & observations' },
   { key: 'death',              label: 'death.py',              description: 'Mortality records' },
 ]
@@ -57,8 +60,8 @@ export default function Step7Generate({ project, onUpdate }: Props) {
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={8}
-      onBack={() => navigate(`/project/${project.id}/step/7`)}
+      currentStep={11}
+      onBack={() => navigate(`/project/${project.id}/step/10`)}
       nextLabel=""
     >
       <div className="flex flex-col gap-6">

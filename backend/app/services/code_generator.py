@@ -21,6 +21,9 @@ SUPPORTED_TABLES = [
     "person",
     "visit_occurrence",
     "observation_period",
+    "location",
+    "care_site",
+    "provider",
     "stem_table",
     "death",
 ]

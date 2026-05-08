@@ -1,0 +1,41 @@
+The CARE_SITE table contains a list of uniquely identified institutional units where healthcare
+delivery is practiced (offices, wards, hospitals, clinics, etc.).
+
+Key OMOP rules:
+- A Care Site is a unique combination of location_id and the nature of the site (place of service,
+  name, or another characteristic from the source).
+- Care Site does NOT include individual provider (human) information — that belongs in PROVIDER.
+- Deduplicate: if the source does not uniquely identify Care Sites and only provides generic
+  information (e.g. Place of Service), create one pooled Care Site record per unique value.
+- care_site_source_value is the primary deduplication key when present; otherwise deduplicate on
+  the combination of care_site_name and location_source_value.
+
+Field rules:
+1. care_site_id: sequential integer, unique across all records (1, 2, 3, …).
+2. care_site_name: from care_site_name_col if configured; varchar(255).
+3. place_of_service_concept_id: constant integer from config (place_of_service_concept_id);
+   NULL if not set. Use a Visit-domain standard concept from OMOP (e.g. 9202 = Outpatient,
+   9201 = Inpatient, 9203 = Emergency Room). Choose the concept that best represents the
+   predominant setting of care at this site.
+4. location_id: looked up from ETL_OUTPUT_DIR/location.csv using location_source_value as the
+   join key. Build a dict {location_source_value: location_id} from location.csv.
+   If location_source_value_col is not configured or the lookup fails, set location_id to NULL.
+5. care_site_source_value: from care_site_source_value_col if configured; varchar(50).
+   Used as the deduplication key.
+6. place_of_service_source_value: from place_of_service_source_value_col if configured;
+   varchar(50). Put the verbatim place-of-service value from the source here.
+
+Deduplication strategy:
+- Group source rows by care_site_source_value (if configured) or by (care_site_name,
+  location_source_value). Emit one CARE_SITE record per unique group. For each group, take
+  field values from the first occurrence.
+- After deduplication, assign sequential care_site_id values.
+
+Location lookup:
+- Load ETL_OUTPUT_DIR/location.csv and build {location_source_value: location_id}.
+- Match each source row's location_source_value_col value against this dict.
+- If location.csv does not exist or lookup fails, set location_id to NULL (do not abort).
+
+Output columns (in this order):
+care_site_id, care_site_name, place_of_service_concept_id, location_id,
+care_site_source_value, place_of_service_source_value

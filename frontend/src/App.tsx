@@ -2,13 +2,16 @@ import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-
 import { useState, useEffect } from 'react'
 import Dashboard from './pages/Dashboard'
 import Step1Upload from './pages/wizard/Step1_Upload'
-import Step2ConceptMapping from './pages/wizard/Step2_ConceptMapping'
-import Step3Person from './pages/wizard/Step2_Person'
-import Step4Visit from './pages/wizard/Step3_Visit'
-import Step5ObsPeriod from './pages/wizard/Step4_ObsPeriod'
-import Step6StemTable from './pages/wizard/Step5_StemTable'
-import Step7Death from './pages/wizard/Step6_Death'
-import Step8Generate from './pages/wizard/Step7_Generate'
+import PersonStep from './pages/wizard/Step2_Person'
+import VisitStep from './pages/wizard/Step3_Visit'
+import ObsPeriodStep from './pages/wizard/Step4_ObsPeriod'
+import LocationStep from './pages/wizard/Step5_Location'
+import CareSiteStep from './pages/wizard/Step6_CareSite'
+import ProviderStep from './pages/wizard/Step7_Provider'
+import ConceptMappingStep from './pages/wizard/Step9_ConceptMapping'
+import StemTableStep from './pages/wizard/Step10_StemTable'
+import DeathStep from './pages/wizard/Step8_Death'
+import GenerateStep from './pages/wizard/Step11_Generate'
 import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
@@ -41,14 +44,17 @@ function ProjectWizard() {
 
   const stepEl = (() => {
     switch (step) {
-      case '1': return <Step1Upload project={project} onUpdate={update} />
-      case '2': return <Step2ConceptMapping project={project} onUpdate={update} />
-      case '3': return <Step3Person project={project} onUpdate={update} />
-      case '4': return <Step4Visit project={project} onUpdate={update} />
-      case '5': return <Step5ObsPeriod project={project} onUpdate={update} />
-      case '6': return <Step6StemTable project={project} onUpdate={update} />
-      case '7': return <Step7Death project={project} onUpdate={update} />
-      case '8': return <Step8Generate project={project} onUpdate={update} />
+      case '1':  return <Step1Upload project={project} onUpdate={update} />
+      case '2':  return <PersonStep project={project} onUpdate={update} />
+      case '3':  return <VisitStep project={project} onUpdate={update} />
+      case '4':  return <ObsPeriodStep project={project} onUpdate={update} />
+      case '5':  return <LocationStep project={project} onUpdate={update} />
+      case '6':  return <CareSiteStep project={project} onUpdate={update} />
+      case '7':  return <ProviderStep project={project} onUpdate={update} />
+      case '8':  return <DeathStep project={project} onUpdate={update} />
+      case '9':  return <ConceptMappingStep project={project} onUpdate={update} />
+      case '10': return <StemTableStep project={project} onUpdate={update} />
+      case '11': return <GenerateStep project={project} onUpdate={update} />
       default:  return <Navigate to={`/project/${projectId}/step/1`} replace />
     }
   })()

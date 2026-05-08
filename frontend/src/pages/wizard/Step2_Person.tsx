@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../api/client'
+import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import type { Project, PersonConfig, RaceEthnicityMapping } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -8,8 +8,7 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 
-interface ConceptRef { concept_id: number; concept_name: string }
-interface VariableDecision { value_concepts: Record<string, ConceptRef> }
+interface ColumnInfo { distinct_values: string[] }
 
 interface Props {
   project: Project
@@ -38,6 +37,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<PersonConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
+  const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [genderValues, setGenderValues] = useState<string[]>([])
   const [raceValues, setRaceValues] = useState<string[]>([])
   const [ethnicityValues, setEthnicityValues] = useState<string[]>([])
@@ -45,14 +45,13 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [providerValues, setProviderValues] = useState<string[]>([])
   const [careSiteValues, setCareSiteValues] = useState<string[]>([])
   const [extraInstructions, setExtraInstructions] = useState('')
-  const [conceptDecisions, setConceptDecisions] = useState<Record<string, VariableDecision>>({})
 
   useEffect(() => {
     Promise.all([
       getTableConfig(project.id, 'person'),
-      getConceptDecisions(project.id),
-    ]).then(([existing, decisions]: [PersonConfig & { extra_instructions?: string }, Record<string, VariableDecision>]) => {
-      setConceptDecisions(decisions || {})
+      getColumnValues(project.id),
+    ]).then(([existing, infos]: [PersonConfig & { extra_instructions?: string }, Record<string, ColumnInfo>]) => {
+      setColumnInfos(infos)
       if (existing && Object.keys(existing).length > 0) {
         setExtraInstructions(existing.extra_instructions || '')
         const m = existing.mappings
@@ -60,21 +59,31 @@ export default function Step2Person({ project, onUpdate }: Props) {
           (m as unknown as Record<string, unknown>).race_concept_id = { source_col: '', value_map: {}, default: (m.race_concept_id as { constant: number }).constant }
         if (m.ethnicity_concept_id && 'constant' in m.ethnicity_concept_id)
           (m as unknown as Record<string, unknown>).ethnicity_concept_id = { source_col: '', value_map: {}, default: (m.ethnicity_concept_id as { constant: number }).constant }
-        const genderCol = m.gender_concept_id?.source_col
-        if (genderCol) {
-          const decisionEntries = Object.entries((decisions || {})[genderCol]?.value_concepts ?? {})
-          if (decisionEntries.length > 0) {
-            (m as unknown as Record<string, unknown>).gender_concept_id = {
-              ...m.gender_concept_id,
-              value_map: Object.fromEntries(decisionEntries.map(([k, v]) => [k, (v as ConceptRef).concept_id])),
-            }
-            setGenderValues(decisionEntries.map(([k]) => k))
-          } else {
-            setGenderValues(Object.keys(m.gender_concept_id?.value_map ?? {}))
-          }
-        } else {
-          (m as unknown as Record<string, unknown>).gender_concept_id = { ...m.gender_concept_id, value_map: {} }
+
+        const getValues = (col: string, savedMap: Record<string, number>) => {
+          const savedKeys = Object.keys(savedMap)
+          if (savedKeys.length > 0) return savedKeys
+          return infos[col]?.distinct_values ?? []
         }
+
+        const genderCol = m.gender_concept_id?.source_col
+        if (genderCol) setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {}))
+
+        const raceCol = (m.race_concept_id as RaceEthnicityMapping)?.source_col
+        if (raceCol) setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+
+        const ethCol = (m.ethnicity_concept_id as RaceEthnicityMapping)?.source_col
+        if (ethCol) setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+
+        const locCol = (m.location_id as RaceEthnicityMapping)?.source_col
+        if (locCol) setLocationValues(getValues(locCol, (m.location_id as RaceEthnicityMapping)?.value_map ?? {}))
+
+        const provCol = (m.provider_id as RaceEthnicityMapping)?.source_col
+        if (provCol) setProviderValues(getValues(provCol, (m.provider_id as RaceEthnicityMapping)?.value_map ?? {}))
+
+        const careCol = (m.care_site_id as RaceEthnicityMapping)?.source_col
+        if (careCol) setCareSiteValues(getValues(careCol, (m.care_site_id as RaceEthnicityMapping)?.value_map ?? {}))
+
         setCfg({
           ...DEFAULTS,
           ...existing,
@@ -94,18 +103,19 @@ export default function Step2Person({ project, onUpdate }: Props) {
     })
   }
 
+  const handleColChange = (
+    field: string[],
+    setValues: (v: string[]) => void,
+  ) => (col: string) => {
+    setField([...field, 'source_col'], col)
+    setField([...field, 'value_map'], {})
+    setValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
+  }
+
   const handleGenderColChange = (col: string) => {
     setField(['mappings', 'gender_concept_id', 'source_col'], col)
-    if (!col) {
-      setField(['mappings', 'gender_concept_id', 'value_map'], {})
-      setGenderValues([])
-      return
-    }
-    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
-    if (entries.length > 0) {
-      setField(['mappings', 'gender_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
-      setGenderValues(entries.map(([k]) => k))
-    }
+    setField(['mappings', 'gender_concept_id', 'value_map'], {})
+    setGenderValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
   const addGenderValue = () => {
@@ -113,95 +123,35 @@ export default function Step2Person({ project, onUpdate }: Props) {
     if (val) setGenderValues(prev => [...new Set([...prev, val])])
   }
 
-  const handleRaceColChange = (col: string) => {
-    setField(['mappings', 'race_concept_id', 'source_col'], col)
-    if (!col) {
-      setField(['mappings', 'race_concept_id', 'value_map'], {})
-      setRaceValues([])
-      return
-    }
-    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
-    if (entries.length > 0) {
-      setField(['mappings', 'race_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
-      setRaceValues(entries.map(([k]) => k))
-    }
-  }
+  const handleRaceColChange = handleColChange(['mappings', 'race_concept_id'], setRaceValues)
 
   const addRaceValue = () => {
     const val = prompt('Enter a source race value:')
     if (val) setRaceValues(prev => [...new Set([...prev, val])])
   }
 
-  const handleEthnicityColChange = (col: string) => {
-    setField(['mappings', 'ethnicity_concept_id', 'source_col'], col)
-    if (!col) {
-      setField(['mappings', 'ethnicity_concept_id', 'value_map'], {})
-      setEthnicityValues([])
-      return
-    }
-    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
-    if (entries.length > 0) {
-      setField(['mappings', 'ethnicity_concept_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
-      setEthnicityValues(entries.map(([k]) => k))
-    }
-  }
+  const handleEthnicityColChange = handleColChange(['mappings', 'ethnicity_concept_id'], setEthnicityValues)
 
   const addEthnicityValue = () => {
     const val = prompt('Enter a source ethnicity value:')
     if (val) setEthnicityValues(prev => [...new Set([...prev, val])])
   }
 
-  const handleLocationColChange = (col: string) => {
-    setField(['mappings', 'location_id', 'source_col'], col)
-    if (!col) {
-      setField(['mappings', 'location_id', 'value_map'], {})
-      setLocationValues([])
-      return
-    }
-    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
-    if (entries.length > 0) {
-      setField(['mappings', 'location_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
-      setLocationValues(entries.map(([k]) => k))
-    }
-  }
+  const handleLocationColChange = handleColChange(['mappings', 'location_id'], setLocationValues)
 
   const addLocationValue = () => {
     const val = prompt('Enter a source location value:')
     if (val) setLocationValues(prev => [...new Set([...prev, val])])
   }
 
-  const handleProviderColChange = (col: string) => {
-    setField(['mappings', 'provider_id', 'source_col'], col)
-    if (!col) {
-      setField(['mappings', 'provider_id', 'value_map'], {})
-      setProviderValues([])
-      return
-    }
-    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
-    if (entries.length > 0) {
-      setField(['mappings', 'provider_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
-      setProviderValues(entries.map(([k]) => k))
-    }
-  }
+  const handleProviderColChange = handleColChange(['mappings', 'provider_id'], setProviderValues)
 
   const addProviderValue = () => {
     const val = prompt('Enter a source provider value:')
     if (val) setProviderValues(prev => [...new Set([...prev, val])])
   }
 
-  const handleCareSiteColChange = (col: string) => {
-    setField(['mappings', 'care_site_id', 'source_col'], col)
-    if (!col) {
-      setField(['mappings', 'care_site_id', 'value_map'], {})
-      setCareSiteValues([])
-      return
-    }
-    const entries = Object.entries(conceptDecisions[col]?.value_concepts ?? {})
-    if (entries.length > 0) {
-      setField(['mappings', 'care_site_id', 'value_map'], Object.fromEntries(entries.map(([k, v]) => [k, v.concept_id])))
-      setCareSiteValues(entries.map(([k]) => k))
-    }
-  }
+  const handleCareSiteColChange = handleColChange(['mappings', 'care_site_id'], setCareSiteValues)
 
   const addCareSiteValue = () => {
     const val = prompt('Enter a source care site value:')
@@ -223,15 +173,15 @@ export default function Step2Person({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/4`)
+    navigate(`/project/${project.id}/step/3`)
   }
 
   return (
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={3}
-      onBack={() => navigate(`/project/${project.id}/step/2`)}
+      currentStep={2}
+      onBack={() => navigate(`/project/${project.id}/step/1`)}
       onNext={handleNext}
       nextLabel="Next: Visit Occurrence →"
       saving={saving}

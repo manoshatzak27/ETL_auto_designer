@@ -5,13 +5,16 @@ import { ChevronRight, ArrowLeft } from 'lucide-react'
 
 const STEPS = [
   { label: 'Source', short: '1' },
-  { label: 'Concepts', short: '2' },
-  { label: 'Person', short: '3' },
-  { label: 'Visit', short: '4' },
-  { label: 'Obs. Period', short: '5' },
-  { label: 'Stem Table', short: '6' },
-  { label: 'Death', short: '7' },
-  { label: 'Generate', short: '8' },
+  { label: 'Person', short: '2' },
+  { label: 'Visit', short: '3' },
+  { label: 'Obs. Period', short: '4' },
+  { label: 'Location', short: '5' },
+  { label: 'Care Site', short: '6' },
+  { label: 'Provider', short: '7' },
+  { label: 'Death', short: '8' },
+  { label: 'Concepts', short: '9' },
+  { label: 'Stem Table', short: '10' },
+  { label: 'Generate', short: '11' },
 ]
 
 interface Props {

@@ -1,0 +1,38 @@
+The LOCATION table represents a generic way to capture physical location or address information
+of Persons and Care Sites.
+
+Key OMOP rules:
+- Each address or Location is unique and appears only once in the table.
+- Locations do not contain names (e.g., hospital names belong in CARE_SITE).
+- Deduplicate: if two rows have the same location_source_value (or the same combination of
+  address fields), emit only one LOCATION record and reuse its location_id.
+
+Field rules:
+1. location_id: sequential integer, unique across all records (1, 2, 3, …).
+2. address_1: from address_1_col if configured; varchar(50) — truncate if longer.
+3. address_2: from address_2_col if configured; varchar(50).
+4. city: from city_col if configured; varchar(50).
+5. state: from state_col if configured; varchar(2) — use 2-letter abbreviation or first 2 chars.
+   Can represent province or district for international addresses.
+6. zip: from zip_col if configured; varchar(9) — keep as string (leading zeros matter).
+   For US: 3-digit, 5-digit, or 9-digit (ZIP+4). For international: use local postal format.
+7. county: from county_col if configured; varchar(20). Can represent region internationally.
+8. location_source_value: from location_source_value_col if configured; varchar(50).
+   Put the verbatim source value here. Use this as the deduplication key when present.
+9. country_concept_id: constant integer from config (country_concept_id); NULL if not set.
+   Must conform to the Geography domain in OMOP.
+10. country_source_value: from country_source_value_col if configured; varchar(80).
+11. latitude: from latitude_col if configured; float. Must be between -90 and 90 — skip or null
+    if out of range.
+12. longitude: from longitude_col if configured; float. Must be between -180 and 180 — skip or
+    null if out of range.
+
+Deduplication strategy:
+- If location_source_value_col is configured: group by location_source_value — one output row per
+  unique value. Take the first occurrence's other field values.
+- If location_source_value_col is NOT configured: group by the combination of all mapped address
+  columns (address_1, city, state, zip, etc.) — one output row per unique combination.
+
+Output columns (in this order):
+location_id, address_1, address_2, city, state, zip, county, location_source_value,
+country_concept_id, country_source_value, latitude, longitude

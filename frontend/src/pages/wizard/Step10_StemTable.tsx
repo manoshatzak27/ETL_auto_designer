@@ -107,7 +107,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/7`)
+    navigate(`/project/${project.id}/step/11`)
   }
 
   const totalAssigned = Object.values(cfg.variable_groups).reduce((s, g) => s + g.length, 0)
@@ -116,10 +116,10 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={6}
-      onBack={() => navigate(`/project/${project.id}/step/5`)}
+      currentStep={10}
+      onBack={() => navigate(`/project/${project.id}/step/9`)}
       onNext={handleNext}
-      nextLabel="Next: Death →"
+      nextLabel="Next: Generate Code →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

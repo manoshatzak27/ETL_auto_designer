@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getColumnValues,
@@ -617,6 +617,44 @@ function BatchPanel({
   )
 }
 
+// ── Structural column extractor ────────────────────────────────────────────
+
+function getStructuralColumns(etlConfig: Record<string, unknown>): Set<string> {
+  const mapped = new Set<string>()
+
+  // observation_period, location, care_site, provider, death: direct *_col string fields
+  for (const table of ['observation_period', 'location', 'care_site', 'provider', 'death']) {
+    const cfg = etlConfig[table] as Record<string, unknown> | undefined
+    if (!cfg) continue
+    for (const [key, value] of Object.entries(cfg)) {
+      if (key.endsWith('_col') && typeof value === 'string' && value.trim()) {
+        mapped.add(value.trim())
+      }
+    }
+  }
+
+  // person: nested under mappings.*.source_col
+  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>> } | undefined
+  if (personCfg?.mappings) {
+    for (const m of Object.values(personCfg.mappings)) {
+      if (m && typeof m.source_col === 'string' && m.source_col.trim()) {
+        mapped.add(m.source_col.trim())
+      }
+    }
+  }
+
+  // visit_occurrence: visit_definitions[].date_col / end_date_col
+  const visitCfg = etlConfig['visit_occurrence'] as { visit_definitions?: Array<Record<string, unknown>> } | undefined
+  if (visitCfg?.visit_definitions) {
+    for (const def of visitCfg.visit_definitions) {
+      if (typeof def.date_col === 'string' && def.date_col.trim()) mapped.add(def.date_col.trim())
+      if (typeof def.end_date_col === 'string' && def.end_date_col.trim()) mapped.add(def.end_date_col.trim())
+    }
+  }
+
+  return mapped
+}
+
 // ── Main Step 2 page ────────────────────────────────────────────────────────
 
 export default function Step2ConceptMapping({ project, onUpdate }: Props) {
@@ -638,6 +676,12 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
 
   const cols = project.source_columns || []
 
+  const structuralCols = useMemo(
+    () => getStructuralColumns((project.etl_config || {}) as Record<string, unknown>),
+    [project.etl_config],
+  )
+  const conceptCols = useMemo(() => cols.filter(c => !structuralCols.has(c)), [cols, structuralCols])
+
   useEffect(() => {
     Promise.all([
       getColumnValues(project.id),
@@ -645,12 +689,8 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
     ]).then(([infos, saved]: [Record<string, ColumnInfo>, Record<string, VariableDecision>]) => {
       setColumnInfos(infos)
       const init: Record<string, VariableDecision> = {}
-      for (const col of cols) {
-        if (saved[col]) {
-          init[col] = saved[col]
-        } else {
-            init[col] = { strategy: 'skip', variable_concept: null, value_concepts: {} }
-        }
+      for (const col of conceptCols) {
+        init[col] = saved[col] ?? { strategy: 'skip', variable_concept: null, value_concepts: {} }
       }
       setDecisions(init)
     }).finally(() => setLoading(false))
@@ -676,7 +716,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
       setGenerating(true)
       const updated = await generateMappingCsvs(project.id)
       onUpdate(updated)
-      navigate(`/project/${project.id}/step/3`)
+      navigate(`/project/${project.id}/step/10`)
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } }
       setGenError(err?.response?.data?.detail || 'Failed to generate mapping CSVs.')
@@ -687,14 +727,14 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   }
 
   // Stats
-  const mappedCount = cols.filter(c => {
+  const mappedCount = conceptCols.filter(c => {
     const d = decisions[c]
     return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
   }).length
-  const skippedCount = cols.filter(c => decisions[c]?.strategy === 'skip').length
+  const skippedCount = conceptCols.filter(c => decisions[c]?.strategy === 'skip').length
 
   // Filter + search
-  const filteredCols = cols.filter(col => {
+  const filteredCols = conceptCols.filter(col => {
     if (search && !col.toLowerCase().includes(search.toLowerCase())) return false
     const d = decisions[col]
     if (filter === 'skipped') return d?.strategy === 'skip'
@@ -707,10 +747,10 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={2}
-      onBack={() => navigate(`/project/${project.id}/step/1`)}
+      currentStep={9}
+      onBack={() => navigate(`/project/${project.id}/step/8`)}
       onNext={handleNext}
-      nextLabel={generating ? 'Generating CSVs…' : saving ? 'Saving…' : 'Next: Person Mapping'}
+      nextLabel={generating ? 'Generating CSVs…' : saving ? 'Saving…' : 'Next: Stem Table →'}
       nextDisabled={saving || generating}
       saving={saving}
     >
@@ -726,8 +766,8 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-            <p className="text-xl font-bold text-gray-900">{cols.length}</p>
-            <p className="text-xs text-gray-500">Total columns</p>
+            <p className="text-xl font-bold text-gray-900">{conceptCols.length}</p>
+            <p className="text-xs text-gray-500">Variables to map</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
             <p className="text-xl font-bold text-green-700">{mappedCount}</p>
@@ -738,6 +778,18 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
             <p className="text-xs text-gray-500">Skipped</p>
           </div>
         </div>
+
+        {/* Excluded structural columns */}
+        {structuralCols.size > 0 && (
+          <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
+            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
+            <span>
+              <span className="font-semibold">{structuralCols.size} structural column{structuralCols.size > 1 ? 's' : ''} excluded</span>
+              {' '}— already mapped in Person, Visit, Obs. Period, Location, Care Site, Provider, or Death steps:{' '}
+              <span className="font-mono">{[...structuralCols].join(', ')}</span>
+            </span>
+          </div>
+        )}
 
         {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap">

@@ -99,6 +99,44 @@ export interface ObservationPeriodConfig {
   period_type_concept_id: number
 }
 
+export interface LocationConfig {
+  enabled: boolean
+  address_1_col: string
+  address_2_col: string
+  city_col: string
+  state_col: string
+  zip_col: string
+  county_col: string
+  location_source_value_col: string
+  country_concept_id: number | null
+  country_source_value_col: string
+  latitude_col: string
+  longitude_col: string
+}
+
+export interface CareSiteConfig {
+  enabled: boolean
+  care_site_name_col: string
+  place_of_service_concept_id: number | null
+  location_source_value_col: string
+  care_site_source_value_col: string
+  place_of_service_source_value_col: string
+}
+
+export interface ProviderConfig {
+  enabled: boolean
+  provider_name_col: string
+  npi_col: string
+  dea_col: string
+  specialty_concept_id: number | null
+  care_site_source_value_col: string
+  year_of_birth_col: string
+  gender_concept_id: number | null
+  provider_source_value_col: string
+  specialty_source_value_col: string
+  gender_source_value_col: string
+}
+
 export interface StemTableOverride {
   variable: string
   field?: string
@@ -122,11 +160,12 @@ export interface DeathConfig {
   enabled: boolean
   filter_col: string
   filter_value: string
-  date_method: 'onset_plus_years' | 'direct_col'
-  onset_col?: string
-  years_offset?: number
-  date_col?: string
+  death_date_col: string
+  death_datetime_col: string
   death_type_concept_id: number
+  cause_concept_id: number | null
+  cause_source_value_col: string
+  cause_source_concept_id: number | null
 }
 
 export interface ConceptLink {
