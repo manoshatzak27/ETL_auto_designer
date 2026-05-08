@@ -108,7 +108,8 @@ export interface LocationConfig {
   zip_col: string
   county_col: string
   location_source_value_col: string
-  country_concept_id: number | null
+  country_concept_id_map: Record<string, number>
+  country_concept_id_default: number
   country_source_value_col: string
   latitude_col: string
   longitude_col: string

@@ -53,17 +53,17 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/5`)
+    navigate(`/project/${project.id}/step/8`)
   }
 
   return (
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={4}
-      onBack={() => navigate(`/project/${project.id}/step/3`)}
+      currentStep={7}
+      onBack={() => navigate(`/project/${project.id}/step/6`)}
       onNext={handleNext}
-      nextLabel="Next: Location →"
+      nextLabel="Next: Death →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

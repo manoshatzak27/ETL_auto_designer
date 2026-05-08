@@ -2,12 +2,12 @@ import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-
 import { useState, useEffect } from 'react'
 import Dashboard from './pages/Dashboard'
 import Step1Upload from './pages/wizard/Step1_Upload'
-import PersonStep from './pages/wizard/Step2_Person'
-import VisitStep from './pages/wizard/Step3_Visit'
-import ObsPeriodStep from './pages/wizard/Step4_ObsPeriod'
-import LocationStep from './pages/wizard/Step5_Location'
-import CareSiteStep from './pages/wizard/Step6_CareSite'
-import ProviderStep from './pages/wizard/Step7_Provider'
+import LocationStep from './pages/wizard/Step2_Location'
+import CareSiteStep from './pages/wizard/Step3_CareSite'
+import ProviderStep from './pages/wizard/Step4_Provider'
+import PersonStep from './pages/wizard/Step5_Person'
+import VisitStep from './pages/wizard/Step6_Visit'
+import ObsPeriodStep from './pages/wizard/Step7_ObsPeriod'
 import ConceptMappingStep from './pages/wizard/Step9_ConceptMapping'
 import StemTableStep from './pages/wizard/Step10_StemTable'
 import DeathStep from './pages/wizard/Step8_Death'
@@ -45,12 +45,12 @@ function ProjectWizard() {
   const stepEl = (() => {
     switch (step) {
       case '1':  return <Step1Upload project={project} onUpdate={update} />
-      case '2':  return <PersonStep project={project} onUpdate={update} />
-      case '3':  return <VisitStep project={project} onUpdate={update} />
-      case '4':  return <ObsPeriodStep project={project} onUpdate={update} />
-      case '5':  return <LocationStep project={project} onUpdate={update} />
-      case '6':  return <CareSiteStep project={project} onUpdate={update} />
-      case '7':  return <ProviderStep project={project} onUpdate={update} />
+      case '2':  return <LocationStep project={project} onUpdate={update} />
+      case '3':  return <CareSiteStep project={project} onUpdate={update} />
+      case '4':  return <ProviderStep project={project} onUpdate={update} />
+      case '5':  return <PersonStep project={project} onUpdate={update} />
+      case '6':  return <VisitStep project={project} onUpdate={update} />
+      case '7':  return <ObsPeriodStep project={project} onUpdate={update} />
       case '8':  return <DeathStep project={project} onUpdate={update} />
       case '9':  return <ConceptMappingStep project={project} onUpdate={update} />
       case '10': return <StemTableStep project={project} onUpdate={update} />

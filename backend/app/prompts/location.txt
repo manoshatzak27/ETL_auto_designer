@@ -17,9 +17,14 @@ Field rules:
 6. zip: from zip_col if configured; varchar(9) — keep as string (leading zeros matter).
    For US: 3-digit, 5-digit, or 9-digit (ZIP+4). For international: use local postal format.
 7. county: from county_col if configured; varchar(20). Can represent region internationally.
+   The raw source value is stored here as-is (truncated to 20 chars if needed).
 8. location_source_value: from location_source_value_col if configured; varchar(50).
    Put the verbatim source value here. Use this as the deduplication key when present.
-9. country_concept_id: constant integer from config (country_concept_id); NULL if not set.
+9. country_concept_id: resolved entirely from the config dictionary — NO external files, NO CSVs,
+   NO file I/O of any kind. The mapping is already embedded in the config as country_concept_id_map
+   (a plain dict {source_value: concept_id}). Use it with .get() and fall back to
+   country_concept_id_default when the value is missing. If county_col is not configured and
+   country_concept_id_default is 0, set to NULL.
    Must conform to the Geography domain in OMOP.
 10. country_source_value: from country_source_value_col if configured; varchar(80).
 11. latitude: from latitude_col if configured; float. Must be between -90 and 90 — skip or null
@@ -27,11 +32,27 @@ Field rules:
 12. longitude: from longitude_col if configured; float. Must be between -180 and 180 — skip or
     null if out of range.
 
-Deduplication strategy:
-- If location_source_value_col is configured: group by location_source_value — one output row per
-  unique value. Take the first occurrence's other field values.
-- If location_source_value_col is NOT configured: group by the combination of all mapped address
-  columns (address_1, city, state, zip, etc.) — one output row per unique combination.
+Deduplication strategy — MANDATORY, non-negotiable:
+The output location.csv MUST NOT contain duplicate rows. Every location_id must be unique,
+and the same address must not appear more than once.
+
+Implementation MUST use this exact pattern after building the output rows list:
+
+    output_df = pd.DataFrame(rows, columns=[...])
+
+    # Deduplicate BEFORE assigning location_id
+    if location_source_value_col is configured:
+        output_df = output_df.drop_duplicates(subset=["location_source_value"], keep="first")
+    else:
+        dedup_cols = [c for c in ["address_1", "address_2", "city", "state", "zip", "county"] if c in output_df.columns]
+        if dedup_cols:
+            output_df = output_df.drop_duplicates(subset=dedup_cols, keep="first")
+
+    # Reassign location_id after deduplication so IDs are sequential with no gaps
+    output_df["location_id"] = range(1, len(output_df) + 1)
+
+Do NOT rely on the source data already being deduplicated. Always call drop_duplicates explicitly.
+Do NOT assign location_id before deduplication.
 
 Output columns (in this order):
 location_id, address_1, address_2, city, state, zip, county, location_source_value,

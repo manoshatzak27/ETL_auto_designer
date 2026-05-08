@@ -58,7 +58,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/8`)
+    navigate(`/project/${project.id}/step/5`)
   }
 
   const set = (field: keyof ProviderConfig) => (v: string) =>
@@ -68,10 +68,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={7}
-      onBack={() => navigate(`/project/${project.id}/step/6`)}
+      currentStep={4}
+      onBack={() => navigate(`/project/${project.id}/step/3`)}
       onNext={handleNext}
-      nextLabel="Next: Death →"
+      nextLabel="Next: Person →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

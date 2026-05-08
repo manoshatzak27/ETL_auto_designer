@@ -57,7 +57,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/7`)
+    navigate(`/project/${project.id}/step/4`)
   }
 
   const set = (field: keyof CareSiteConfig) => (v: string) =>
@@ -67,8 +67,8 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={6}
-      onBack={() => navigate(`/project/${project.id}/step/5`)}
+      currentStep={3}
+      onBack={() => navigate(`/project/${project.id}/step/2`)}
       onNext={handleNext}
       nextLabel="Next: Provider →"
       saving={saving}
@@ -78,41 +78,46 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
           <h2 className="text-xl font-semibold text-gray-900">Care Site Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
             Map source columns to the OMOP CARE_SITE table. A Care Site is a unique combination
-            of a physical location and the nature of the site (e.g. clinic, ward, hospital).
-            Individual provider information belongs in the PROVIDER table, not here.
+            of a <strong>location</strong> and the <strong>nature of the site</strong> — such as its place of service,
+            name, or another characteristic. It represents institutional (physical or organizational) units
+            where healthcare is delivered: offices, wards, hospitals, clinics, etc. Individual provider
+            information belongs in the PROVIDER table, not here. If the source only provides generic
+            information (e.g. Place of Service), pooled Care Site records are acceptable.
           </p>
         </div>
 
+        {/* Identifiers */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <h3 className="font-medium text-gray-800">Identifiers</h3>
           <FieldMapper
             label="care_site_name"
             sourceColumns={cols}
             value={cfg.care_site_name_col}
             onChange={set('care_site_name_col')}
-            hint="Name of the care site as it appears in the source (max 255 chars)."
+            hint="The name of the care site as it appears in the source data (max 255 chars)."
           />
-
           <FieldMapper
             label="care_site_source_value"
             sourceColumns={cols}
             value={cfg.care_site_source_value_col}
             onChange={set('care_site_source_value_col')}
-            hint="Verbatim care site identifier from the source. Used as the deduplication key."
+            hint="The identifier of the care site as it appears in the source. This may differ from the name and serves as the primary deduplication key (max 50 chars)."
           />
+        </div>
 
-          <FieldMapper
-            label="location_source_value column"
-            sourceColumns={cols}
-            value={cfg.location_source_value_col}
-            onChange={set('location_source_value_col')}
-            hint="Column whose value matches location_source_value in location.csv — used to look up location_id."
-          />
-
+        {/* Place of Service */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <h3 className="font-medium text-gray-800">Place of Service</h3>
           <div>
             <label className="text-sm font-medium text-gray-700">
               place_of_service_concept_id
               <span className="ml-1 font-normal text-gray-400">— predominant care setting (Visit domain)</span>
             </label>
+            <p className="text-xs text-gray-500 mt-0.5 mb-1">
+              A high-level characterization of the Care Site. Choose the Visit-domain standard concept
+              that best represents the setting in which most care is delivered here. If visits vary widely,
+              leave unset and rely on the visit-level concept instead.
+            </p>
             <select
               value={cfg.place_of_service_concept_id ?? ''}
               onChange={e => setCfg(prev => ({
@@ -126,13 +131,24 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
               ))}
             </select>
           </div>
-
           <FieldMapper
             label="place_of_service_source_value"
             sourceColumns={cols}
             value={cfg.place_of_service_source_value_col}
             onChange={set('place_of_service_source_value_col')}
-            hint="Verbatim place-of-service value from the source (max 50 chars)."
+            hint="Verbatim place-of-service value from the source data (max 50 chars)."
+          />
+        </div>
+
+        {/* Location Link */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <h3 className="font-medium text-gray-800">Location Link</h3>
+          <FieldMapper
+            label="location_source_value column"
+            sourceColumns={cols}
+            value={cfg.location_source_value_col}
+            onChange={set('location_source_value_col')}
+            hint="Column whose value matches location_source_value in location.csv — used to look up location_id (FK to LOCATION table)."
           />
         </div>
 

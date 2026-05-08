@@ -18,12 +18,12 @@ REFS_DIR = PROMPTS_DIR / "references"
 
 # Tables we support, in dependency order
 SUPPORTED_TABLES = [
-    "person",
-    "visit_occurrence",
-    "observation_period",
     "location",
     "care_site",
     "provider",
+    "person",
+    "visit_occurrence",
+    "observation_period",
     "stem_table",
     "death",
 ]

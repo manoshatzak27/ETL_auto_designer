@@ -11,6 +11,9 @@ from app.config import settings
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\n(.*?)```", re.DOTALL)
 
 SUPPORTED_TABLES = [
+    "location",
+    "care_site",
+    "provider",
     "person",
     "visit_occurrence",
     "observation_period",

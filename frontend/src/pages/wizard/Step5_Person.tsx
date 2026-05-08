@@ -173,15 +173,15 @@ export default function Step2Person({ project, onUpdate }: Props) {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/3`)
+    navigate(`/project/${project.id}/step/6`)
   }
 
   return (
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
-      currentStep={2}
-      onBack={() => navigate(`/project/${project.id}/step/1`)}
+      currentStep={5}
+      onBack={() => navigate(`/project/${project.id}/step/4`)}
       onNext={handleNext}
       nextLabel="Next: Visit Occurrence →"
       saving={saving}

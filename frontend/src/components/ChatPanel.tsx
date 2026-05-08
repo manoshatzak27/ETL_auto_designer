@@ -15,6 +15,9 @@ import {
 import clsx from 'clsx'
 
 const TABLES = [
+  { key: 'location',           label: 'location.py' },
+  { key: 'care_site',          label: 'care_site.py' },
+  { key: 'provider',           label: 'provider.py' },
   { key: 'person',             label: 'person.py' },
   { key: 'visit_occurrence',   label: 'visit_occurrence.py' },
   { key: 'observation_period', label: 'observation_period.py' },
