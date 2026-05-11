@@ -97,17 +97,26 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
 
+    _CONCEPT_MAPPING_TABLES = {"stem_table", "observation_period", "visit_occurrence", "death"}
+
     # ── Standalone adapter instructions ──────────────────────────────────
+    env_vars = [
+        "  - ETL_SOURCE_PATH   → path to the source CSV file",
+        "  - ETL_OUTPUT_DIR    → output directory for OMOP CSVs",
+    ]
+    if table in _CONCEPT_MAPPING_TABLES:
+        env_vars += [
+            "  - ETL_MAPPING_FILES → JSON string: {name: filepath} for the 3 concept mapping CSVs",
+            "    • variable_mapping.csv  (variable_source_code → concept_id)",
+            "    • value_mapping.csv     (variable_source_code, value_source_code → value_as_concept_id)",
+            "    • variable_value_mapping.csv  (variable_source_code, value_source_code → concept_id)",
+        ]
+
     lines += [
         "## ADAPTATION RULES",
         "The reference uses a `wrapper` object. Your script must NOT use it.",
         "Instead, read data from files using these environment variables:",
-        "  - ETL_SOURCE_PATH   → path to the source CSV file",
-        "  - ETL_OUTPUT_DIR    → output directory for OMOP CSVs",
-        "  - ETL_MAPPING_FILES → JSON string: {name: filepath} for the 3 concept mapping CSVs",
-        "    • variable_mapping.csv  (variable_source_code → concept_id)",
-        "    • value_mapping.csv     (variable_source_code, value_source_code → value_as_concept_id)",
-        "    • variable_value_mapping.csv  (variable_source_code, value_source_code → concept_id)",
+        *env_vars,
         "",
         "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}.",
         "Visit occurrence ID lookup (needed by stem_table and death): load ETL_OUTPUT_DIR/visit_occurrence.csv",
