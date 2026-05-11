@@ -118,9 +118,11 @@ export interface LocationConfig {
   cs_country_source_value_col: string
   cs_latitude_col: string
   cs_longitude_col: string
-  // Shared country config
+  // Person country config
   country_concept_id_map: Record<string, number>
   country_concept_id_default: number
+  // Care site country config
+  cs_country_concept_id_default: number
 }
 
 export interface CareSiteConfig {

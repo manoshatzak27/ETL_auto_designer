@@ -35,6 +35,7 @@ const DEFAULTS: LocationConfig = {
   cs_longitude_col: '',
   country_concept_id_map: {},
   country_concept_id_default: 0,
+  cs_country_concept_id_default: 0,
 }
 
 function AutoComputedBadge({ cfg, fields }: {
@@ -93,6 +94,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
           ...ex,
           country_concept_id_map: ex.country_concept_id_map ?? {},
           country_concept_id_default: ex.country_concept_id_default ?? 0,
+          cs_country_concept_id_default: ex.cs_country_concept_id_default ?? 0,
         }
         if (loaded.county_col) {
           const savedKeys = Object.keys(loaded.country_concept_id_map)
@@ -237,6 +239,11 @@ export default function Step5Location({ project, onUpdate }: Props) {
             )}
             <div>
               <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
+              <p className="text-xs text-gray-500 mt-0.5">
+                The Concept Id representing the country. Values should conform to the{' '}
+                <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Geography</a>
+                {' '}domain.
+              </p>
               <input
                 type="number"
                 value={cfg.country_concept_id_default ?? 0}
@@ -245,8 +252,8 @@ export default function Step5Location({ project, onUpdate }: Props) {
               />
               <p className="text-xs text-gray-500 mt-1">
                 {cfg.county_col
-                  ? 'Used when a source value is not in the map above (0 = unknown). Also applies to Care Site addresses.'
-                  : 'Applied to all rows when no county column is mapped (0 = unknown). Also applies to Care Site addresses.'}
+                  ? 'Used when a person source value is not in the map above (0 = unknown).'
+                  : 'Applied to all person rows when no county column is mapped (0 = unknown).'}
               </p>
             </div>
             <FieldMapper
@@ -327,6 +334,25 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('cs_county_col')}
               hint="County or region (max 20 chars). Uses the same country_concept_id mapping defined in the Person Address section above."
             />
+            <div>
+              <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
+              <p className="text-xs text-gray-500 mt-0.5">
+                The Concept Id representing the country. Values should conform to the{' '}
+                <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Geography</a>
+                {' '}domain.
+              </p>
+              <input
+                type="number"
+                value={cfg.cs_country_concept_id_default ?? 0}
+                onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
+                className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500 mt-1">
+                {cfg.cs_county_col
+                  ? 'Used when a care site county value is not in the map above (0 = unknown).'
+                  : 'Applied to all care site rows when no county column is mapped (0 = unknown).'}
+              </p>
+            </div>
             <FieldMapper
               label="country_source_value"
               sourceColumns={cols}
