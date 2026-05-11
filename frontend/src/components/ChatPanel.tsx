@@ -131,9 +131,9 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-0 right-0 z-50 flex flex-col w-[420px] h-[580px] bg-white border border-gray-200 rounded-tl-2xl shadow-2xl">
+        <div className="fixed bottom-[72px] right-4 z-50 flex flex-col w-[420px] h-[580px] bg-white border border-gray-200 rounded-2xl shadow-2xl">
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-tl-2xl flex-shrink-0">
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-t-2xl flex-shrink-0">
             <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
               <Sparkles className="w-4 h-4 text-blue-600" />
             </div>
