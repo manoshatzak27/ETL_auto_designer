@@ -16,7 +16,6 @@ const DEFAULTS: CareSiteConfig = {
   enabled: true,
   care_site_name_col: '',
   place_of_service_concept_id: null,
-  location_source_value_col: '',
   care_site_source_value_col: '',
   place_of_service_source_value_col: '',
 }
@@ -137,18 +136,6 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
             value={cfg.place_of_service_source_value_col}
             onChange={set('place_of_service_source_value_col')}
             hint="Verbatim place-of-service value from the source data (max 50 chars)."
-          />
-        </div>
-
-        {/* Location Link */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Location Link</h3>
-          <FieldMapper
-            label="location_source_value column"
-            sourceColumns={cols}
-            value={cfg.location_source_value_col}
-            onChange={set('location_source_value_col')}
-            hint="Column whose value matches location_source_value in location.csv — used to look up location_id (FK to LOCATION table)."
           />
         </div>
 

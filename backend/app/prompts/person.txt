@@ -17,6 +17,50 @@ The person table maps one row per patient. Key transformation rules:
 8. All *_source_concept_id fields: 0
 9. FILTER: skip rows where required_source_cols are missing or empty
 
+## PROVIDER ID LOOKUP
+
+The PROVIDER CONFIG section (injected below) contains provider_name_col (the source column
+that identifies the provider per row).
+
+If provider_name_col is configured (non-empty):
+  - Load ETL_OUTPUT_DIR/provider.csv (semicolon-delimited).
+  - Build dict: provider_lookup = {str(row["provider_name"]): int(row["provider_id"]) for each row}
+  - If provider.csv does not exist, set provider_lookup = {} and continue — do not abort.
+  - For each person row, set provider_id = provider_lookup.get(str(row[provider_name_col]), None)
+
+If provider_name_col is empty or absent in the config, set provider_id to NULL.
+
+## CARE SITE ID LOOKUP
+
+The CARE SITE CONFIG section (injected below) contains the care site configuration,
+including care_site_name_col (the source column that identifies the care site).
+
+If care_site_name_col is configured (non-empty):
+  - Load ETL_OUTPUT_DIR/care_site.csv (semicolon-delimited).
+  - Build dict: care_site_lookup = {str(row["care_site_name"]): int(row["care_site_id"]) for each row}
+  - If care_site.csv does not exist, set care_site_lookup = {} and continue — do not abort.
+  - For each person row, set care_site_id = care_site_lookup.get(str(row[care_site_name_col]), None)
+
+If care_site_name_col is empty or absent in the config, set care_site_id to NULL.
+
+## LOCATION LOOKUP
+
+The LOCATION CONFIG section (injected below) contains the person address columns:
+  address_1_col, address_2_col, city_col, state_col, zip_col, county_col, country_source_value_col
+
+For each source row, compute location_source_value exactly as location.py does:
+  - Collect the values of each configured person address column (skip unconfigured ones).
+  - Join with " | " separator, omitting null/empty values.
+  - This string is the lookup key into location.csv.
+
+Location lookup steps (only when at least one person address column is configured):
+  - Load ETL_OUTPUT_DIR/location.csv (semicolon-delimited).
+  - Build dict: location_lookup = {row["location_source_value"]: row["location_id"]}.
+  - If location.csv does not exist, set location_lookup = {} and continue — do not abort.
+  - Set location_id = location_lookup.get(computed_location_source_value, None).
+
+If no person address columns are configured in the LOCATION CONFIG, set location_id to NULL.
+
 Output columns (in this order):
 person_id, gender_concept_id, year_of_birth, month_of_birth, day_of_birth, birth_datetime,
 race_concept_id, ethnicity_concept_id, location_id, provider_id, care_site_id,

@@ -199,6 +199,43 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
 
+    # ── Location config (injected into care_site and person for location_id lookup) ──
+    if table in ("care_site", "person"):
+        location_config: dict = (project.etl_config or {}).get("location", {})
+        if location_config:
+            lines += [
+                "## LOCATION CONFIG (for location_id lookup)",
+                "Use the address columns below to compute location_source_value per row",
+                "and look up location_id from ETL_OUTPUT_DIR/location.csv.",
+                "```json",
+                json.dumps(location_config, indent=2),
+                "```",
+                "",
+            ]
+
+    if table == "person":
+        care_site_config: dict = (project.etl_config or {}).get("care_site", {})
+        if care_site_config:
+            lines += [
+                "## CARE SITE CONFIG (for care_site_id lookup)",
+                "Use the column below to look up care_site_id from ETL_OUTPUT_DIR/care_site.csv.",
+                "```json",
+                json.dumps(care_site_config, indent=2),
+                "```",
+                "",
+            ]
+
+        provider_config: dict = (project.etl_config or {}).get("provider", {})
+        if provider_config:
+            lines += [
+                "## PROVIDER CONFIG (for provider_id lookup)",
+                "Use the column below to look up provider_id from ETL_OUTPUT_DIR/provider.csv.",
+                "```json",
+                json.dumps(provider_config, indent=2),
+                "```",
+                "",
+            ]
+
     # ── Extra user instructions ───────────────────────────────────────────
     if extra:
         lines += [

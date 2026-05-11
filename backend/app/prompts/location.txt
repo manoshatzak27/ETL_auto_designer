@@ -4,55 +4,56 @@ of Persons and Care Sites.
 Key OMOP rules:
 - Each address or Location is unique and appears only once in the table.
 - Locations do not contain names (e.g., hospital names belong in CARE_SITE).
-- Deduplicate: if two rows have the same location_source_value (or the same combination of
-  address fields), emit only one LOCATION record and reuse its location_id.
+- Deduplicate: if two rows produce the same location_source_value, emit only one LOCATION record.
 
-Field rules:
-1. location_id: sequential integer, unique across all records (1, 2, 3, …).
-2. address_1: from address_1_col if configured; varchar(50) — truncate if longer.
-3. address_2: from address_2_col if configured; varchar(50).
-4. city: from city_col if configured; varchar(50).
-5. state: from state_col if configured; varchar(2) — use 2-letter abbreviation or first 2 chars.
-   Can represent province or district for international addresses.
-6. zip: from zip_col if configured; varchar(9) — keep as string (leading zeros matter).
-   For US: 3-digit, 5-digit, or 9-digit (ZIP+4). For international: use local postal format.
-7. county: from county_col if configured; varchar(20). Can represent region internationally.
-   The raw source value is stored here as-is (truncated to 20 chars if needed).
-8. location_source_value: from location_source_value_col if configured; varchar(50).
-   Put the verbatim source value here. Use this as the deduplication key when present.
-9. country_concept_id: resolved entirely from the config dictionary — NO external files, NO CSVs,
-   NO file I/O of any kind. The mapping is already embedded in the config as country_concept_id_map
-   (a plain dict {source_value: concept_id}). Use it with .get() and fall back to
-   country_concept_id_default when the value is missing. If county_col is not configured and
-   country_concept_id_default is 0, set to NULL.
-   Must conform to the Geography domain in OMOP.
-10. country_source_value: from country_source_value_col if configured; varchar(80).
-11. latitude: from latitude_col if configured; float. Must be between -90 and 90 — skip or null
-    if out of range.
-12. longitude: from longitude_col if configured; float. Must be between -180 and 180 — skip or
-    null if out of range.
+The config contains TWO groups of address columns:
+  • Person address  : address_1_col, address_2_col, city_col, state_col, zip_col, county_col,
+                      country_source_value_col
+  • Care site address: cs_address_1_col, cs_address_2_col, cs_city_col, cs_state_col, cs_zip_col,
+                       cs_county_col, cs_country_source_value_col, cs_latitude_col, cs_longitude_col
+
+Process BOTH groups from every source row. Collect all candidate location records into a single
+list, then deduplicate.
+
+Field rules (apply to both groups — use the cs_* column names for care-site records):
+1. location_id: sequential integer, assigned AFTER deduplication (1, 2, 3, …).
+2. address_1: from the group's address_1 column if configured; varchar(50) — truncate if longer.
+3. address_2: from the group's address_2 column if configured; varchar(50).
+4. city: from the group's city column if configured; varchar(50).
+5. state: from the group's state column if configured; varchar(2) — use 2-letter abbreviation.
+6. zip: from the group's zip column if configured; varchar(9) — keep as string.
+7. county: from the group's county column if configured; varchar(20).
+8. location_source_value: AUTO-COMPUTED — do NOT read this from a source column.
+   Build it by concatenating the values of all configured address fields for that group in this
+   order: address_1, address_2, city, state, zip, county, country_source_value.
+   Include only fields whose config column is set (non-empty string) and whose row value is
+   non-null/non-empty. Join with " | " as separator. Truncate to 255 chars if needed.
+   Example: "123 Main St | Apt 4 | Springfield | IL | 62701 | United States"
+   This computed string is always the deduplication key.
+9. country_concept_id: resolved from country_concept_id_map (shared by both groups).
+   Use .get() on the county field value and fall back to country_concept_id_default.
+   If no county column and default is 0, set to NULL.
+10. country_source_value: from the group's country_source_value column if configured; varchar(80).
+11. latitude: from cs_latitude_col if configured (care-site group only); float, range −90 to 90.
+12. longitude: from cs_longitude_col if configured (care-site group only); float, range −180 to 180.
+
+For person-group records, latitude and longitude are always NULL.
 
 Deduplication strategy — MANDATORY, non-negotiable:
-The output location.csv MUST NOT contain duplicate rows. Every location_id must be unique,
-and the same address must not appear more than once.
+The output location.csv MUST NOT contain duplicate rows. Every location_id must be unique.
 
-Implementation MUST use this exact pattern after building the output rows list:
+Implementation MUST use this exact pattern after building the combined rows list:
 
     output_df = pd.DataFrame(rows, columns=[...])
 
-    # Deduplicate BEFORE assigning location_id
-    if location_source_value_col is configured:
-        output_df = output_df.drop_duplicates(subset=["location_source_value"], keep="first")
-    else:
-        dedup_cols = [c for c in ["address_1", "address_2", "city", "state", "zip", "county"] if c in output_df.columns]
-        if dedup_cols:
-            output_df = output_df.drop_duplicates(subset=dedup_cols, keep="first")
+    # Deduplicate BEFORE assigning location_id — location_source_value is always computed
+    output_df = output_df.drop_duplicates(subset=["location_source_value"], keep="first")
 
     # Reassign location_id after deduplication so IDs are sequential with no gaps
     output_df["location_id"] = range(1, len(output_df) + 1)
 
-Do NOT rely on the source data already being deduplicated. Always call drop_duplicates explicitly.
 Do NOT assign location_id before deduplication.
+Skip a group entirely if none of its address columns are configured.
 
 Output columns (in this order):
 location_id, address_1, address_2, city, state, zip, county, location_source_value,

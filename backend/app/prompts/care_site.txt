@@ -17,29 +17,43 @@ Read the USER CONFIGURATION JSON. Each key maps directly to a behaviour:
 - place_of_service_source_value_col: source column name → place_of_service_source_value (varchar 50).
   If empty or absent, set to NULL.
 
-- location_source_value_col: source column name whose values are used to look up location_id
-  from the already-generated location.csv.
-  If empty or absent, set location_id to NULL for all rows.
-
 A column is "not configured" when its value is an empty string "" or the key is missing entirely.
 Never read a source column that is not configured. Never invent default column names.
+
+## LOCATION LOOKUP
+
+The LOCATION CONFIG section (injected below) contains the care-site address columns:
+  cs_address_1_col, cs_address_2_col, cs_city_col, cs_state_col, cs_zip_col,
+  cs_county_col, cs_country_source_value_col
+
+For each source row, compute location_source_value exactly as location.py does:
+  - Collect the values of each configured care-site address column (skip unconfigured ones).
+  - Join with " | " separator, omitting null/empty values.
+  - This string is the lookup key into location.csv.
+
+Location lookup steps (only when at least one cs_* column is configured):
+  - Load ETL_OUTPUT_DIR/location.csv (semicolon-delimited).
+  - Build dict: location_lookup = {row["location_source_value"]: row["location_id"]}.
+  - If location.csv does not exist, set location_lookup = {} and continue — do not abort.
+  - Set location_id = location_lookup.get(computed_location_source_value, None).
+
+If no cs_* columns are configured in the LOCATION CONFIG, set location_id to NULL for all rows.
 
 ## IMPLEMENTATION STEPS
 
 1. Read the source file (ETL_SOURCE_PATH) with the correct delimiter and encoding.
 
-2. Location lookup (only if location_source_value_col is configured):
-   - Load ETL_OUTPUT_DIR/location.csv (semicolon-delimited).
-   - Build dict: location_lookup = {row["location_source_value"]: row["location_id"]}.
-   - If location.csv does not exist, set location_lookup = {} and continue — do not abort.
+2. Location lookup (only if any cs_* column is configured in LOCATION CONFIG):
+   - Compute location_source_value per row as described above.
+   - Load ETL_OUTPUT_DIR/location.csv and build the lookup dict.
+   - If location.csv does not exist, set location_lookup = {} and continue.
 
 3. For each source row, build a candidate CARE_SITE record:
    - care_site_name              ← row[care_site_name_col]               if configured, else NULL
    - care_site_source_value      ← row[care_site_source_value_col]       if configured, else NULL
    - place_of_service_concept_id ← constant from config                  (integer or NULL)
    - place_of_service_source_value ← row[place_of_service_source_value_col] if configured, else NULL
-   - location_source_value_raw   ← row[location_source_value_col]        if configured (for lookup only)
-   - location_id                 ← location_lookup.get(location_source_value_raw, None)
+   - location_id                 ← location_lookup.get(computed_location_source_value, None)
 
 4. Deduplication — MANDATORY:
    Build the full list of candidate rows first, then deduplicate BEFORE assigning care_site_id.

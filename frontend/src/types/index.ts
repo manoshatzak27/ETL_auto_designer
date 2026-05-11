@@ -40,8 +40,6 @@ export interface PersonConfig {
     race_concept_id?: RaceEthnicityMapping | ConstantMapping
     ethnicity_concept_id?: RaceEthnicityMapping | ConstantMapping
     location_id?: RaceEthnicityMapping
-    provider_id?: RaceEthnicityMapping
-    care_site_id?: RaceEthnicityMapping
   }
   required_source_cols: string[]
 }
@@ -65,6 +63,7 @@ export interface DateFieldMapping extends FieldMapping {
 export interface ConstantMapping {
   constant: number
 }
+
 
 export interface RaceEthnicityMapping {
   source_col: string
@@ -101,25 +100,33 @@ export interface ObservationPeriodConfig {
 
 export interface LocationConfig {
   enabled: boolean
+  // Person address columns
   address_1_col: string
   address_2_col: string
   city_col: string
   state_col: string
   zip_col: string
   county_col: string
-  location_source_value_col: string
+  country_source_value_col: string
+  // Care site address columns
+  cs_address_1_col: string
+  cs_address_2_col: string
+  cs_city_col: string
+  cs_state_col: string
+  cs_zip_col: string
+  cs_county_col: string
+  cs_country_source_value_col: string
+  cs_latitude_col: string
+  cs_longitude_col: string
+  // Shared country config
   country_concept_id_map: Record<string, number>
   country_concept_id_default: number
-  country_source_value_col: string
-  latitude_col: string
-  longitude_col: string
 }
 
 export interface CareSiteConfig {
   enabled: boolean
   care_site_name_col: string
   place_of_service_concept_id: number | null
-  location_source_value_col: string
   care_site_source_value_col: string
   place_of_service_source_value_col: string
 }
