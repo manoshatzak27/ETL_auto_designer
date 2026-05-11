@@ -45,7 +45,7 @@ export default function Step1Upload({ project, onUpdate }: Props) {
       currentStep={1}
       onNext={() => navigate(`/project/${project.id}/step/2`)}
       nextDisabled={!hasSource}
-      nextLabel="Next: Person →"
+      nextLabel="Next: Location →"
     >
       <div className="flex flex-col gap-6">
         <div>
