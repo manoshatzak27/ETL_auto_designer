@@ -215,7 +215,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             sourceColumns={cols}
             value={cfg.care_site_source_value_col}
             onChange={set('care_site_source_value_col')}
-            hint="Column whose value matches care_site_source_value in care_site.csv — used to look up care_site_id."
+            hint="Column whose value matches the care_site_source_value in care_site.csv (composite: location_col + '_' + name_col) — used to look up care_site_id."
           />
         </div>
 

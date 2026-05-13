@@ -214,6 +214,31 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
 
+    # ── Care site composite source value ─────────────────────────────────
+    if table == "care_site":
+        cs_cfg: dict = (project.etl_config or {}).get("care_site", {})
+        loc_cfg: dict = (project.etl_config or {}).get("location", {})
+        name_col = cs_cfg.get("care_site_name_col", "")
+        cs_addr_cols = [
+            col for key in ("cs_address_1_col", "cs_address_2_col", "cs_city_col",
+                            "cs_state_col", "cs_zip_col", "cs_county_col")
+            if (col := loc_cfg.get(key, ""))
+        ]
+        cs_country = loc_cfg.get("cs_country_source_value", "")
+        if name_col:
+            lines += [
+                "## CARE_SITE_SOURCE_VALUE — COMPOSITE KEY",
+                "Build care_site_source_value by joining the care site location source value",
+                "and the care site name, separated by '_'.",
+                "The location source value is constructed the same way as in location.csv:",
+                "  join non-empty values of the cs_* address columns with '|'.",
+                f"  Address columns (from location config): {cs_addr_cols}" + (f" + static country '{cs_country}'" if cs_country else ""),
+                f"  care_site_source_value = cs_location_source_value + '_' + str(row['{name_col}'])",
+                "Truncate to 50 characters if necessary.",
+                "Use this composite value as the deduplication key.",
+                "",
+            ]
+
     # ── Location config (injected into care_site and person for location_id lookup) ──
     if table in ("care_site", "person"):
         location_config: dict = (project.etl_config or {}).get("location", {})
@@ -233,7 +258,11 @@ def _build_table_prompt(project, table: str) -> str:
         if care_site_config:
             lines += [
                 "## CARE SITE CONFIG (for care_site_id lookup)",
-                "Use the column below to look up care_site_id from ETL_OUTPUT_DIR/care_site.csv.",
+                "Load ETL_OUTPUT_DIR/care_site.csv and build a dict {care_site_source_value: care_site_id}.",
+                "care_site_source_value in that file is a composite: cs_location_source_value + '_' + care_site_name.",
+                "cs_location_source_value is built by joining the non-empty cs_* address column values with '|'",
+                "(same formula used when generating care_site.csv — see CARE_SITE_SOURCE_VALUE section there).",
+                "Reconstruct the same composite from the person source row to perform the lookup.",
                 "```json",
                 json.dumps(care_site_config, indent=2),
                 "```",

@@ -16,7 +16,6 @@ const DEFAULTS: CareSiteConfig = {
   enabled: true,
   care_site_name_col: '',
   place_of_service_concept_id: null,
-  care_site_source_value_col: '',
   place_of_service_source_value_col: '',
 }
 
@@ -95,13 +94,18 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
             onChange={set('care_site_name_col')}
             hint="The name of the care site as it appears in the source data (max 255 chars)."
           />
-          <FieldMapper
-            label="care_site_source_value"
-            sourceColumns={cols}
-            value={cfg.care_site_source_value_col}
-            onChange={set('care_site_source_value_col')}
-            hint="The identifier of the care site as it appears in the source. This may differ from the name and serves as the primary deduplication key (max 50 chars)."
-          />
+          <div className="flex flex-col gap-1">
+            <label className="text-sm font-medium text-gray-700">care_site_source_value</label>
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex flex-col gap-1">
+              <p className="text-sm font-medium text-blue-800">Auto-computed — no mapping required</p>
+              <p className="text-sm text-blue-700">
+                Constructed as{' '}
+                <code className="bg-blue-100 px-1 rounded text-xs">cs_location_source_value + "_" + care_site_name</code>.
+                The location part comes from the care site address columns mapped in the{' '}
+                <strong>Location step</strong>.
+              </p>
+            </div>
+          </div>
         </div>
 
         {/* Place of Service */}
