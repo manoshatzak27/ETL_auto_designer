@@ -1,6 +1,4 @@
-#!/bin/sh
-'''exec' "/home/elias/Documents/ainigma/ETL auto designer final/ETL_auto_designer/backend/venv/bin/python3" "$0" "$@"
-' '''
+#!/home/elias/Documents/ainigma/ETL_auto_designer/backend/venv/bin/python3
 # -*- coding: utf-8 -*-
 import re
 import sys

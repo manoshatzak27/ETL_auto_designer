@@ -31,8 +31,10 @@ Field rules (apply to both groups — use the cs_* column names for care-site re
    Example: "123 Main St | Apt 4 | Springfield | IL | 62701 | United States"
    This computed string is always the deduplication key.
 9. country_concept_id: resolved from country_concept_id_map (shared by both groups).
-   Use .get() on the county field value and fall back to country_concept_id_default.
-   If no county column and default is 0, set to NULL.
+   For person rows: use .get() on the county field value and fall back to country_concept_id_default.
+   For care-site rows: use .get() on the cs_county field value and fall back to cs_country_concept_id_default
+   (if that key is absent or 0, further fall back to country_concept_id_default).
+   If the resolved default is 0, set to NULL.
 10. country_source_value: from the group's country_source_value column if configured; varchar(80).
 11. latitude: from cs_latitude_col if configured (care-site group only); float, range −90 to 90.
 12. longitude: from cs_longitude_col if configured (care-site group only); float, range −180 to 180.

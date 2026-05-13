@@ -233,6 +233,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Default gender_concept_id</label>
+            <p className="text-xs text-gray-500 mt-0.5">
+              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
+            </p>
             <input
               type="number"
               value={cfg.mappings.gender_concept_id.default ?? 0}
@@ -304,6 +307,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Default race_concept_id</label>
+            <p className="text-xs text-gray-500 mt-0.5">
+              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Race&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
+            </p>
             <input
               type="number"
               value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
@@ -341,6 +347,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Default ethnicity_concept_id</label>
+            <p className="text-xs text-gray-500 mt-0.5">
+              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Ethnicity&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
+            </p>
             <input
               type="number"
               value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
