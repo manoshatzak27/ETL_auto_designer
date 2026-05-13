@@ -129,7 +129,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Specialty</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-gray-800">Specialty</h3>
+            <a href="http://athena.ohdsi.org/search-terms/terms?domain=Provider&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+          </div>
 
           <FieldMapper
             label="specialty_source_value"
@@ -144,9 +147,6 @@ export default function Step7Provider({ project, onUpdate }: Props) {
               specialty_concept_id
               <span className="ml-1 font-normal text-gray-400">— standard OMOP Provider-domain concept</span>
             </label>
-            <p className="text-xs text-gray-500 mt-0.5">
-              <a href="http://athena.ohdsi.org/search-terms/terms?domain=Provider&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
-            </p>
             <input
               type="number"
               value={cfg.specialty_concept_id ?? ''}
@@ -164,7 +164,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Gender</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-gray-800">Gender</h3>
+            <a href="http://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+          </div>
 
           <FieldMapper
             label="gender_source_value"
@@ -179,9 +182,6 @@ export default function Step7Provider({ project, onUpdate }: Props) {
               gender_concept_id
               <span className="ml-1 font-normal text-gray-400">— standard OMOP Gender concept</span>
             </label>
-            <p className="text-xs text-gray-500 mt-0.5">
-              <a href="http://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
-            </p>
             <select
               value={cfg.gender_concept_id ?? ''}
               onChange={e => setCfg(prev => ({

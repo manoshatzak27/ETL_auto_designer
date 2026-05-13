@@ -204,7 +204,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
         {/* Gender */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Gender</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-gray-800">Gender</h3>
+            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+          </div>
 
           <FieldMapper
             label="Gender column"
@@ -233,9 +236,6 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Default gender_concept_id</label>
-            <p className="text-xs text-gray-500 mt-0.5">
-              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
-            </p>
             <input
               type="number"
               value={cfg.mappings.gender_concept_id.default ?? 0}
@@ -282,7 +282,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
         {/* Race */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
-          <h3 className="font-medium text-gray-800">Race</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-gray-800">Race</h3>
+            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Race&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+          </div>
 
           <FieldMapper
             label="Race column"
@@ -307,9 +310,6 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Default race_concept_id</label>
-            <p className="text-xs text-gray-500 mt-0.5">
-              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Race&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
-            </p>
             <input
               type="number"
               value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
@@ -322,7 +322,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
         {/* Ethnicity */}
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
-          <h3 className="font-medium text-gray-800">Ethnicity</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-medium text-gray-800">Ethnicity</h3>
+            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Ethnicity&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+          </div>
 
           <FieldMapper
             label="Ethnicity column"
@@ -347,9 +350,6 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div>
             <label className="text-sm font-medium text-gray-700">Default ethnicity_concept_id</label>
-            <p className="text-xs text-gray-500 mt-0.5">
-              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Ethnicity&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-blue-600 hover:underline">Accepted Concepts</a>.
-            </p>
             <input
               type="number"
               value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
