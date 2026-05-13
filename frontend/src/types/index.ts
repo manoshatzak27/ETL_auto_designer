@@ -75,13 +75,26 @@ export interface VisitDefinition {
   label: string
   date_col: string
   end_date_col?: string
+  // visit_concept_id: fixed concept or default when column mapping is used
   visit_concept_id: number
+  visit_concept_source_col?: string
+  visit_concept_value_map?: Record<string, number>
+  // type_concept_id: fixed concept or default when column mapping is used
   type_concept_id: number
+  visit_type_source_col?: string
+  visit_type_value_map?: Record<string, number>
+  // visit_source_value: static text or derived from source column
   source_value: string
+  visit_source_col?: string
   optional: boolean
+  // inpatient fields
   admitted_from_concept_id?: number
+  admitted_from_source_col?: string
+  admitted_from_value_map?: Record<string, number>
   admitted_from_source_value?: string
   discharged_to_concept_id?: number
+  discharged_to_source_col?: string
+  discharged_to_value_map?: Record<string, number>
   discharged_to_source_value?: string
 }
 

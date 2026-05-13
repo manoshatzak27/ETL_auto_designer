@@ -4,7 +4,11 @@ Key rules:
 1. For each visit_definition in the config, create one row per patient IF the date column is not empty.
 2. visit_occurrence_id: generate sequential integers (use enumerate or a counter).
 3. person_id: looked up from the already-built person DataFrame (match on source ID column).
-4. visit_concept_id: from the visit_definition config (e.g. 9202 = Outpatient Visit).
+4. visit_concept_id — two modes, check the visit_definition config:
+   a. Column-mapped mode: if visit_concept_source_col is set, read that column from the source row,
+      look up its string value in visit_concept_value_map (a dict str→int), and use the resulting int.
+      If the value is absent from the map, fall back to visit_concept_id (the default integer).
+   b. Fixed mode: if visit_concept_source_col is absent or empty, use visit_concept_id directly.
 
 visit_start_date / visit_start_datetime:
 - Parse visit_start_date from the configured date_col using the project date format.
@@ -22,19 +26,29 @@ visit_end_date / visit_end_datetime:
 - For Inpatient Visits still ongoing at ETL run time (no end date in source), set visit_end_date to today's date
   and visit_type_concept_id to 32220 ("Still patient").
 
-visit_type_concept_id: from config (e.g. 32879 = Registry).
-visit_source_value: the source_value string from config (e.g. "ONSET Visit").
+visit_type_concept_id — two modes:
+   a. Column-mapped: if visit_type_source_col is set, read that column, look up in visit_type_value_map,
+      fall back to type_concept_id if not found.
+   b. Fixed: use type_concept_id directly.
+
+visit_source_value — two modes:
+   a. Column-mapped: if visit_source_col is set, read that column value from the source row and use it.
+   b. Static: use the source_value string from config (e.g. "ONSET Visit").
 visit_source_concept_id: leave as 0 (no OMOP-supported source vocabulary).
 
-admitted_from_concept_id / admitted_from_source_value:
-- If the visit_definition config contains admitted_from_concept_id (integer) or admitted_from_source_value (string), use them.
-- Default to 0 / NULL if not provided.
-- Only relevant for multi-day visits (Inpatient, Non-hospital institution).
+admitted_from_concept_id / admitted_from_source_value — two modes (only for multi-day visits):
+   a. Column-mapped: if admitted_from_source_col is set, read that column value from the source row;
+      use it as admitted_from_source_value AND look it up in admitted_from_value_map to get the concept ID.
+      Fall back to admitted_from_concept_id (integer) if the value is not in the map.
+   b. Fixed: use admitted_from_concept_id directly; use admitted_from_source_value string if present.
+   Default to 0 / NULL if not provided.
 
-discharged_to_concept_id / discharged_to_source_value:
-- If the visit_definition config contains discharged_to_concept_id (integer) or discharged_to_source_value (string), use them.
-- Default to 0 / NULL if not provided.
-- Only relevant for multi-day visits.
+discharged_to_concept_id / discharged_to_source_value — two modes (only for multi-day visits):
+   a. Column-mapped: if discharged_to_source_col is set, read that column value from the source row;
+      use it as discharged_to_source_value AND look it up in discharged_to_value_map to get the concept ID.
+      Fall back to discharged_to_concept_id (integer) if the value is not in the map.
+   b. Fixed: use discharged_to_concept_id directly; use discharged_to_source_value string if present.
+   Default to 0 / NULL if not provided.
 
 preceding_visit_occurrence_id:
 - For each person, sort their visits by visit_start_date ascending.
