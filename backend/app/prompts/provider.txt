@@ -8,15 +8,44 @@ You are generating a Python ETL script that populates the OMOP CDM PROVIDER tabl
 | provider_name | varchar(255) | No | Map from `provider_name_col` if provided. Truncate to 255 chars. |
 | npi | varchar(20) | No | National Provider Identifier. Map from `npi_col`. Truncate to 20 chars. |
 | dea | varchar(20) | No | DEA identifier. Map from `dea_col`. Truncate to 20 chars. |
-| specialty_concept_id | integer | No | Constant from config `specialty_concept_id` (Provider domain). Use 0 if null/not provided. |
+| specialty_concept_id | integer | No | Look up per-row from `specialty_concept_value_map` (a dict in the config) using the row's raw value of `specialty_source_value_col`. If the map is absent or the value is not a key in the map, use 0. |
 | care_site_id | integer | No | Looked up from `ETL_OUTPUT_DIR/care_site.csv` by matching `care_site_source_value_col` column against `care_site_source_value` in care_site.csv, then reading its `care_site_id`. If no match or column not configured, set to None. |
 | year_of_birth | integer | No | Map from `year_of_birth_col`. Parse as integer. Null if not configured or parse fails. |
-| gender_concept_id | integer | No | Constant from config `gender_concept_id`. Use 0 if null/not provided. |
+| gender_concept_id | integer | No | Look up per-row from `gender_concept_value_map` (a dict in the config) using the row's raw value of `gender_source_value_col`. If the map is absent or the value is not a key in the map, use `gender_concept_id_default` (default 0). |
 | provider_source_value | varchar(50) | No | Map from `provider_source_value_col`. Truncate to 50 chars. |
 | specialty_source_value | varchar(50) | No | Map from `specialty_source_value_col`. Truncate to 50 chars. |
 | specialty_source_concept_id | integer | No | Always 0. |
 | gender_source_value | varchar(50) | No | Map from `gender_source_value_col`. Truncate to 50 chars. |
 | gender_source_concept_id | integer | No | Always 0. |
+
+## specialty_concept_id lookup
+
+If `specialty_concept_value_map` is present in the config, build a Python dict from it at script startup.
+For each provider row, read the raw value from `specialty_source_value_col` and look it up in that dict:
+
+```python
+specialty_map = config.get("specialty_concept_value_map", {})
+# Per row:
+raw_specialty = str(row.get(specialty_source_value_col, "")).strip()
+specialty_concept_id = specialty_map.get(raw_specialty, 0)
+```
+
+If `specialty_concept_value_map` is absent or the value is not found, set `specialty_concept_id` to 0.
+
+## gender_concept_id lookup
+
+If `gender_concept_value_map` is present in the config, build a Python dict from it at script startup.
+For each provider row, read the raw value from `gender_source_value_col` and look it up in that dict:
+
+```python
+gender_map = config.get("gender_concept_value_map", {})
+gender_default = config.get("gender_concept_id_default", 0)
+# Per row:
+raw_gender = str(row.get(gender_source_value_col, "")).strip()
+gender_concept_id = gender_map.get(raw_gender, gender_default)
+```
+
+If `gender_concept_value_map` is absent or the value is not found, use `gender_concept_id_default` (0 if not set).
 
 ## Deduplication
 

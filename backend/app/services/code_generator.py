@@ -141,10 +141,16 @@ def _build_table_prompt(project, table: str) -> str:
     ]
 
     # ── Table-specific config ─────────────────────────────────────────────
+    # Strip legacy scalar fields that were replaced by per-value maps
+    config_for_prompt = dict(config)
+    if table == "provider":
+        config_for_prompt.pop("gender_concept_id", None)
+        config_for_prompt.pop("specialty_concept_id", None)
+
     lines += [
         f"## USER CONFIGURATION FOR {table.upper()}",
         "```json",
-        json.dumps(config, indent=2),
+        json.dumps(config_for_prompt, indent=2),
         "```",
         "",
     ]

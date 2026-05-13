@@ -152,9 +152,11 @@ export interface ProviderConfig {
   npi_col: string
   dea_col: string
   specialty_concept_id: number | null
+  specialty_concept_value_map?: Record<string, number>
   care_site_source_value_col: string
   year_of_birth_col: string
-  gender_concept_id: number | null
+  gender_concept_value_map?: Record<string, number>
+  gender_concept_id_default?: number
   provider_source_value_col: string
   specialty_source_value_col: string
   gender_source_value_col: string

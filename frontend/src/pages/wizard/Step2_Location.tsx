@@ -80,6 +80,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [countyValues, setCountyValues] = useState<string[]>([])
+  const [csCountyValues, setCsCountyValues] = useState<string[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -99,6 +100,9 @@ export default function Step5Location({ project, onUpdate }: Props) {
         if (loaded.county_col) {
           const savedKeys = Object.keys(loaded.country_concept_id_map)
           setCountyValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.county_col]?.distinct_values ?? []))
+        }
+        if (loaded.cs_county_col) {
+          setCsCountyValues(infos[loaded.cs_county_col]?.distinct_values ?? [])
         }
         setCfg(loaded)
       }
@@ -123,6 +127,11 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const handleCountyColChange = (col: string) => {
     setCfg(prev => ({ ...prev, county_col: col, country_concept_id_map: {} }))
     setCountyValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
+  }
+
+  const handleCsCountyColChange = (col: string) => {
+    setCfg(prev => ({ ...prev, cs_county_col: col }))
+    setCsCountyValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
   const addCountyValue = () => {
@@ -332,9 +341,25 @@ export default function Step5Location({ project, onUpdate }: Props) {
               label="county"
               sourceColumns={cols}
               value={cfg.cs_county_col}
-              onChange={set('cs_county_col')}
-              hint="County or region (max 20 chars). Uses the same country_concept_id mapping defined in the Person Address section above."
+              onChange={handleCsCountyColChange}
+              hint="County or region (max 20 chars). Source values can be mapped to a country_concept_id below."
             />
+            {cfg.cs_county_col && (
+              <div className="flex flex-col gap-3 pl-2 border-l-2 border-blue-100">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="text-sm font-medium text-gray-700">Country value → OMOP concept ID mapping</label>
+                    <p className="text-xs text-gray-500 mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                  </div>
+                </div>
+                <ValueConceptMapper
+                  label=""
+                  sourceValues={csCountyValues.length > 0 ? csCountyValues : Object.keys(cfg.country_concept_id_map)}
+                  mapping={cfg.country_concept_id_map}
+                  onChange={m => setCfg(prev => ({ ...prev, country_concept_id_map: m }))}
+                />
+              </div>
+            )}
             <div>
               <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
               <input

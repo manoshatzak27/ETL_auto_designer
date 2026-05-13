@@ -1,9 +1,10 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig } from '../../api/client'
+import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import type { Project, ProviderConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
+import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 
@@ -20,18 +21,14 @@ const DEFAULTS: ProviderConfig = {
   specialty_concept_id: null,
   care_site_source_value_col: '',
   year_of_birth_col: '',
-  gender_concept_id: null,
+  gender_concept_value_map: {},
+  gender_concept_id_default: 0,
   provider_source_value_col: '',
   specialty_source_value_col: '',
   gender_source_value_col: '',
 }
 
-const GENDER_OPTIONS = [
-  { id: null,   label: '— not set —' },
-  { id: 8507,   label: '8507 — Male' },
-  { id: 8532,   label: '8532 — Female' },
-  { id: 8551,   label: '8551 — Unknown' },
-]
+interface ColumnInfo { distinct_values: string[] }
 
 export default function Step7Provider({ project, onUpdate }: Props) {
   const navigate = useNavigate()
@@ -39,6 +36,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<ProviderConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
 
   useEffect(() => {
     getTableConfig(project.id, 'provider').then((ex: ProviderConfig & { extra_instructions?: string }) => {
@@ -47,10 +45,16 @@ export default function Step7Provider({ project, onUpdate }: Props) {
         setCfg(ex)
       }
     })
+    getColumnValues(project.id).then(setColumnInfos)
   }, [project.id])
 
+  const distinctVals = (col: string): string[] =>
+    columnInfos[col]?.distinct_values ?? []
+
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'provider', { ...cfg, extra_instructions: extraInstructions })
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { gender_concept_id: _gid, specialty_concept_id: _sid, ...cleanCfg } = cfg as ProviderConfig & { gender_concept_id?: unknown; specialty_concept_id?: unknown }
+    const p = await updateTableConfig(project.id, 'provider', { ...cleanCfg, extra_instructions: extraInstructions })
     onUpdate(p)
   }
 
@@ -135,32 +139,26 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           </div>
 
           <FieldMapper
-            label="specialty_source_value"
+            label="Specialty column"
             sourceColumns={cols}
             value={cfg.specialty_source_value_col}
-            onChange={set('specialty_source_value_col')}
-            hint="Specialty as it appears in the source (max 50 chars)."
+            onChange={v => setCfg(prev => ({
+              ...prev,
+              specialty_source_value_col: v,
+              specialty_concept_value_map: v !== prev.specialty_source_value_col ? {} : prev.specialty_concept_value_map,
+            }))}
+            hint="Column containing the provider's specialty. Values will populate specialty_source_value and be mapped to specialty_concept_id below."
           />
 
-          <div>
-            <label className="text-sm font-medium text-gray-700">
-              specialty_concept_id
-              <span className="ml-1 font-normal text-gray-400">— standard OMOP Provider-domain concept</span>
-            </label>
-            <input
-              type="number"
-              value={cfg.specialty_concept_id ?? ''}
-              onChange={e => setCfg(prev => ({
-                ...prev,
-                specialty_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
-              }))}
-              placeholder="e.g. 38004477 for Internal Medicine"
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+          {cfg.specialty_source_value_col && (
+            <ValueConceptMapper
+              label="Specialty value → specialty_concept_id"
+              sourceValues={distinctVals(cfg.specialty_source_value_col)}
+              mapping={cfg.specialty_concept_value_map ?? {}}
+              onChange={m => setCfg(prev => ({ ...prev, specialty_concept_value_map: m }))}
+              hint="Assign an OMOP Provider-domain concept ID to each specialty value."
             />
-            <p className="text-xs text-gray-500 mt-1">
-              Used as a constant for all providers. Set to 0 or leave blank if unknown.
-            </p>
-          </div>
+          )}
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
@@ -170,30 +168,42 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           </div>
 
           <FieldMapper
-            label="gender_source_value"
+            label="Gender column"
             sourceColumns={cols}
             value={cfg.gender_source_value_col}
-            onChange={set('gender_source_value_col')}
-            hint="Provider gender as it appears in the source (max 50 chars)."
+            onChange={v => setCfg(prev => ({
+              ...prev,
+              gender_source_value_col: v,
+              gender_concept_value_map: v !== prev.gender_source_value_col ? {} : prev.gender_concept_value_map,
+            }))}
+            hint="Provider gender as it appears in the source. Values will populate gender_source_value and be mapped to gender_concept_id below."
           />
 
+          {cfg.gender_source_value_col && (
+            <div className="flex flex-col gap-2">
+              <div className="flex items-center justify-between">
+                <label className="text-sm font-medium text-gray-700">Gender value → gender_concept_id</label>
+              </div>
+              <p className="text-xs text-gray-500">Common: 8507 = Male, 8532 = Female, 8551 = Unknown</p>
+              <ValueConceptMapper
+                label=""
+                sourceValues={distinctVals(cfg.gender_source_value_col)}
+                mapping={cfg.gender_concept_value_map ?? {}}
+                onChange={m => setCfg(prev => ({ ...prev, gender_concept_value_map: m }))}
+                hint="Assign an OMOP Gender-domain concept ID to each gender value."
+              />
+            </div>
+          )}
+
           <div>
-            <label className="text-sm font-medium text-gray-700">
-              gender_concept_id
-              <span className="ml-1 font-normal text-gray-400">— standard OMOP Gender concept</span>
-            </label>
-            <select
-              value={cfg.gender_concept_id ?? ''}
-              onChange={e => setCfg(prev => ({
-                ...prev,
-                gender_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
-              }))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-            >
-              {GENDER_OPTIONS.map(o => (
-                <option key={o.id ?? 'null'} value={o.id ?? ''}>{o.label}</option>
-              ))}
-            </select>
+            <label className="text-sm font-medium text-gray-700">Default gender_concept_id</label>
+            <input
+              type="number"
+              value={cfg.gender_concept_id_default ?? 0}
+              onChange={e => setCfg(prev => ({ ...prev, gender_concept_id_default: parseInt(e.target.value) }))}
+              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
         </div>
 
