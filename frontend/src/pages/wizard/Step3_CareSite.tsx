@@ -100,8 +100,8 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
               <p className="text-sm font-medium text-blue-800">Auto-computed — no mapping required</p>
               <p className="text-sm text-blue-700">
                 Constructed as{' '}
-                <code className="bg-blue-100 px-1 rounded text-xs">cs_location_source_value + "_" + care_site_name</code>.
-                The location part comes from the care site address columns mapped in the{' '}
+                <code className="bg-blue-100 px-1 rounded text-xs">location_id + " | " + care_site_name</code>.
+                The location_id is resolved from the care site address columns mapped in the{' '}
                 <strong>Location step</strong>.
               </p>
             </div>

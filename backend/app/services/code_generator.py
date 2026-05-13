@@ -228,14 +228,12 @@ def _build_table_prompt(project, table: str) -> str:
         if name_col:
             lines += [
                 "## CARE_SITE_SOURCE_VALUE — COMPOSITE KEY",
-                "Build care_site_source_value by joining the care site location source value",
-                "and the care site name, separated by '_'.",
-                "The location source value is constructed the same way as in location.csv:",
-                "  join non-empty values of the cs_* address columns with '|'.",
-                f"  Address columns (from location config): {cs_addr_cols}" + (f" + static country '{cs_country}'" if cs_country else ""),
-                f"  care_site_source_value = cs_location_source_value + '_' + str(row['{name_col}'])",
-                "Truncate to 50 characters if necessary.",
-                "Use this composite value as the deduplication key.",
+                "Build care_site_source_value as: str(location_id) + ' | ' + str(row['" + name_col + "'])",
+                "where location_id is the OMOP location_id looked up from ETL_OUTPUT_DIR/location.csv",
+                "using the cs_location_source_value for that row (computed from the cs_* address columns).",
+                "  IMPORTANT: cast every column value to str() before joining — columns like zip may be integers.",
+                f"  Address columns used to compute cs_location_source_value: {cs_addr_cols}" + (f" + static country '{cs_country}'" if cs_country else ""),
+                "Use this composite value as the deduplication key (max 50 chars).",
                 "",
             ]
 
@@ -247,6 +245,7 @@ def _build_table_prompt(project, table: str) -> str:
                 "## LOCATION CONFIG (for location_id lookup)",
                 "Use the address columns below to compute location_source_value per row",
                 "and look up location_id from ETL_OUTPUT_DIR/location.csv.",
+                "IMPORTANT: cast every column value to str() before joining — columns like zip may be integers.",
                 "```json",
                 json.dumps(location_config, indent=2),
                 "```",
@@ -259,10 +258,10 @@ def _build_table_prompt(project, table: str) -> str:
             lines += [
                 "## CARE SITE CONFIG (for care_site_id lookup)",
                 "Load ETL_OUTPUT_DIR/care_site.csv and build a dict {care_site_source_value: care_site_id}.",
-                "care_site_source_value in that file is a composite: cs_location_source_value + '_' + care_site_name.",
-                "cs_location_source_value is built by joining the non-empty cs_* address column values with '|'",
-                "(same formula used when generating care_site.csv — see CARE_SITE_SOURCE_VALUE section there).",
-                "Reconstruct the same composite from the person source row to perform the lookup.",
+                "care_site_source_value in that file has the format: '<location_id> | <care_site_name>'",
+                "To look up care_site_id for a person row: compute cs_location_source_value from the cs_* address",
+                "columns, resolve location_id from location.csv, then reconstruct the key as",
+                "  str(location_id) + ' | ' + str(row[care_site_name_col])",
                 "```json",
                 json.dumps(care_site_config, indent=2),
                 "```",
