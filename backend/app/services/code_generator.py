@@ -97,7 +97,7 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
 
-    _CONCEPT_MAPPING_TABLES = {"stem_table", "observation_period", "visit_occurrence", "death"}
+    _CONCEPT_MAPPING_TABLES = {"stem_table", "death"}
 
     # ── Standalone adapter instructions ──────────────────────────────────
     env_vars = [
