@@ -120,7 +120,7 @@ export interface LocationConfig {
   state_col: string
   zip_col: string
   county_col: string
-  country_source_value_col: string
+  country_source_value: string
   // Care site address columns
   cs_address_1_col: string
   cs_address_2_col: string
@@ -128,7 +128,7 @@ export interface LocationConfig {
   cs_state_col: string
   cs_zip_col: string
   cs_county_col: string
-  cs_country_source_value_col: string
+  cs_country_source_value: string
   cs_latitude_col: string
   cs_longitude_col: string
   // Person country config

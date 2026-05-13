@@ -23,14 +23,14 @@ const DEFAULTS: LocationConfig = {
   state_col: '',
   zip_col: '',
   county_col: '',
-  country_source_value_col: '',
+  country_source_value: '',
   cs_address_1_col: '',
   cs_address_2_col: '',
   cs_city_col: '',
   cs_state_col: '',
   cs_zip_col: '',
   cs_county_col: '',
-  cs_country_source_value_col: '',
+  cs_country_source_value: '',
   cs_latitude_col: '',
   cs_longitude_col: '',
   country_concept_id_map: {},
@@ -96,6 +96,8 @@ export default function Step5Location({ project, onUpdate }: Props) {
           country_concept_id_map: ex.country_concept_id_map ?? {},
           country_concept_id_default: ex.country_concept_id_default ?? 0,
           cs_country_concept_id_default: ex.cs_country_concept_id_default ?? 0,
+          country_source_value: ex.country_source_value ?? '',
+          cs_country_source_value: ex.cs_country_source_value ?? '',
         }
         if (loaded.county_col) {
           const savedKeys = Object.keys(loaded.country_concept_id_map)
@@ -140,10 +142,10 @@ export default function Step5Location({ project, onUpdate }: Props) {
   }
 
   const PERSON_ADDR_FIELDS: (keyof LocationConfig)[] = [
-    'address_1_col', 'address_2_col', 'city_col', 'state_col', 'zip_col', 'county_col', 'country_source_value_col',
+    'address_1_col', 'address_2_col', 'city_col', 'state_col', 'zip_col', 'county_col', 'country_source_value',
   ]
   const CS_ADDR_FIELDS: (keyof LocationConfig)[] = [
-    'cs_address_1_col', 'cs_address_2_col', 'cs_city_col', 'cs_state_col', 'cs_zip_col', 'cs_county_col', 'cs_country_source_value_col',
+    'cs_address_1_col', 'cs_address_2_col', 'cs_city_col', 'cs_state_col', 'cs_zip_col', 'cs_county_col', 'cs_country_source_value',
   ]
 
   return (
@@ -249,32 +251,45 @@ export default function Step5Location({ project, onUpdate }: Props) {
                 />
               </div>
             )}
-            <div>
-              <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
-              <input
-                type="number"
-                value={cfg.country_concept_id_default ?? 0}
-                onChange={e => setCfg(prev => ({ ...prev, country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {cfg.county_col
-                  ? 'Used when a person source value is not in the map above (0 = unknown).'
-                  : 'Applied to all person rows when no county column is mapped (0 = unknown).'}
-              </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
+                <input
+                  type="number"
+                  value={cfg.country_concept_id_default ?? 0}
+                  onChange={e => setCfg(prev => ({ ...prev, country_concept_id_default: parseInt(e.target.value) || 0 }))}
+                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {cfg.county_col
+                    ? 'Used when a person source value is not in the map above (0 = unknown).'
+                    : 'Applied to all person rows when no county column is mapped (0 = unknown).'}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700">Default country_source_value</label>
+                <input
+                  type="text"
+                  value={cfg.country_source_value}
+                  onChange={e => setCfg(prev => ({ ...prev, country_source_value: e.target.value }))}
+                  placeholder="e.g. United States, GR"
+                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {cfg.county_col
+                    ? 'Fallback when no county column value is present (max 80 chars).'
+                    : 'Applied to all person rows when no county column is mapped (max 80 chars).'}
+                </p>
+              </div>
             </div>
-            <FieldMapper
-              label="country_source_value"
-              sourceColumns={cols}
-              value={cfg.country_source_value_col}
-              onChange={set('country_source_value_col')}
-              hint="Free-text country name (max 80 chars)."
-            />
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
             <h3 className="font-medium text-gray-800">Person Location Source Value</h3>
-            <AutoComputedBadge cfg={cfg} fields={PERSON_ADDR_FIELDS} />
+            <AutoComputedBadge
+              cfg={{ ...cfg, country_source_value: cfg.county_col ? '' : cfg.country_source_value }}
+              fields={PERSON_ADDR_FIELDS}
+            />
           </div>
         </div>
 
@@ -360,27 +375,37 @@ export default function Step5Location({ project, onUpdate }: Props) {
                 />
               </div>
             )}
-            <div>
-              <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
-              <input
-                type="number"
-                value={cfg.cs_country_concept_id_default ?? 0}
-                onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-              <p className="text-xs text-gray-500 mt-1">
-                {cfg.cs_county_col
-                  ? 'Used when a care site county value is not in the map above (0 = unknown).'
-                  : 'Applied to all care site rows when no county column is mapped (0 = unknown).'}
-              </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
+                <input
+                  type="number"
+                  value={cfg.cs_country_concept_id_default ?? 0}
+                  onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
+                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {cfg.cs_county_col
+                    ? 'Used when a care site county value is not in the map above (0 = unknown).'
+                    : 'Applied to all care site rows when no county column is mapped (0 = unknown).'}
+                </p>
+              </div>
+              <div>
+                <label className="text-sm font-medium text-gray-700">Default country_source_value</label>
+                <input
+                  type="text"
+                  value={cfg.cs_country_source_value}
+                  onChange={e => setCfg(prev => ({ ...prev, cs_country_source_value: e.target.value }))}
+                  placeholder="e.g. United States, GR"
+                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  {cfg.cs_county_col
+                    ? 'Fallback when no care site county column value is present (max 80 chars).'
+                    : 'Applied to all care site rows when no county column is mapped (max 80 chars).'}
+                </p>
+              </div>
             </div>
-            <FieldMapper
-              label="country_source_value"
-              sourceColumns={cols}
-              value={cfg.cs_country_source_value_col}
-              onChange={set('cs_country_source_value_col')}
-              hint="Free-text country name (max 80 chars)."
-            />
           </div>
 
           <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
@@ -403,7 +428,10 @@ export default function Step5Location({ project, onUpdate }: Props) {
 
           <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
             <h3 className="font-medium text-gray-800">Care Site Location Source Value</h3>
-            <AutoComputedBadge cfg={cfg} fields={CS_ADDR_FIELDS} />
+            <AutoComputedBadge
+              cfg={{ ...cfg, cs_country_source_value: cfg.cs_county_col ? '' : cfg.cs_country_source_value }}
+              fields={CS_ADDR_FIELDS}
+            />
           </div>
         </div>
 
