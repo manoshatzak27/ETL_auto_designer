@@ -9,10 +9,10 @@ You are generating a Python ETL script that populates the OMOP CDM PROVIDER tabl
 | npi | varchar(20) | No | National Provider Identifier. Map from `npi_col`. Truncate to 20 chars. |
 | dea | varchar(20) | No | DEA identifier. Map from `dea_col`. Truncate to 20 chars. |
 | specialty_concept_id | integer | No | Look up per-row from `specialty_concept_value_map` (a dict in the config) using the row's raw value of `specialty_source_value_col`. If the map is absent or the value is not a key in the map, use 0. |
-| care_site_id | integer | No | Looked up from `ETL_OUTPUT_DIR/care_site.csv` by matching `care_site_source_value_col` column against `care_site_source_value` in care_site.csv, then reading its `care_site_id`. If no match or column not configured, set to None. |
+| care_site_id | integer | No | Auto-resolved: load ETL_OUTPUT_DIR/care_site.csv and look up care_site_id by matching the value of `care_site_name_col` (from the injected CARE SITE CONFIG) against the `care_site_name` column. If no match, file absent, or column not configured, set to None. |
 | year_of_birth | integer | No | Map from `year_of_birth_col`. Parse as integer. Null if not configured or parse fails. |
 | gender_concept_id | integer | No | Look up per-row from `gender_concept_value_map` (a dict in the config) using the row's raw value of `gender_source_value_col`. If the map is absent or the value is not a key in the map, use `gender_concept_id_default` (default 0). |
-| provider_source_value | varchar(50) | No | Map from `provider_source_value_col`. Truncate to 50 chars. |
+| provider_source_value | varchar(50) | No | AUTO-COMPUTED: str(care_site_id) + ' | ' + str(row[provider_name_col]). Truncate to 50 chars. Used as the deduplication key. |
 | specialty_source_value | varchar(50) | No | Map from `specialty_source_value_col`. Truncate to 50 chars. |
 | specialty_source_concept_id | integer | No | Always 0. |
 | gender_source_value | varchar(50) | No | Map from `gender_source_value_col`. Truncate to 50 chars. |
@@ -47,13 +47,36 @@ gender_concept_id = gender_map.get(raw_gender, gender_default)
 
 If `gender_concept_value_map` is absent or the value is not found, use `gender_concept_id_default` (0 if not set).
 
-## Deduplication
-
-Deduplicate by `provider_source_value` when configured. If multiple source rows have the same `provider_source_value`, emit only one PROVIDER row (first occurrence). If `provider_source_value_col` is not configured, emit one row per source row.
-
 ## care_site_id lookup
 
-Load `ETL_OUTPUT_DIR/care_site.csv` if it exists. Build a dict mapping `care_site_source_value → care_site_id`. For each provider row, look up the value of `care_site_source_value_col` in this dict. If no match or file absent, set `care_site_id` to None.
+The injected CARE SITE CONFIG section contains `care_site_name_col` — the source column that identifies the care site per row.
+
+Load `ETL_OUTPUT_DIR/care_site.csv` (semicolon-delimited) if it exists.
+Build a dict mapping care_site_name → care_site_id:
+
+```python
+care_site_lookup = {str(r["care_site_name"]): int(r["care_site_id"]) for r in care_site_rows}
+# Per row:
+care_site_id = care_site_lookup.get(str(row[care_site_name_col]), None)
+```
+
+If no match, file absent, or `care_site_name_col` is not configured, set `care_site_id` to None.
+
+## PROVIDER_SOURCE_VALUE — AUTO-COMPUTED
+
+provider_source_value is NOT read from any source column. Build it as:
+
+```python
+provider_source_value = (str(care_site_id) + ' | ' + str(row[provider_name_col]))[:50]
+```
+
+where care_site_id is the resolved OMOP care_site_id for this row (use the string 'None' if care_site_id is None).
+IMPORTANT: cast every value to str() before joining — columns may be integers.
+Truncate to 50 chars. Use this composite value as the deduplication key.
+
+## Deduplication
+
+Deduplicate by the auto-computed provider_source_value. If multiple source rows have the same provider_source_value, emit only one PROVIDER row (first occurrence).
 
 ## Output column order
 

@@ -214,6 +214,32 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
 
+    # ── Provider composite source value ──────────────────────────────────
+    if table == "provider":
+        prov_cfg: dict = (project.etl_config or {}).get("provider", {})
+        prov_name_col = prov_cfg.get("provider_name_col", "")
+        if prov_name_col:
+            lines += [
+                "## PROVIDER_SOURCE_VALUE — AUTO-COMPUTED",
+                "Build provider_source_value as: str(care_site_id) + ' | ' + str(row['" + prov_name_col + "'])",
+                "where care_site_id is the resolved OMOP care_site_id (use the string 'None' if not found).",
+                "IMPORTANT: cast every value to str() before joining.",
+                "Truncate to 50 chars. Use this composite value as the deduplication key.",
+                "",
+            ]
+        care_site_config: dict = (project.etl_config or {}).get("care_site", {})
+        if care_site_config:
+            lines += [
+                "## CARE SITE CONFIG (for care_site_id lookup)",
+                "Use care_site_name_col from this config to match against care_site_name in ETL_OUTPUT_DIR/care_site.csv.",
+                "Build dict: {str(row['care_site_name']): int(row['care_site_id'])} and look up each provider row.",
+                "If no match, file absent, or care_site_name_col not configured, set care_site_id to None.",
+                "```json",
+                json.dumps(care_site_config, indent=2),
+                "```",
+                "",
+            ]
+
     # ── Care site composite source value ─────────────────────────────────
     if table == "care_site":
         cs_cfg: dict = (project.etl_config or {}).get("care_site", {})

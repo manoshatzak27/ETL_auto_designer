@@ -19,11 +19,9 @@ const DEFAULTS: ProviderConfig = {
   npi_col: '',
   dea_col: '',
   specialty_concept_id: null,
-  care_site_source_value_col: '',
   year_of_birth_col: '',
   gender_concept_value_map: {},
   gender_concept_id_default: 0,
-  provider_source_value_col: '',
   specialty_source_value_col: '',
   gender_source_value_col: '',
 }
@@ -90,21 +88,17 @@ export default function Step7Provider({ project, onUpdate }: Props) {
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
           <h3 className="font-medium text-gray-800">Provider Identity</h3>
-
-          <FieldMapper
-            label="provider_source_value"
-            sourceColumns={cols}
-            value={cfg.provider_source_value_col}
-            onChange={set('provider_source_value_col')}
-            hint="Verbatim provider identifier from the source. Used as the deduplication key (max 50 chars)."
-          />
+          <p className="text-xs text-gray-500">
+            <span className="font-medium">provider_source_value</span> is auto-computed as{' '}
+            <code className="bg-gray-100 px-1 rounded">care_site_id | provider_name</code> and used as the deduplication key.
+          </p>
 
           <FieldMapper
             label="provider_name"
             sourceColumns={cols}
             value={cfg.provider_name_col}
             onChange={set('provider_name_col')}
-            hint="Name of the provider as it appears in the source (max 255 chars)."
+            hint="Name of the provider as it appears in the source (max 255 chars). Also used to build provider_source_value."
           />
 
           <FieldMapper
@@ -205,18 +199,6 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             />
             <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
-        </div>
-
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Care Site Link</h3>
-
-          <FieldMapper
-            label="care_site_source_value column"
-            sourceColumns={cols}
-            value={cfg.care_site_source_value_col}
-            onChange={set('care_site_source_value_col')}
-            hint="Column whose value matches the care_site_source_value in care_site.csv (composite: location_col + '_' + name_col) — used to look up care_site_id."
-          />
         </div>
 
         <ExtraInstructions
