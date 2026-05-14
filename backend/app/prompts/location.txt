@@ -27,7 +27,8 @@ Field rules (apply to both groups — use the cs_* column names for care-site re
    Build it by concatenating the values of all configured address fields for that group in this
    order: address_1, address_2, city, state, zip, county, country_source_value.
    Include only fields whose config column is set (non-empty string) and whose row value is
-   non-null/non-empty. Join with " | " as separator. Truncate to 255 chars if needed.
+   non-null/non-empty. Convert each value to str() before joining. Join with " | " as separator.
+   Truncate to 255 chars if needed.
    Example: "123 Main St | Apt 4 | Springfield | IL | 62701 | United States"
    This computed string is always the deduplication key.
 9. country_concept_id: resolved from country_concept_id_map (shared by both groups).
