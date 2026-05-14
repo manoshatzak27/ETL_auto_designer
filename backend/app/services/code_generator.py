@@ -106,10 +106,22 @@ def _build_table_prompt(project, table: str) -> str:
     ]
     if table in _CONCEPT_MAPPING_TABLES:
         env_vars += [
-            "  - ETL_MAPPING_FILES → JSON string: {name: filepath} for the 3 concept mapping CSVs",
-            "    • variable_mapping.csv  (variable_source_code → concept_id)",
-            "    • value_mapping.csv     (variable_source_code, value_source_code → value_as_concept_id)",
-            "    • variable_value_mapping.csv  (variable_source_code, value_source_code → concept_id)",
+            "  - ETL_MAPPING_variable_mapping        → direct file path to variable_mapping.csv (may be empty/absent)",
+            "  - ETL_MAPPING_value_mapping            → direct file path to value_mapping.csv (may be empty/absent)",
+            "  - ETL_MAPPING_variable_value_mapping  → direct file path to variable_value_mapping.csv (may be empty/absent)",
+            "    All mapping CSVs use comma delimiter and UTF-8 encoding.",
+            "    If a path env var is empty or the file does not exist, treat that mapping as an empty dict.",
+            "    CSV column names (exact):",
+            "      variable_mapping.csv:       variable_source_code, target_concept_id",
+            "      value_mapping.csv:          variable_source_code, value_source_code, target_concept_id",
+            "      variable_value_mapping.csv: variable_source_code, value_source_code, target_concept_id",
+            "    Example load pattern:",
+            "      def _load_csv(path):",
+            "          if not path: return pd.DataFrame()",
+            "          try: return pd.read_csv(path, sep=',', encoding='utf-8')",
+            "          except FileNotFoundError: return pd.DataFrame()",
+            "      vm = _load_csv(os.environ.get('ETL_MAPPING_variable_mapping',''))",
+            "      var_map = {r['variable_source_code'].lower(): r['target_concept_id'] for _,r in vm.iterrows()} if not vm.empty else {}",
         ]
 
     _NEEDS_PERSON_LOOKUP = {"visit_occurrence", "observation_period", "stem_table", "death"}
@@ -128,8 +140,8 @@ def _build_table_prompt(project, table: str) -> str:
         )
     if table in _NEEDS_VISIT_LOOKUP:
         adaptation_lines += [
-            "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv",
-            "  and build a dict {record_source_value: visit_occurrence_id}.",
+            "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv (semicolon-delimited)",
+            "  and build a dict keyed by visit_source_value: {row['visit_source_value']: row['visit_occurrence_id']}.",
             "The record_source_value key format for visits is: '{person_source_value}-basedata-{visit_type}'",
         ]
     adaptation_lines += [

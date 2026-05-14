@@ -38,6 +38,8 @@ async def execute_etl_code(
     env["ETL_SOURCE_PATH"] = source_path
     env["ETL_OUTPUT_DIR"] = output_dir
     env["ETL_MAPPING_FILES"] = json.dumps(mapping_files)
+    for key, path in (mapping_files or {}).items():
+        env[f"ETL_MAPPING_{key}"] = str(path)
 
     log_lines: list[str] = []
     try:
