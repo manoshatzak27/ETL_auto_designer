@@ -26,9 +26,21 @@ The LOCATION CONFIG section (injected below) contains the care-site address colu
   cs_address_1_col, cs_address_2_col, cs_city_col, cs_state_col, cs_zip_col,
   cs_county_col, cs_country_source_value_col
 
+The config may also contain a STATIC country string (not a column reference):
+  - `cs_country_source_value`: a literal string like "United States of America" appended last.
+    Include it if non-empty, regardless of any per-row data.
+  - `cs_country_source_value_col`: a SOURCE COLUMN NAME whose per-row value is appended last.
+    Only one of these two will be set; handle both cases.
+
+IMPORTANT: the static `cs_country_source_value` must be included in the computed key exactly
+as location.py includes it — otherwise the key will never match location.csv.
+
 For each source row, compute location_source_value exactly as location.py does:
+  - Read column names from the config keys — NEVER hardcode source column names.
   - Collect the values of each configured care-site address column (skip unconfigured ones).
-  - Join with " | " separator, omitting null/empty values.
+  - Cast every value to str() before joining — columns like zip may be integers.
+  - Append cs_country_source_value_col (per-row) OR cs_country_source_value (static) last.
+  - Join with " | " separator, omitting null/empty/NaN values.
   - This string is the lookup key into location.csv.
 
 Location lookup steps (only when at least one cs_* column is configured):

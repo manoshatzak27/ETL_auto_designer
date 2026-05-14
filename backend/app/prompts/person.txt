@@ -9,11 +9,16 @@ The person table maps one row per patient. Key transformation rules:
       person_source_value = raw source ID value (string).
    b) Auto-increment mode (auto_increment == true): assign sequential integers starting from 1 for each output row (do NOT read any source column). person_source_value = string of that sequential integer.
 2. person_source_value: see rule 1 above — depends on the chosen mode
-3. gender_concept_id: use the value_map from config (e.g. {"1.0": 8507, "2.0": 8532} where 8507=Male, 8532=Female)
-4. gender_source_value: raw source gender value
+3. gender_concept_id: read source_col and value_map from mappings.gender_concept_id in config.
+   Apply value_map.get(str(row[source_col]), default) — use the default from config, not a hardcoded 0.
+4. gender_source_value: raw value of mappings.gender_concept_id.source_col
 5. year_of_birth, month_of_birth, day_of_birth: parsed from date_of_birth column using the `date_format` value from the config (e.g. year_of_birth.date_format). IMPORTANT: always use the exact format string from the config — do NOT default to "%Y-%m-%d" unless that is what the config actually contains.
-6. race_concept_id: 0 unless mapped
-7. ethnicity_concept_id: 0 unless mapped
+6. race_concept_id: read source_col and value_map from mappings.race_concept_id in config.
+   Apply value_map.get(str(row[source_col]), default). NEVER hardcode concept IDs or invent a map.
+   race_source_value: raw value of mappings.race_concept_id.source_col.
+7. ethnicity_concept_id: read source_col and value_map from mappings.ethnicity_concept_id in config.
+   Apply value_map.get(str(row[source_col]), default). NEVER hardcode concept IDs or invent a map.
+   ethnicity_source_value: raw value of mappings.ethnicity_concept_id.source_col.
 8. All *_source_concept_id fields: 0
 9. FILTER: skip rows where required_source_cols are missing or empty
 
@@ -45,13 +50,45 @@ If care_site_name_col is empty or absent in the config, set care_site_id to NULL
 
 ## LOCATION LOOKUP
 
-The LOCATION CONFIG section (injected below) contains the person address columns:
-  address_1_col, address_2_col, city_col, state_col, zip_col, county_col, country_source_value_col
+The LOCATION CONFIG section (injected below) contains TWO groups of address columns:
+  • Person address (use these for location_id lookup):
+      address_1_col, address_2_col, city_col, state_col, zip_col, county_col,
+      country_source_value_col
+  • Care-site address (cs_* keys — do NOT use these for person location_id):
+      cs_address_1_col, cs_city_col, cs_state_col, cs_zip_col, etc.
+
+IMPORTANT: for person's location_id, use ONLY the non-cs_* columns listed above.
+Ignore all cs_* keys when computing location_source_value for a person row.
 
 For each source row, compute location_source_value exactly as location.py does:
+  - Read column names from the config keys (city_col, state_col, etc.) — NEVER hardcode source column names.
   - Collect the values of each configured person address column (skip unconfigured ones).
-  - Join with " | " separator, omitting null/empty values.
+  - Cast every value to str() before joining — columns like zip may be integers.
+  - Join with " | " separator, omitting null/empty/NaN values (check with pandas isnull or `not str(v).strip()`).
   - This string is the lookup key into location.csv.
+
+The config may also contain a STATIC country string (not a column reference):
+  - `country_source_value`: a literal string like "United States of America" appended last.
+    Include it if non-empty, regardless of any per-row data.
+  - `country_source_value_col`: a SOURCE COLUMN NAME whose per-row value is appended last.
+    Only one of these two will be set; handle both cases.
+
+IMPORTANT: the static `country_source_value` must be included in the computed key exactly
+as location.py includes it — otherwise the key will never match location.csv.
+
+Example (city_col="person_city", state_col="person_state", country_source_value="United States of America"):
+  parts = []
+  if config.get("address_1_col"): parts.append(str(row[config["address_1_col"]]))
+  if config.get("address_2_col"): parts.append(str(row[config["address_2_col"]]))
+  if config.get("city_col"):      parts.append(str(row[config["city_col"]]))
+  if config.get("state_col"):     parts.append(str(row[config["state_col"]]))
+  if config.get("zip_col"):       parts.append(str(row[config["zip_col"]]))
+  if config.get("county_col"):    parts.append(str(row[config["county_col"]]))
+  if config.get("country_source_value_col"):
+      parts.append(str(row[config["country_source_value_col"]]))
+  elif config.get("country_source_value"):
+      parts.append(config["country_source_value"])
+  location_source_value = " | ".join(p for p in parts if p and p.strip() and p != "nan")
 
 Location lookup steps (only when at least one person address column is configured):
   - Load ETL_OUTPUT_DIR/location.csv (semicolon-delimited).
@@ -61,8 +98,40 @@ Location lookup steps (only when at least one person address column is configure
 
 If no person address columns are configured in the LOCATION CONFIG, set location_id to NULL.
 
-Output columns (in this order):
-person_id, gender_concept_id, year_of_birth, month_of_birth, day_of_birth, birth_datetime,
-race_concept_id, ethnicity_concept_id, location_id, provider_id, care_site_id,
-person_source_value, gender_source_value, race_source_value, race_source_concept_id,
-ethnicity_source_value, ethnicity_source_concept_id
+## IMPLEMENTATION STEPS
+
+1. Read the source file (ETL_SOURCE_PATH) with the correct delimiter and encoding.
+
+2. Location lookup (only if any person address column is configured in LOCATION CONFIG):
+   - Load ETL_OUTPUT_DIR/location.csv (semicolon-delimited) once before the row loop.
+   - Build dict: location_lookup = {row["location_source_value"]: row["location_id"]}.
+   - If location.csv does not exist, set location_lookup = {} and continue — do not abort.
+
+3. Care site lookup (only if care_site_name_col is configured in CARE SITE CONFIG):
+   - Load ETL_OUTPUT_DIR/care_site.csv (semicolon-delimited) once before the row loop.
+   - Build dict: care_site_lookup = {str(row["care_site_name"]): int(row["care_site_id"])} for each row.
+   - If care_site.csv does not exist, set care_site_lookup = {} and continue — do not abort.
+
+4. Provider lookup (only if provider_name_col is configured in PROVIDER CONFIG):
+   - Load ETL_OUTPUT_DIR/provider.csv (semicolon-delimited) once before the row loop.
+   - Build dict: provider_lookup = {str(row["provider_name"]): int(row["provider_id"])} for each row.
+   - If provider.csv does not exist, set provider_lookup = {} and continue — do not abort.
+
+5. For each source row, apply the FILTER rule (skip rows where required_source_cols are missing
+   or empty), then build a PERSON record applying all transformation rules above:
+   - person_id               ← per rule 1 (transform or auto-increment)
+   - person_source_value     ← per rule 2
+   - gender_concept_id       ← value_map lookup on source gender column
+   - gender_source_value     ← raw source gender value
+   - year_of_birth / month_of_birth / day_of_birth ← parsed from date_of_birth using config date_format
+   - race_concept_id         ← value_map lookup per rule 6; all *_source_concept_id fields ← 0
+   - location_id             ← location_lookup.get(computed_location_source_value, None)
+   - care_site_id            ← care_site_lookup.get(str(row[care_site_name_col]), None)
+   - provider_id             ← provider_lookup.get(str(row[provider_name_col]), None)
+
+6. Write output to ETL_OUTPUT_DIR/person.csv (semicolon-delimited, UTF-8).
+   Output columns (in this order):
+   person_id, gender_concept_id, year_of_birth, month_of_birth, day_of_birth, birth_datetime,
+   race_concept_id, ethnicity_concept_id, location_id, provider_id, care_site_id,
+   person_source_value, gender_source_value, race_source_value, race_source_concept_id,
+   ethnicity_source_value, ethnicity_source_concept_id
