@@ -112,22 +112,34 @@ def _build_table_prompt(project, table: str) -> str:
             "    • variable_value_mapping.csv  (variable_source_code, value_source_code → concept_id)",
         ]
 
-    lines += [
+    _NEEDS_PERSON_LOOKUP = {"visit_occurrence", "observation_period", "stem_table", "death"}
+    _NEEDS_VISIT_LOOKUP = {"stem_table", "death"}
+
+    adaptation_lines = [
         "## ADAPTATION RULES",
         "The reference uses a `wrapper` object. Your script must NOT use it.",
         "Instead, read data from files using these environment variables:",
         *env_vars,
         "",
-        "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}.",
-        "Visit occurrence ID lookup (needed by stem_table and death): load ETL_OUTPUT_DIR/visit_occurrence.csv",
-        "  and build a dict {record_source_value: visit_occurrence_id}.",
-        "The record_source_value key format for visits is: '{person_source_value}-basedata-{visit_type}'",
+    ]
+    if table in _NEEDS_PERSON_LOOKUP:
+        adaptation_lines.append(
+            "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
+        )
+    if table in _NEEDS_VISIT_LOOKUP:
+        adaptation_lines += [
+            "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv",
+            "  and build a dict {record_source_value: visit_occurrence_id}.",
+            "The record_source_value key format for visits is: '{person_source_value}-basedata-{visit_type}'",
+        ]
+    adaptation_lines += [
         "",
         "Output: write semicolon-delimited (;) UTF-8 CSV to ETL_OUTPUT_DIR/{table}.csv".format(table=table),
         "Print progress: e.g. 'Writing {table}.csv ... done (N records)'".format(table=table),
         "Guard: include `if __name__ == '__main__': main()`",
         "",
     ]
+    lines += adaptation_lines
 
     # ── Source dataset ────────────────────────────────────────────────────
     lines += [
