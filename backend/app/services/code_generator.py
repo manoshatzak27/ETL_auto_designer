@@ -101,7 +101,7 @@ def _build_table_prompt(project, table: str) -> str:
 
     # ── Standalone adapter instructions ──────────────────────────────────
     env_vars = [
-        "  - ETL_SOURCE_PATH   → path to the source CSV file",
+        "  - ETL_SOURCE_PATH   → FULL path to the source CSV file (use directly as the file path)
         "  - ETL_OUTPUT_DIR    → output directory for OMOP CSVs",
     ]
     if table in _CONCEPT_MAPPING_TABLES:
