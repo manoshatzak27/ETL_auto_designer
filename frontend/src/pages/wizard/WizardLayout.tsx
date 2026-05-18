@@ -30,6 +30,7 @@ interface Props {
 }
 
 export default function WizardLayout({
+  projectId,
   projectName,
   currentStep,
   children,
@@ -63,12 +64,15 @@ export default function WizardLayout({
             const active = idx === currentStep
             return (
               <div key={step.label} className="flex items-center gap-1 flex-shrink-0">
-                <div
+                <button
+                  onClick={() => projectId && navigate(`/project/${projectId}/step/${idx}`)}
+                  disabled={!projectId}
                   className={clsx(
                     'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
                     active && 'bg-blue-600 text-white',
-                    done && 'bg-green-100 text-green-700',
-                    !active && !done && 'text-gray-400',
+                    done && 'bg-green-100 text-green-700 hover:bg-green-200',
+                    !active && !done && 'text-gray-400 hover:bg-gray-100',
+                    !projectId && 'cursor-not-allowed',
                   )}
                 >
                   <span
@@ -82,7 +86,7 @@ export default function WizardLayout({
                     {done ? '✓' : step.short}
                   </span>
                   <span className="hidden sm:inline">{step.label}</span>
-                </div>
+                </button>
                 {i < STEPS.length - 1 && <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0" />}
               </div>
             )
