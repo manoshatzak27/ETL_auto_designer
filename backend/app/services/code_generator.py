@@ -238,6 +238,26 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
 
+    # ── Provider prefix specialty ─────────────────────────────────────────
+    if table == "provider":
+        prov_cfg_ps: dict = (project.etl_config or {}).get("provider", {})
+        prefix_specialty = prov_cfg_ps.get("prefix_specialty", "")
+        prefix_specialty_concept_id = prov_cfg_ps.get("prefix_specialty_concept_id")
+        if prefix_specialty or prefix_specialty_concept_id:
+            lines += ["## PREFIX SPECIALTY — STATIC DEFAULT"]
+            if prefix_specialty:
+                lines.append(
+                    f"When specialty_source_value cannot be derived from a source column "
+                    f"(column not configured or value is blank/null), use the static string "
+                    f"'{prefix_specialty}' as specialty_source_value."
+                )
+            if prefix_specialty_concept_id:
+                lines.append(
+                    f"When specialty_concept_id cannot be resolved from the per-value map, "
+                    f"fall back to the static concept ID {prefix_specialty_concept_id}."
+                )
+            lines += ["", ""]
+
     # ── Provider composite source value ──────────────────────────────────
     if table == "provider":
         prov_cfg: dict = (project.etl_config or {}).get("provider", {})

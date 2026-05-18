@@ -19,6 +19,8 @@ const DEFAULTS: ProviderConfig = {
   npi_col: '',
   dea_col: '',
   specialty_concept_id: null,
+  prefix_specialty: '',
+  prefix_specialty_concept_id: null,
   year_of_birth_col: '',
   gender_concept_value_map: {},
   gender_concept_id_default: 0,
@@ -153,6 +155,32 @@ export default function Step7Provider({ project, onUpdate }: Props) {
               hint="Assign an OMOP Provider-domain concept ID to each specialty value."
             />
           )}
+
+          <div className="flex flex-col gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
+            <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Prefix Specialty</p>
+            <p className="text-xs text-gray-500">Specify a static specialty that applies to all providers (used as a prefix/default when no column mapping is available).</p>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Specialty</label>
+              <input
+                type="text"
+                value={cfg.prefix_specialty ?? ''}
+                onChange={e => setCfg(prev => ({ ...prev, prefix_specialty: e.target.value }))}
+                placeholder="e.g. Internal Medicine"
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+            <div className="flex flex-col gap-1">
+              <label className="text-sm font-medium text-gray-700">Specialty concept ID</label>
+              <input
+                type="number"
+                value={cfg.prefix_specialty_concept_id ?? ''}
+                onChange={e => setCfg(prev => ({ ...prev, prefix_specialty_concept_id: e.target.value === '' ? null : parseInt(e.target.value) }))}
+                placeholder="e.g. 38004477"
+                className="border border-gray-300 rounded-md px-3 py-2 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="text-xs text-gray-500">OMOP Provider-domain concept ID for the prefix specialty.</p>
+            </div>
+          </div>
         </div>
 
         <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">

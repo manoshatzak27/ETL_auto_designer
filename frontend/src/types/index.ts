@@ -152,6 +152,8 @@ export interface ProviderConfig {
   dea_col: string
   specialty_concept_id: number | null
   specialty_concept_value_map?: Record<string, number>
+  prefix_specialty?: string
+  prefix_specialty_concept_id?: number | null
   year_of_birth_col: string
   gender_concept_value_map?: Record<string, number>
   gender_concept_id_default?: number
