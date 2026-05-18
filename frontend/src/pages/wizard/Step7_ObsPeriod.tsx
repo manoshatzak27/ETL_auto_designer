@@ -20,13 +20,6 @@ const DEFAULTS: ObservationPeriodConfig = {
   period_type_concept_id: 32879,
 }
 
-const TYPE_CONCEPTS = [
-  { id: 32879, label: '32879 — Registry' },
-  { id: 32817, label: '32817 — EHR' },
-  { id: 32880, label: '32880 — Estimated' },
-  { id: 32813, label: '32813 — Insurance enrollment' },
-  { id: 32815, label: '32815 — Provider financial record' },
-]
 
 export default function Step4ObsPeriod({ project, onUpdate }: Props) {
   const navigate = useNavigate()
@@ -112,13 +105,21 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
               period_type_concept_id
               <span className="ml-1 font-normal text-gray-400">— how the period was determined</span>
             </label>
-            <select
+            <input
+              type="number"
               value={cfg.period_type_concept_id}
-              onChange={e => setCfg(prev => ({ ...prev, period_type_concept_id: parseInt(e.target.value) }))}
+              onChange={e => setCfg(prev => ({ ...prev, period_type_concept_id: parseInt(e.target.value) || 0 }))}
               className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="e.g. 32879"
+            />
+            <a
+              href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-block text-xs text-blue-600 hover:underline"
             >
-              {TYPE_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-            </select>
+              Accepted Concepts (Athena)
+            </a>
           </div>
         </div>
 
