@@ -306,7 +306,7 @@ function VariableRow({
   const hasVariableConcept = !!decision.variable_concept
 
   const mappingCompleteness = (() => {
-    if (decision.strategy === 'skip') return 100
+    if (decision.strategy === 'skip') return 0
     if (decision.strategy === 'map_variable') return hasVariableConcept ? 100 : 0
     if (decision.strategy === 'map_values') {
       const total = (info?.distinct_count ?? 0) 
@@ -318,12 +318,6 @@ function VariableRow({
     }
     return 0
   })()
-
-  const isMapped =
-    decision.strategy === 'skip' ||
-    (decision.strategy === 'map_variable' && hasVariableConcept) ||
-    (decision.strategy === 'map_values' && mappedValueCount > 0) ||
-    (decision.strategy === 'map_both' && hasVariableConcept)
 
   const sampleValues = info?.distinct_values.slice(0, 10) ?? []
   const extraCount = (info?.distinct_count ?? 0) - 10
@@ -370,7 +364,16 @@ function VariableRow({
           )}
 
           <div className="flex items-center gap-2 ml-auto flex-shrink-0">
-            {isMapped && <CheckCircle className="w-4 h-4 text-green-500" />}
+            <span className={clsx(
+              'text-xs font-semibold px-2 py-0.5 rounded-full min-w-[3rem] text-center',
+              mappingCompleteness === 100
+                ? 'bg-green-100 text-green-700'
+                : mappingCompleteness > 0
+                  ? 'bg-orange-100 text-orange-700'
+                  : 'bg-gray-100 text-gray-400',
+            )}>
+              {mappingCompleteness}%
+            </span>
             {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
           </div>
         </button>
