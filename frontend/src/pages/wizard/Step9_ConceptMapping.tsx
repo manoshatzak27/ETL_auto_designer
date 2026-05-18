@@ -753,6 +753,9 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
       projectId={project.id}
       projectName={project.name}
       currentStep={9}
+      generatedScripts={project.generated_scripts}
+      sourceUploaded={!!project.source_filename}
+      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/8`)}
       onNext={handleNext}
       nextLabel={generating ? 'Generating CSVs…' : saving ? 'Saving…' : 'Next: Stem Table →'}

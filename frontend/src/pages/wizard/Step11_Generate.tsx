@@ -61,6 +61,9 @@ export default function Step7Generate({ project, onUpdate }: Props) {
       projectId={project.id}
       projectName={project.name}
       currentStep={11}
+      generatedScripts={project.generated_scripts}
+      sourceUploaded={!!project.source_filename}
+      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/10`)}
       nextLabel=""
     >

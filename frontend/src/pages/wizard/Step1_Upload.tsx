@@ -43,6 +43,9 @@ export default function Step1Upload({ project, onUpdate }: Props) {
       projectId={project.id}
       projectName={project.name}
       currentStep={1}
+      generatedScripts={project.generated_scripts}
+      sourceUploaded={!!project.source_filename}
+      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onNext={() => navigate(`/project/${project.id}/step/2`)}
       nextDisabled={!hasSource}
       nextLabel="Next: Location →"

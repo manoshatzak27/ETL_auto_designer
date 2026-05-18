@@ -117,6 +117,9 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       projectId={project.id}
       projectName={project.name}
       currentStep={10}
+      generatedScripts={project.generated_scripts}
+      sourceUploaded={!!project.source_filename}
+      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/9`)}
       onNext={handleNext}
       nextLabel="Next: Generate Code →"
@@ -144,7 +147,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
               </span>
             ) : (
               <span className="text-amber-700">
-                No mapping CSVs yet. Go back to Step 2 and complete concept mapping.
+                No mapping CSVs yet. Go back to Step 9 and complete concept mapping.
               </span>
             )}
           </div>

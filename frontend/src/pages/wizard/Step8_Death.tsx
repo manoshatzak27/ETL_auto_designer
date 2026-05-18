@@ -67,6 +67,9 @@ export default function Step8Death({ project, onUpdate }: Props) {
       projectId={project.id}
       projectName={project.name}
       currentStep={8}
+      generatedScripts={project.generated_scripts}
+      sourceUploaded={!!project.source_filename}
+      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/7`)}
       onNext={handleNext}
       nextLabel="Next: Concepts →"

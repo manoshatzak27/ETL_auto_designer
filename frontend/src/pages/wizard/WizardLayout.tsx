@@ -4,23 +4,26 @@ import clsx from 'clsx'
 import { ChevronRight, ArrowLeft } from 'lucide-react'
 
 const STEPS = [
-  { label: 'Source', short: '1' },
-  { label: 'Location', short: '2' },
-  { label: 'Care Site', short: '3' },
-  { label: 'Provider', short: '4' },
-  { label: 'Person', short: '5' },
-  { label: 'Visit', short: '6' },
-  { label: 'Obs. Period', short: '7' },
-  { label: 'Death', short: '8' },
-  { label: 'Concepts', short: '9' },
-  { label: 'Stem Table', short: '10' },
-  { label: 'Generate', short: '11' },
+  { label: 'Source',     short: '1',  scriptKey: null as string | null },
+  { label: 'Location',   short: '2',  scriptKey: 'location' },
+  { label: 'Care Site',  short: '3',  scriptKey: 'care_site' },
+  { label: 'Provider',   short: '4',  scriptKey: 'provider' },
+  { label: 'Person',     short: '5',  scriptKey: 'person' },
+  { label: 'Visit',      short: '6',  scriptKey: 'visit_occurrence' },
+  { label: 'Obs. Period',short: '7',  scriptKey: 'observation_period' },
+  { label: 'Death',      short: '8',  scriptKey: 'death' },
+  { label: 'Concepts',   short: '9',  scriptKey: null as string | null },
+  { label: 'Stem Table', short: '10', scriptKey: 'stem_table' },
+  { label: 'Generate',   short: '11', scriptKey: null as string | null },
 ]
 
 interface Props {
   projectId?: string
   projectName: string
   currentStep: number
+  generatedScripts?: Record<string, string>
+  sourceUploaded?: boolean
+  hasMappingFiles?: boolean
   children: ReactNode
   onNext?: () => void
   onBack?: () => void
@@ -33,6 +36,9 @@ export default function WizardLayout({
   projectId,
   projectName,
   currentStep,
+  generatedScripts,
+  sourceUploaded,
+  hasMappingFiles,
   children,
   onNext,
   onBack,
@@ -60,8 +66,13 @@ export default function WizardLayout({
         <div className="flex items-center gap-1 overflow-x-auto">
           {STEPS.map((step, i) => {
             const idx = i + 1
-            const done = idx < currentStep
             const active = idx === currentStep
+            const done = (() => {
+              if (idx === 1) return !!sourceUploaded
+              if (idx === 9) return !!hasMappingFiles
+              if (step.scriptKey) return !!(generatedScripts?.[step.scriptKey])
+              return false
+            })()
             return (
               <div key={step.label} className="flex items-center gap-1 flex-shrink-0">
                 <button
@@ -70,7 +81,7 @@ export default function WizardLayout({
                   className={clsx(
                     'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
                     active && 'bg-blue-600 text-white',
-                    done && 'bg-green-100 text-green-700 hover:bg-green-200',
+                    !active && done && 'bg-green-100 text-green-700 hover:bg-green-200',
                     !active && !done && 'text-gray-400 hover:bg-gray-100',
                     !projectId && 'cursor-not-allowed',
                   )}
@@ -79,11 +90,11 @@ export default function WizardLayout({
                     className={clsx(
                       'w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold',
                       active && 'bg-white text-blue-600',
-                      done && 'bg-green-500 text-white',
+                      !active && done && 'bg-green-500 text-white',
                       !active && !done && 'bg-gray-200 text-gray-500',
                     )}
                   >
-                    {done ? '✓' : step.short}
+                    {!active && done ? '✓' : step.short}
                   </span>
                   <span className="hidden sm:inline">{step.label}</span>
                 </button>

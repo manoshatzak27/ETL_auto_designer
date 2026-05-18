@@ -66,6 +66,9 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
       projectId={project.id}
       projectName={project.name}
       currentStep={3}
+      generatedScripts={project.generated_scripts}
+      sourceUploaded={!!project.source_filename}
+      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/2`)}
       onNext={handleNext}
       nextLabel="Next: Provider →"
