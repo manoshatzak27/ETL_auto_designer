@@ -1,3 +1,4 @@
+import re
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -7,6 +8,14 @@ from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, P
 router = APIRouter(prefix="/projects", tags=["projects"])
 
 
+def _slugify(name: str) -> str:
+    slug = name.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_]+", "-", slug)
+    slug = re.sub(r"-+", "-", slug).strip("-")
+    return slug or "project"
+
+
 @router.get("/", response_model=list[ProjectSummary])
 def list_projects(db: Session = Depends(get_db)):
     return db.query(Project).order_by(Project.updated_at.desc()).all()
@@ -14,7 +23,10 @@ def list_projects(db: Session = Depends(get_db)):
 
 @router.post("/", response_model=ProjectResponse, status_code=201)
 def create_project(payload: ProjectCreate, db: Session = Depends(get_db)):
-    project = Project(name=payload.name, description=payload.description)
+    slug = _slugify(payload.name)
+    if db.query(Project).filter(Project.id == slug).first():
+        raise HTTPException(status_code=409, detail="A project with this name already exists")
+    project = Project(id=slug, name=payload.name, description=payload.description)
     db.add(project)
     db.commit()
     db.refresh(project)

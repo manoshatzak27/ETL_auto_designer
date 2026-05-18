@@ -12,6 +12,7 @@ export default function Dashboard() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [showForm, setShowForm] = useState(false)
+  const [nameError, setNameError] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -25,11 +26,21 @@ export default function Dashboard() {
   const handleCreate = async () => {
     if (!newName.trim()) return
     setCreating(true)
-    const p = await createProject(newName.trim())
-    setCreating(false)
-    setNewName('')
-    setShowForm(false)
-    navigate(`/project/${p.id}/step/1`)
+    setNameError('')
+    try {
+      const p = await createProject(newName.trim())
+      setNewName('')
+      setShowForm(false)
+      navigate(`/project/${p.id}/step/1`)
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        setNameError('This project name is already taken')
+      } else {
+        setNameError('Failed to create project')
+      }
+    } finally {
+      setCreating(false)
+    }
   }
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -66,24 +77,41 @@ export default function Dashboard() {
       <main className="max-w-5xl mx-auto px-8 py-8">
         {/* New project form */}
         {showForm && (
-          <div className="bg-white border border-blue-200 rounded-xl p-5 mb-6 flex items-center gap-3">
-            <input
-              autoFocus
-              type="text"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
-              placeholder="Project name…"
-              className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-            <button
-              onClick={handleCreate}
-              disabled={creating || !newName.trim()}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
-              {creating ? 'Creating…' : 'Create'}
-            </button>
-            <button onClick={() => setShowForm(false)} className="text-sm text-gray-400 hover:text-gray-600">Cancel</button>
+          <div className="bg-white border border-blue-200 rounded-xl p-5 mb-6">
+            <div className="flex items-center gap-3">
+              <div className="flex-1">
+                <input
+                  autoFocus
+                  type="text"
+                  value={newName}
+                  onChange={e => { setNewName(e.target.value); setNameError('') }}
+                  onKeyDown={e => e.key === 'Enter' && handleCreate()}
+                  placeholder="Project name…"
+                  className={clsx(
+                    'w-full border rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2',
+                    nameError
+                      ? 'border-red-400 focus:ring-red-400'
+                      : 'border-gray-300 focus:ring-blue-500'
+                  )}
+                />
+                {nameError && (
+                  <p className="mt-1 text-xs text-red-600">{nameError}</p>
+                )}
+              </div>
+              <button
+                onClick={handleCreate}
+                disabled={creating || !newName.trim()}
+                className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 self-start"
+              >
+                {creating ? 'Creating…' : 'Create'}
+              </button>
+              <button
+                onClick={() => { setShowForm(false); setNameError('') }}
+                className="text-sm text-gray-400 hover:text-gray-600 self-start pt-2"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
         )}
 
