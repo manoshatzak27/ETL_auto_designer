@@ -6,6 +6,10 @@ import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 
 interface Props {
   project: Project
@@ -78,14 +82,14 @@ export default function Step8Death({ project, onUpdate }: Props) {
       <div className="flex flex-col gap-6">
         <div>
           <h2 className="text-xl font-bold text-primary">Death Table Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="mt-1 text-sm text-muted-foreground">
             Map source columns to the OMOP DEATH table. A person can have at most one death record.
           </p>
         </div>
 
         {/* Death Trigger */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Death Trigger</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Death Trigger</h3>
 
           <FieldMapper
             label="Filter column"
@@ -96,23 +100,23 @@ export default function Step8Death({ project, onUpdate }: Props) {
           />
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Filter value (death indicator)</label>
-            <input
+            <Label>Filter value (death indicator)</Label>
+            <Input
               type="text"
               value={cfg.filter_value}
               onChange={e => setCfg(prev => ({ ...prev, filter_value: e.target.value }))}
               placeholder="e.g. 5.0 or dead or D"
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="mt-1 text-xs text-muted-foreground">
               A death record is created only when the filter column equals this value.
             </p>
           </div>
-        </div>
+        </Card>
 
         {/* Death Date */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Death Date</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Death Date</h3>
 
           <FieldMapper
             label="death_date (required)"
@@ -129,42 +133,42 @@ export default function Step8Death({ project, onUpdate }: Props) {
             onChange={set('death_datetime_col')}
             hint="Source column containing the full datetime of death. Leave empty to populate as NULL."
           />
-        </div>
+        </Card>
 
         {/* Death Type */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Death Type</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Death Type</h3>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">
+            <Label>
               death_type_concept_id
-              <span className="ml-1 font-normal text-gray-400">— provenance of the death record</span>
-            </label>
-            <select
+              <span className="ml-1 font-normal text-muted-foreground">— provenance of the death record</span>
+            </Label>
+            <Select
               value={cfg.death_type_concept_id}
               onChange={e => setCfg(prev => ({ ...prev, death_type_concept_id: parseInt(e.target.value) }))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
             >
               {DEATH_TYPE_OPTIONS.map(o => (
                 <option key={o.value} value={o.value}>{o.label}</option>
               ))}
-            </select>
-            <p className="text-xs text-gray-500 mt-1">
+            </Select>
+            <p className="mt-1 text-xs text-muted-foreground">
               Reflects the source of the death record. Do not assume it matches the visit type.
             </p>
           </div>
-        </div>
+        </Card>
 
         {/* Cause of Death */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Cause of Death (optional)</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Cause of Death (optional)</h3>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">
+            <Label>
               cause_concept_id
-              <span className="ml-1 font-normal text-gray-400">— Standard OMOP concept for cause of death</span>
-            </label>
-            <input
+              <span className="ml-1 font-normal text-muted-foreground">— Standard OMOP concept for cause of death</span>
+            </Label>
+            <Input
               type="number"
               value={cfg.cause_concept_id ?? ''}
               onChange={e => setCfg(prev => ({
@@ -172,9 +176,9 @@ export default function Step8Death({ project, onUpdate }: Props) {
                 cause_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
               }))}
               placeholder="e.g. 433753 for Neoplasm or leave blank"
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="mt-1 text-xs text-muted-foreground">
               No domain restriction — choose the Standard concept that best represents the cause of death. Use 0 if unknown.
             </p>
           </div>
@@ -188,11 +192,11 @@ export default function Step8Death({ project, onUpdate }: Props) {
           />
 
           <div>
-            <label className="text-sm font-medium text-gray-700">
+            <Label>
               cause_source_concept_id
-              <span className="ml-1 font-normal text-gray-400">— OMOP concept ID for the source cause code</span>
-            </label>
-            <input
+              <span className="ml-1 font-normal text-muted-foreground">— OMOP concept ID for the source cause code</span>
+            </Label>
+            <Input
               type="number"
               value={cfg.cause_source_concept_id ?? ''}
               onChange={e => setCfg(prev => ({
@@ -200,13 +204,13 @@ export default function Step8Death({ project, onUpdate }: Props) {
                 cause_source_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
               }))}
               placeholder="CONCEPT_ID from OMOP vocabularies, or leave blank"
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
             />
-            <p className="text-xs text-gray-500 mt-1">
+            <p className="mt-1 text-xs text-muted-foreground">
               Use if the cause of death was coded using a vocabulary present in OMOP. Use 0 if not applicable.
             </p>
           </div>
-        </div>
+        </Card>
 
         <ExtraInstructions
           tableName="death"
