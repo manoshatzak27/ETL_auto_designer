@@ -4,7 +4,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
-from app.services.etl_executor import execute_etl_code
+from app.services.etl_executor import execute_etl_scripts
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["execution"])
@@ -15,18 +15,19 @@ async def execute_project(project_id: str, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if not project.generated_code:
-        raise HTTPException(status_code=400, detail="No generated code. Run /generate first.")
+    if not project.generated_scripts:
+        raise HTTPException(status_code=400, detail="No generated scripts. Generate scripts first.")
 
     output_dir = settings.get_output_path() / project_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    log, status, output_files = await execute_etl_code(
-        project.generated_code,
+    log, status, output_files = await execute_etl_scripts(
+        project.generated_scripts,
         source_path=project.source_path,
         output_dir=str(output_dir),
         project_id=project_id,
         mapping_files=project.mapping_files or {},
+        project_name=project.name,
     )
 
     project.last_execution_log = log
@@ -65,4 +66,5 @@ def download_output(project_id: str, filename: str, db: Session = Depends(get_db
     if safe_name not in [Path(f).name for f in (project.output_files or [])]:
         raise HTTPException(status_code=403, detail="File not in project outputs")
 
-    return FileResponse(str(file_path), filename=filename, media_type="text/csv")
+    media_type = "text/x-python" if filename.endswith(".py") else "text/csv"
+    return FileResponse(str(file_path), filename=filename, media_type=media_type)

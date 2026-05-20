@@ -1,21 +1,33 @@
 """
-Writes generated Python ETL code to a temp file, executes it as a subprocess,
-captures stdout/stderr, and returns the log + list of produced output files.
+Runs each generated OMOP table script as an isolated subprocess, in dependency order.
+Captures per-table stdout/stderr and stops on first failure.
 """
 import asyncio
 import json
 import os
+import re
 import sys
-import tempfile
 from pathlib import Path
 
+EXECUTION_ORDER = [
+    "location",
+    "care_site",
+    "provider",
+    "person",
+    "visit_occurrence",
+    "observation_period",
+    "stem_table",
+    "death",
+]
 
-async def execute_etl_code(
-    code: str,
+
+async def execute_etl_scripts(
+    scripts: dict,
     source_path: str,
     output_dir: str,
     project_id: str,
     mapping_files: dict,
+    project_name: str = "",
 ) -> tuple[str, str, list[str]]:
     """
     Returns (log: str, status: 'success'|'error', output_files: list[str])
@@ -23,16 +35,7 @@ async def execute_etl_code(
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Write generated code to a temp file
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        suffix=".py",
-        prefix=f"etl_{project_id}_",
-        delete=False,
-        encoding="utf-8",
-    ) as tmp:
-        tmp_path = tmp.name
-        tmp.write(code)
+    safe_name = re.sub(r"[^\w]", "_", project_name).strip("_") if project_name else project_id
 
     env = os.environ.copy()
     env["ETL_SOURCE_PATH"] = source_path
@@ -41,33 +44,44 @@ async def execute_etl_code(
     for key, path in (mapping_files or {}).items():
         env[f"ETL_MAPPING_{key}"] = str(path)
 
+    tables_in_order = [t for t in EXECUTION_ORDER if t in scripts]
+    script_files: list[str] = []
     log_lines: list[str] = []
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            sys.executable,
-            tmp_path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-            env=env,
-        )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
-        log_lines.append(stdout.decode("utf-8", errors="replace"))
-        status = "success" if proc.returncode == 0 else "error"
-        if proc.returncode != 0:
-            log_lines.append(f"\n[Exit code: {proc.returncode}]")
-    except asyncio.TimeoutError:
-        log_lines.append("\n[ERROR] Execution timed out after 300 seconds.")
-        status = "error"
-    except Exception as exc:
-        log_lines.append(f"\n[ERROR] {exc}")
-        status = "error"
-    finally:
+    overall_status = "success"
+
+    for table in tables_in_order:
+        script_path = output_path / f"etl_{safe_name}_{table}.py"
+        script_path.write_text(scripts[table], encoding="utf-8")
+        script_files.append(str(script_path))
+
+        log_lines.append(f"\n{'=' * 50}\n[TABLE: {table}] Starting...\n{'=' * 50}\n")
+
         try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
+            proc = await asyncio.create_subprocess_exec(
+                sys.executable,
+                str(script_path),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.STDOUT,
+                env=env,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=300)
+            log_lines.append(stdout.decode("utf-8", errors="replace"))
 
-    # Collect output CSV files
-    output_files = [str(p) for p in output_path.glob("*.csv")]
+            if proc.returncode == 0:
+                log_lines.append(f"[TABLE: {table}] OK\n")
+            else:
+                log_lines.append(f"[TABLE: {table}] FAILED (exit code {proc.returncode})\n")
+                overall_status = "error"
+                break
+        except asyncio.TimeoutError:
+            log_lines.append(f"[TABLE: {table}] ERROR: Timed out after 300 seconds.\n")
+            overall_status = "error"
+            break
+        except Exception as exc:
+            log_lines.append(f"[TABLE: {table}] ERROR: {exc}\n")
+            overall_status = "error"
+            break
 
-    return "".join(log_lines), status, output_files
+    output_files = [str(p) for p in sorted(output_path.glob("*.csv"))]
+
+    return "".join(log_lines), overall_status, output_files
