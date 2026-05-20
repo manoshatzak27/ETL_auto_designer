@@ -49,10 +49,10 @@ interface ColumnInfo {
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const STRATEGY_META: Record<Strategy, { label: string; icon: React.ReactNode; color: string }> = {
-  map_variable: { label: 'Map variable', icon: <Hash className="w-3.5 h-3.5" />, color: 'bg-blue-100 text-blue-700' },
+  map_variable: { label: 'Map variable', icon: <Hash className="w-3.5 h-3.5" />, color: 'bg-accent text-primary' },
   map_values:   { label: 'Map values',   icon: <List className="w-3.5 h-3.5" />, color: 'bg-orange-100 text-orange-700' },
   map_both:     { label: 'Map both',     icon: <Layers className="w-3.5 h-3.5" />, color: 'bg-purple-100 text-purple-700' },
-  skip:         { label: 'Skip',         icon: <SkipForward className="w-3.5 h-3.5" />, color: 'bg-gray-100 text-gray-400' },
+  skip:         { label: 'Skip',         icon: <SkipForward className="w-3.5 h-3.5" />, color: 'bg-muted text-muted-foreground' },
 }
 
 
@@ -128,9 +128,9 @@ function ConceptPicker({
       )}>
         <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
         <span className="font-semibold">{value.concept_name}</span>
-        <span className="text-gray-400 ml-1">({value.concept_id})</span>
-        {value.vocabulary_id && <span className="text-gray-400">· {value.vocabulary_id}</span>}
-        <button onClick={onClear} className="ml-auto text-gray-300 hover:text-red-500"><X className="w-3 h-3" /></button>
+        <span className="text-muted-foreground ml-1">({value.concept_id})</span>
+        {value.vocabulary_id && <span className="text-muted-foreground">· {value.vocabulary_id}</span>}
+        <button onClick={onClear} className="ml-auto text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
       </div>
     )
   }
@@ -145,7 +145,7 @@ function ConceptPicker({
           onChange={e => setManualId(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && applyManual()}
           placeholder="Concept ID"
-          className="border border-gray-300 rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="border border-border rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
         />
         <input
           type="text"
@@ -153,16 +153,16 @@ function ConceptPicker({
           onChange={e => setManualName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && applyManual()}
           placeholder="Name (optional)"
-          className="border border-gray-300 rounded px-2 py-1 text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-blue-400"
+          className="border border-border rounded px-2 py-1 text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
         />
         <button
           onClick={applyManual}
           disabled={!manualId}
-          className="px-2 py-1 text-xs bg-blue-600 text-white rounded disabled:opacity-30 hover:bg-blue-700"
+          className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90"
         >Set</button>
         <button
           onClick={() => { setShowSearch(s => !s); if (!cs.query) cs.setQuery(defaultQuery) }}
-          className={clsx('px-2 py-1 text-xs rounded border', showSearch ? 'bg-blue-50 border-blue-400 text-blue-700' : 'border-gray-300 text-gray-500 hover:border-blue-400')}
+          className={clsx('px-2 py-1 text-xs rounded border', showSearch ? 'bg-secondary/60 border-primary text-primary' : 'border-border text-muted-foreground hover:border-primary')}
           title="Search EntityLinker"
         >
           <Search className="w-3 h-3" />
@@ -171,7 +171,7 @@ function ConceptPicker({
 
       {/* Search panel */}
       {showSearch && (
-        <div className="flex flex-col gap-1.5 pl-1 border-l-2 border-blue-200">
+        <div className="flex flex-col gap-1.5 pl-1 border-l-2 border-primary/30">
           <div className="flex gap-1.5">
             <input
               type="text"
@@ -179,13 +179,13 @@ function ConceptPicker({
               onChange={e => cs.setQuery(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && cs.search()}
               placeholder={`Search "${defaultQuery}"…`}
-              className="flex-1 border border-gray-300 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-blue-400"
+              className="flex-1 border border-border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
               autoFocus
             />
             <button
               onClick={() => cs.search()}
               disabled={cs.loading}
-              className="px-2 py-1 text-xs bg-blue-600 text-white rounded disabled:opacity-40 hover:bg-blue-700"
+              className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-40 hover:bg-primary/90"
             >
               {cs.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Go'}
             </button>
@@ -196,15 +196,15 @@ function ConceptPicker({
             </p>
           )}
           {cs.results.length > 0 && (
-            <div className="border border-gray-200 rounded max-h-36 overflow-y-auto shadow-sm">
+            <div className="border border-border rounded max-h-36 overflow-y-auto shadow-sm">
               {cs.results.map(c => (
                 <button
                   key={c.concept_id}
                   onClick={() => { onSelect(c); setShowSearch(false); cs.clear() }}
-                  className="w-full text-left px-2.5 py-2 hover:bg-blue-50 border-b last:border-0 border-gray-100"
+                  className="w-full text-left px-2.5 py-2 hover:bg-secondary/60 border-b last:border-0 border-border"
                 >
-                  <span className="text-xs font-medium text-gray-900">{c.concept_name}</span>
-                  <span className="text-xs text-gray-400 ml-1.5">{c.concept_id} · {c.domain} · {c.vocabulary_id}</span>
+                  <span className="text-xs font-medium text-foreground">{c.concept_name}</span>
+                  <span className="text-xs text-muted-foreground ml-1.5">{c.concept_id} · {c.domain} · {c.vocabulary_id}</span>
                 </button>
               ))}
             </div>
@@ -244,18 +244,18 @@ function ValueMappingTable({
           {values.length} distinct values — map each one below
         </div>
       )}
-      <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-xs">
-          <thead className="bg-gray-50 border-b border-gray-200">
+          <thead className="bg-muted border-b border-border">
             <tr>
-              <th className="text-left px-3 py-2 font-medium text-gray-600 w-28">Source value</th>
-              <th className="text-left px-3 py-2 font-medium text-gray-600">OMOP concept</th>
+              <th className="text-left px-3 py-2 font-medium text-muted-foreground w-28">Source value</th>
+              <th className="text-left px-3 py-2 font-medium text-muted-foreground">OMOP concept</th>
             </tr>
           </thead>
           <tbody>
             {values.map((val, i) => (
-              <tr key={val} className={clsx(i % 2 === 0 ? 'bg-white' : 'bg-gray-50', 'border-b last:border-0 border-gray-100')}>
-                <td className="px-3 py-2 font-mono text-gray-700 align-top pt-3">{val}</td>
+              <tr key={val} className={clsx(i % 2 === 0 ? 'bg-card' : 'bg-muted', 'border-b last:border-0 border-border')}>
+                <td className="px-3 py-2 font-mono text-foreground align-top pt-3">{val}</td>
                 <td className="px-3 py-2">
                   <ConceptPicker
                     projectId={projectId}
@@ -271,7 +271,7 @@ function ValueMappingTable({
           </tbody>
         </table>
       </div>
-      <p className="text-xs text-gray-400">
+      <p className="text-xs text-muted-foreground">
         {Object.keys(mapped).length}/{values.length} values mapped
       </p>
     </div>
@@ -309,7 +309,7 @@ function VariableRow({
     if (decision.strategy === 'skip') return 0
     if (decision.strategy === 'map_variable') return hasVariableConcept ? 100 : 0
     if (decision.strategy === 'map_values') {
-      const total = (info?.distinct_count ?? 0) 
+      const total = (info?.distinct_count ?? 0)
       return Math.round(((mappedValueCount) / total) * 100)
     }
     if (decision.strategy === 'map_both') {
@@ -325,18 +325,18 @@ function VariableRow({
   return (
     <div className={clsx(
       'border rounded-lg overflow-hidden transition-colors',
-      checked && 'ring-2 ring-blue-400',
-      decision.strategy === 'skip' ? 'border-gray-100' : 'border-gray-200',
+      checked && 'ring-2 ring-primary',
+      decision.strategy === 'skip' ? 'border-border/50' : 'border-border',
       open ? 'shadow-sm' : '',
     )}>
       {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2.5 bg-white">
+      <div className="flex items-center gap-2 px-3 py-2.5 bg-card">
         {batchMode && (
           <input
             type="checkbox"
             checked={checked}
             onChange={e => onCheck(e.target.checked)}
-            className="rounded text-blue-600 flex-shrink-0"
+            className="rounded accent-primary flex-shrink-0"
             onClick={e => e.stopPropagation()}
           />
         )}
@@ -345,7 +345,7 @@ function VariableRow({
           className="flex items-center gap-2 flex-1 min-w-0 text-left"
           onClick={() => setOpen(o => !o)}
         >
-          <span className="font-mono text-sm font-medium text-gray-800 w-36 flex-shrink-0 truncate">{column}</span>
+          <span className="font-mono text-sm font-medium text-foreground w-36 flex-shrink-0 truncate">{column}</span>
 
           <span className={clsx('flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0', sm.color)}>
             {sm.icon}{sm.label}
@@ -355,10 +355,10 @@ function VariableRow({
           {!open && info && sampleValues.length > 0 && (
             <div className="hidden sm:flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
               {sampleValues.slice(0, 4).map(v => (
-                <span key={v} className="bg-gray-100 text-gray-500 px-1.5 py-0 rounded text-xs font-mono whitespace-nowrap">{v}</span>
+                <span key={v} className="bg-muted text-muted-foreground px-1.5 py-0 rounded text-xs font-mono whitespace-nowrap">{v}</span>
               ))}
               {(info.distinct_count > 4) && (
-                <span className="text-xs text-gray-400">+{info.distinct_count - 4} more</span>
+                <span className="text-xs text-muted-foreground">+{info.distinct_count - 4} more</span>
               )}
             </div>
           )}
@@ -370,45 +370,45 @@ function VariableRow({
                 ? 'bg-green-100 text-green-700'
                 : mappingCompleteness > 0
                   ? 'bg-orange-100 text-orange-700'
-                  : 'bg-gray-100 text-gray-400',
+                  : 'bg-muted text-muted-foreground',
             )}>
               {mappingCompleteness}%
             </span>
-            {open ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+            {open ? <ChevronUp className="w-4 h-4 text-muted-foreground" /> : <ChevronDown className="w-4 h-4 text-muted-foreground" />}
           </div>
         </button>
       </div>
 
       {/* Expanded body */}
       {open && (
-        <div className="border-t border-gray-100 px-4 py-4 flex flex-col gap-5 bg-white">
+        <div className="border-t border-border px-4 py-4 flex flex-col gap-5 bg-card">
 
           {/* Column stats + sample values */}
           {info && (
             <div className="flex flex-col gap-3">
               <div className="grid grid-cols-3 gap-3">
-                <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-                  <p className="text-lg font-bold text-gray-800">{info.distinct_count}</p>
-                  <p className="text-xs text-gray-500">Distinct values</p>
+                <div className="bg-muted rounded-lg p-2.5 text-center">
+                  <p className="text-lg font-bold text-foreground">{info.distinct_count}</p>
+                  <p className="text-xs text-muted-foreground">Distinct values</p>
                 </div>
-                <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-                  <p className="text-lg font-bold text-gray-800">{info.null_count}</p>
-                  <p className="text-xs text-gray-500">Null values</p>
+                <div className="bg-muted rounded-lg p-2.5 text-center">
+                  <p className="text-lg font-bold text-foreground">{info.null_count}</p>
+                  <p className="text-xs text-muted-foreground">Null values</p>
                 </div>
-                <div className="bg-gray-50 rounded-lg p-2.5 text-center">
-                  <p className="text-lg font-bold text-gray-800">{mappingCompleteness}%</p>
-                  <p className="text-xs text-gray-500">Completeness</p>
+                <div className="bg-muted rounded-lg p-2.5 text-center">
+                  <p className="text-lg font-bold text-foreground">{mappingCompleteness}%</p>
+                  <p className="text-xs text-muted-foreground">Completeness</p>
                 </div>
               </div>
 
               <div>
-                <p className="text-xs font-medium text-gray-500 mb-1.5">Sample values</p>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">Sample values</p>
                 <div className="flex flex-wrap gap-1.5">
                   {sampleValues.map(v => (
-                    <span key={v} className="bg-blue-50 text-blue-700 px-2 py-0.5 rounded text-xs font-mono border border-blue-100">{v}</span>
+                    <span key={v} className="bg-secondary/60 text-primary px-2 py-0.5 rounded text-xs font-mono border border-border">{v}</span>
                   ))}
                   {extraCount > 0 && (
-                    <span className="text-xs text-gray-400 self-center">… and {extraCount} more</span>
+                    <span className="text-xs text-muted-foreground self-center">… and {extraCount} more</span>
                   )}
                 </div>
               </div>
@@ -417,7 +417,7 @@ function VariableRow({
 
           {/* Strategy selector */}
           <div>
-            <p className="text-xs font-semibold text-gray-600 mb-2">Mapping strategy</p>
+            <p className="text-xs font-semibold text-muted-foreground mb-2">Mapping strategy</p>
             <div className="grid grid-cols-2 gap-2">
               {(Object.entries(STRATEGY_META) as [Strategy, typeof STRATEGY_META[Strategy]][]).map(([key, meta]) => (
                 <button
@@ -425,13 +425,13 @@ function VariableRow({
                   onClick={() => onChange({ ...decision, strategy: key })}
                   className={clsx(
                     'flex items-center gap-2.5 px-3 py-2.5 rounded-lg border text-left transition-colors',
-                    decision.strategy === key ? 'border-blue-500 bg-blue-50' : 'border-gray-200 hover:border-gray-300'
+                    decision.strategy === key ? 'border-primary bg-secondary/60' : 'border-border hover:border-border/80'
                   )}
                 >
-                  <span className={clsx('flex-shrink-0', decision.strategy === key ? 'text-blue-600' : 'text-gray-400')}>{meta.icon}</span>
+                  <span className={clsx('flex-shrink-0', decision.strategy === key ? 'text-primary' : 'text-muted-foreground')}>{meta.icon}</span>
                   <div>
-                    <p className="text-xs font-semibold text-gray-800">{meta.label}</p>
-                    <p className="text-xs text-gray-400 mt-0.5 leading-tight">
+                    <p className="text-xs font-semibold text-foreground">{meta.label}</p>
+                    <p className="text-xs text-muted-foreground mt-0.5 leading-tight">
                       {key === 'map_variable' && 'Numeric — variable → one concept'}
                       {key === 'map_values' && 'Each (variable, value) pair = its own concept'}
                       {key === 'map_both' && 'Variable gets a concept + each value gets value_as_concept_id'}
@@ -446,7 +446,7 @@ function VariableRow({
           {/* Variable concept picker */}
           {(decision.strategy === 'map_variable' || decision.strategy === 'map_both') && (
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs font-semibold text-gray-600">Concept for <code className="bg-gray-100 px-1 rounded">{column}</code></p>
+              <p className="text-xs font-semibold text-muted-foreground">Concept for <code className="bg-muted px-1 rounded">{column}</code></p>
               <ConceptPicker
                 projectId={projectId}
                 label={column}
@@ -461,7 +461,7 @@ function VariableRow({
           {/* Value mapping table */}
           {(decision.strategy === 'map_values' || decision.strategy === 'map_both') && info && (
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs font-semibold text-gray-600">
+              <p className="text-xs font-semibold text-muted-foreground">
                 {decision.strategy === 'map_both' ? 'value_as_concept_id for each value' : 'Concept for each (variable, value) pair'}
               </p>
               <ValueMappingTable
@@ -533,18 +533,18 @@ function BatchPanel({
   if (selectedCols.length === 0) return null
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 flex flex-col gap-4">
+    <div className="rounded-xl border border-border bg-secondary/60 p-4 flex flex-col gap-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <Tag className="w-4 h-4 text-blue-600" />
-          <span className="font-semibold text-sm text-blue-900">Batch mapping — {selectedCols.length} variable{selectedCols.length > 1 ? 's' : ''} selected</span>
+          <Tag className="w-4 h-4 text-primary" />
+          <span className="font-semibold text-sm text-secondary-foreground">Batch mapping — {selectedCols.length} variable{selectedCols.length > 1 ? 's' : ''} selected</span>
         </div>
-        <button onClick={onClear} className="text-xs text-blue-400 hover:text-blue-700">Deselect all</button>
+        <button onClick={onClear} className="text-xs text-muted-foreground hover:text-primary">Deselect all</button>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
         {selectedCols.map(c => (
-          <span key={c} className="bg-white border border-blue-200 text-blue-700 px-2 py-0.5 rounded text-xs font-mono">{c}</span>
+          <span key={c} className="bg-card border border-border text-primary px-2 py-0.5 rounded text-xs font-mono">{c}</span>
         ))}
       </div>
 
@@ -556,7 +556,7 @@ function BatchPanel({
             onClick={() => setStrategy(key)}
             className={clsx(
               'flex items-center gap-1.5 px-2 py-1.5 rounded-lg border text-xs font-medium transition-colors',
-              strategy === key ? 'border-blue-500 bg-white text-blue-700 shadow-sm' : 'border-blue-100 text-blue-400 hover:border-blue-300'
+              strategy === key ? 'border-primary bg-card text-primary shadow-sm' : 'border-border text-muted-foreground hover:border-primary/50'
             )}
           >
             {meta.icon} {meta.label}
@@ -567,7 +567,7 @@ function BatchPanel({
       {/* Concept picker for variable */}
       {(strategy === 'map_variable' || strategy === 'map_both') && (
         <div className="flex flex-col gap-1">
-          <p className="text-xs font-medium text-blue-800">Concept to apply to all selected variables:</p>
+          <p className="text-xs font-medium text-secondary-foreground">Concept to apply to all selected variables:</p>
           <ConceptPicker
             projectId={projectId}
             label="batch"
@@ -583,7 +583,7 @@ function BatchPanel({
       {(strategy === 'map_values' || strategy === 'map_both') && (
         allSameValues ? (
           <div className="flex flex-col gap-1">
-            <p className="text-xs font-medium text-blue-800">Map values (shared by all selected variables):</p>
+            <p className="text-xs font-medium text-secondary-foreground">Map values (shared by all selected variables):</p>
             <ValueMappingTable
               projectId={projectId}
               column={selectedCols[0]}
@@ -601,8 +601,8 @@ function BatchPanel({
       )}
 
       <div className="flex items-center gap-3">
-        <label className="flex items-center gap-1.5 text-xs text-blue-700 cursor-pointer">
-          <input type="checkbox" checked={overwrite} onChange={e => setOverwrite(e.target.checked)} className="rounded" />
+        <label className="flex items-center gap-1.5 text-xs text-secondary-foreground cursor-pointer">
+          <input type="checkbox" checked={overwrite} onChange={e => setOverwrite(e.target.checked)} className="rounded accent-primary" />
           Overwrite existing mappings
         </label>
         <button
@@ -611,7 +611,7 @@ function BatchPanel({
             strategy !== 'skip' &&
             (strategy === 'map_variable' || strategy === 'map_both') && !batchConcept
           }
-          className="ml-auto px-4 py-1.5 bg-blue-600 text-white rounded-md text-xs font-medium hover:bg-blue-700 disabled:opacity-40"
+          className="ml-auto px-4 py-1.5 bg-primary text-primary-foreground rounded-md text-xs font-medium hover:bg-primary/90 disabled:opacity-40"
         >
           Apply to {selectedCols.length} variable{selectedCols.length > 1 ? 's' : ''}
         </button>
@@ -765,7 +765,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
       <div className="flex flex-col gap-5">
         <div>
           <h2 className="text-xl font-bold text-primary">Concept Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Map each source variable to OMOP concepts. Click a variable to expand it and see its values.
             Use batch mode to map multiple variables at once.
           </p>
@@ -773,24 +773,24 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
 
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
-          <div className="bg-white border border-gray-200 rounded-lg p-3 text-center">
-            <p className="text-xl font-bold text-gray-900">{conceptCols.length}</p>
-            <p className="text-xs text-gray-500">Variables to map</p>
+          <div className="bg-card border border-border rounded-lg p-3 text-center">
+            <p className="text-xl font-bold text-foreground">{conceptCols.length}</p>
+            <p className="text-xs text-muted-foreground">Variables to map</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
             <p className="text-xl font-bold text-green-700">{mappedCount}</p>
             <p className="text-xs text-green-600">Mapped</p>
           </div>
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-3 text-center">
-            <p className="text-xl font-bold text-gray-500">{skippedCount}</p>
-            <p className="text-xs text-gray-500">Skipped</p>
+          <div className="bg-muted border border-border rounded-lg p-3 text-center">
+            <p className="text-xl font-bold text-muted-foreground">{skippedCount}</p>
+            <p className="text-xs text-muted-foreground">Skipped</p>
           </div>
         </div>
 
         {/* Excluded structural columns */}
         {structuralCols.size > 0 && (
-          <div className="flex items-start gap-2 px-3 py-2.5 bg-blue-50 border border-blue-200 rounded-lg text-xs text-blue-800">
-            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-blue-500" />
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-border bg-secondary/60 text-xs text-secondary-foreground">
+            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-primary" />
             <span>
               <span className="font-semibold">{structuralCols.size} structural column{structuralCols.size > 1 ? 's' : ''} excluded</span>
               {' '}— already mapped in Person, Visit, Obs. Period, Location, Care Site, Provider, or Death steps:{' '}
@@ -806,20 +806,20 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="Filter columns…"
-            className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            className="border border-border rounded-md px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-ring bg-background text-foreground"
           />
           <div className="flex gap-1">
             {(['all', 'unmapped', 'mapped', 'skipped'] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
-                className={clsx('px-2.5 py-1.5 rounded-md text-xs font-medium capitalize', filter === f ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200')}
+                className={clsx('px-2.5 py-1.5 rounded-md text-xs font-medium capitalize', filter === f ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80')}
               >{f}</button>
             ))}
           </div>
           <button
             onClick={() => { setBatchMode(b => !b); setSelectedCols([]) }}
-            className={clsx('ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border', batchMode ? 'bg-blue-600 text-white border-blue-600' : 'border-gray-300 text-gray-600 hover:bg-gray-50')}
+            className={clsx('ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border', batchMode ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:bg-muted')}
           >
             <Tag className="w-3.5 h-3.5" />
             {batchMode ? 'Exit batch mode' : 'Batch mode'}
@@ -827,7 +827,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
           {batchMode && filteredCols.length > 0 && (
             <button
               onClick={() => setSelectedCols(filteredCols)}
-              className="text-xs text-blue-600 hover:underline"
+              className="text-xs text-primary hover:underline"
             >Select all visible</button>
           )}
         </div>
@@ -845,11 +845,11 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
         )}
 
         {genError && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-sm text-red-700">{genError}</div>
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-sm text-destructive">{genError}</div>
         )}
 
         {loading && (
-          <div className="flex items-center gap-2 py-8 justify-center text-gray-400">
+          <div className="flex items-center gap-2 py-8 justify-center text-muted-foreground">
             <Loader2 className="w-5 h-5 animate-spin" /> Loading column data…
           </div>
         )}
@@ -870,12 +870,12 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
               />
             ))}
             {filteredCols.length === 0 && (
-              <p className="text-center text-sm text-gray-400 py-8">No columns match the current filter.</p>
+              <p className="text-center text-sm text-muted-foreground py-8">No columns match the current filter.</p>
             )}
           </div>
         )}
 
-        <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
+        <div className="rounded-lg border border-border bg-secondary/60 p-3 text-xs text-muted-foreground">
           Clicking <strong>Next</strong> saves all decisions and auto-generates the 3 concept mapping CSV files used by the ETL engine.
         </div>
       </div>

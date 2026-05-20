@@ -102,15 +102,15 @@ export default function Step1Upload({ project, onUpdate }: Props) {
               <span className="font-semibold text-foreground">{project.source_filename}</span>
             </div>
             <div className="grid grid-cols-3 gap-4 text-sm">
-              <div className="rounded-lg bg-muted p-3">
+              <div className="rounded-lg border border-border bg-secondary/70 p-3">
                 <p className="text-xs text-muted-foreground">Delimiter</p>
                 <p className="font-mono font-semibold text-foreground">{project.source_delimiter === '\t' ? 'TAB' : project.source_delimiter || 'auto'}</p>
               </div>
-              <div className="rounded-lg bg-muted p-3">
+              <div className="rounded-lg border border-border bg-secondary/70 p-3">
                 <p className="text-xs text-muted-foreground">Encoding</p>
                 <p className="font-mono font-semibold text-foreground">{project.source_encoding}</p>
               </div>
-              <div className="rounded-lg bg-muted p-3">
+              <div className="rounded-lg border border-border bg-secondary/70 p-3">
                 <p className="text-xs text-muted-foreground">Rows</p>
                 <p className="font-semibold text-foreground">{project.source_row_count.toLocaleString()}</p>
               </div>

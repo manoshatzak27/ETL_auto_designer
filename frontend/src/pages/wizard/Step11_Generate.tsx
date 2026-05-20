@@ -10,6 +10,9 @@ import {
   AlertCircle, AlertTriangle,
 } from 'lucide-react'
 import { basename } from '../../utils'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 
 interface Props {
   project: Project
@@ -70,26 +73,24 @@ export default function Step7Generate({ project, onUpdate }: Props) {
       <div className="flex flex-col gap-6">
         <div>
           <h2 className="text-xl font-bold text-primary">Execute ETL Pipeline</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <p className="text-sm text-muted-foreground mt-1">
             Review your generated scripts, then run the full pipeline. Scripts are generated per table in the
             mapping steps — go back to any step to regenerate with updated settings.
           </p>
         </div>
 
         {/* Script status summary */}
-        <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
+        <Card className="p-5 flex flex-col gap-4">
           <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-gray-800">Script Status</h3>
-            <span className={`text-xs font-medium px-2.5 py-1 rounded-full ${
-              allGenerated ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'
-            }`}>
+            <h3 className="text-sm font-semibold text-foreground">Script Status</h3>
+            <Badge variant={allGenerated ? 'success' : 'warning'}>
               {generatedCount} / {TABLES.length} ready
-            </span>
+            </Badge>
           </div>
 
-          <div className="w-full bg-gray-100 rounded-full h-1.5">
+          <div className="w-full bg-muted rounded-full h-1.5">
             <div
-              className="bg-green-500 h-1.5 rounded-full transition-all"
+              className="bg-success h-1.5 rounded-full transition-all"
               style={{ width: `${(generatedCount / TABLES.length) * 100}%` }}
             />
           </div>
@@ -99,13 +100,13 @@ export default function Step7Generate({ project, onUpdate }: Props) {
               const has = !!scripts[t.key]
               const lineCount = has ? scripts[t.key].split('\n').length : 0
               return (
-                <div key={t.key} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-gray-50">
+                <div key={t.key} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted">
                   {has
-                    ? <CheckCircle className="w-4 h-4 text-green-500 flex-shrink-0" />
+                    ? <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
                     : <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
                   }
-                  <span className="text-xs font-mono font-medium text-gray-800">{t.label}</span>
-                  <span className="text-xs text-gray-400 ml-auto">
+                  <span className="text-xs font-mono font-medium text-foreground">{t.label}</span>
+                  <span className="text-xs text-muted-foreground ml-auto">
                     {has ? `${lineCount} lines` : 'not generated yet'}
                   </span>
                 </div>
@@ -122,12 +123,12 @@ export default function Step7Generate({ project, onUpdate }: Props) {
               </span>
             </div>
           )}
-        </div>
+        </Card>
 
         {/* Regenerate any script inline */}
         <div className="flex flex-col gap-3">
-          <h3 className="text-sm font-semibold text-gray-800">Regenerate a script</h3>
-          <p className="text-xs text-gray-500 -mt-1">
+          <h3 className="text-sm font-semibold text-foreground">Regenerate a script</h3>
+          <p className="text-xs text-muted-foreground -mt-1">
             You can regenerate any script here without going back to the mapping step. Changes to the
             configuration itself must be made in the corresponding step.
           </p>
@@ -138,12 +139,12 @@ export default function Step7Generate({ project, onUpdate }: Props) {
 
         {/* Execute */}
         {anyGenerated && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
+          <Card className="p-5 flex flex-col gap-4">
             <div>
-              <h3 className="font-semibold text-gray-800">Run ETL Pipeline</h3>
-              <p className="text-xs text-gray-500 mt-1">
+              <h3 className="font-semibold text-foreground">Run ETL Pipeline</h3>
+              <p className="text-xs text-muted-foreground mt-1">
                 Executes all generated scripts in order:
-                <span className="font-mono text-gray-600"> person → visit_occurrence → observation_period → stem_table → death</span>.
+                <span className="font-mono text-foreground"> person → visit_occurrence → observation_period → stem_table → death</span>.
                 Each script reads your source CSV and writes its OMOP output CSV.
               </p>
             </div>
@@ -154,21 +155,22 @@ export default function Step7Generate({ project, onUpdate }: Props) {
               </p>
             )}
 
-            <button
+            <Button
               onClick={handleExecute}
               disabled={executing}
-              className="flex items-center gap-2 px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 w-fit"
+              size="lg"
+              className="w-fit"
             >
               {executing
                 ? <><RefreshCw className="w-5 h-5 animate-spin" /> Running pipeline…</>
                 : <><PlayCircle className="w-5 h-5" /> Execute ETL Pipeline</>
               }
-            </button>
-          </div>
+            </Button>
+          </Card>
         )}
 
         {execError && !execResult && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-sm text-red-700 flex items-start gap-2">
+          <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive flex items-start gap-2">
             <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
             {execError}
           </div>
@@ -177,25 +179,25 @@ export default function Step7Generate({ project, onUpdate }: Props) {
         {execResult && <LogStream log={execResult.log} status={execResult.status} />}
 
         {execResult?.output_files && execResult.output_files.length > 0 && (
-          <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3">
-            <h3 className="font-medium text-gray-800">Output OMOP Files</h3>
+          <Card className="p-5 flex flex-col gap-3">
+            <h3 className="font-semibold text-foreground">Output OMOP Files</h3>
             <div className="grid grid-cols-2 gap-2">
               {execResult.output_files.map(f => (
-                <div key={f} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg border border-gray-100">
+                <div key={f} className="flex items-center justify-between p-3 bg-muted rounded-lg border border-border">
                   <div className="flex items-center gap-2">
-                    <CheckCircle className="w-3.5 h-3.5 text-green-500" />
-                    <span className="text-sm font-mono text-gray-700">{basename(f)}</span>
+                    <CheckCircle className="w-3.5 h-3.5 text-success" />
+                    <span className="text-sm font-mono text-foreground">{basename(f)}</span>
                   </div>
                   <button
                     onClick={() => downloadOutput(project.id, basename(f))}
-                    className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium"
+                    className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium"
                   >
                     <Download className="w-3.5 h-3.5" /> Download
                   </button>
                 </div>
               ))}
             </div>
-          </div>
+          </Card>
         )}
       </div>
     </WizardLayout>
