@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../api/client'
 import type { Project, StemTableConfig, StemTableOverride, VisitOccurrenceConfig } from '../../types'
+import { getStructuralColumns } from '../../utils'
 import WizardLayout from './WizardLayout'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -21,7 +22,7 @@ const DEFAULTS: StemTableConfig = {
 
 export default function Step6StemTable({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const [mappedCols, setMappedCols] = useState<string[]>([])
+  const [rawDecisions, setRawDecisions] = useState<Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>>({})
   const [cfg, setCfg] = useState<StemTableConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
@@ -56,14 +57,19 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
         setCfg(prev => ({ ...prev, variable_groups: groups }))
       }
 
-      const mapped = (project.source_columns || []).filter(col => {
-        const d = decisions[col]
-        if (!d || d.strategy === 'skip') return false
-        return !!d.variable_concept || Object.keys(d.value_concepts).length > 0
-      })
-      setMappedCols(mapped)
+      setRawDecisions(decisions)
     })
   }, [project.id])
+
+  const mappedCols = useMemo(() => {
+    const structuralCols = getStructuralColumns((project.etl_config || {}) as Record<string, unknown>)
+    return (project.source_columns || []).filter(col => {
+      if (structuralCols.has(col)) return false
+      const d = rawDecisions[col]
+      if (!d || d.strategy === 'skip') return false
+      return !!d.variable_concept || Object.keys(d.value_concepts).length > 0
+    })
+  }, [rawDecisions, project.source_columns, project.etl_config])
 
   const updateGroup = (group: string, selected: string[]) => {
     setCfg(prev => ({ ...prev, variable_groups: { ...prev.variable_groups, [group]: selected } }))
