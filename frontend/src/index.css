@@ -1,1 +1,84 @@
 @import "tailwindcss";
+
+/* ------------------------------------------------------------------ */
+/* Brand tokens — warm cream surfaces + forest-green primary,          */
+/* tuned to harmonize with the Dr. Parrot / mM reference designs.      */
+/* ------------------------------------------------------------------ */
+:root {
+  --background: hsl(40 33% 96%);        /* warm cream page */
+  --foreground: hsl(160 12% 14%);       /* near-black headings */
+
+  --card: hsl(0 0% 100%);
+  --card-foreground: hsl(160 12% 14%);
+
+  --popover: hsl(0 0% 100%);
+  --popover-foreground: hsl(160 12% 14%);
+
+  --primary: hsl(152 42% 33%);          /* forest green */
+  --primary-foreground: hsl(40 33% 98%);
+
+  --secondary: hsl(150 24% 94%);        /* pale green surface */
+  --secondary-foreground: hsl(152 40% 22%);
+
+  --muted: hsl(40 22% 93%);             /* muted cream */
+  --muted-foreground: hsl(150 6% 42%);
+
+  --accent: hsl(150 30% 90%);           /* light green hover */
+  --accent-foreground: hsl(152 40% 22%);
+
+  --destructive: hsl(0 65% 51%);
+  --destructive-foreground: hsl(0 0% 100%);
+
+  --success: hsl(152 50% 38%);
+  --success-foreground: hsl(0 0% 100%);
+
+  --border: hsl(40 16% 88%);
+  --input: hsl(40 16% 85%);
+  --ring: hsl(152 42% 33%);
+
+  --radius: 0.75rem;
+}
+
+/* Map brand tokens to Tailwind v4 theme so utilities like bg-primary,
+   text-muted-foreground, border-border, rounded-lg resolve. */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  body {
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
