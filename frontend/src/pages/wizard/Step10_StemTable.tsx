@@ -173,7 +173,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
           <div className="text-sm">
             {hasMappings ? (
               <span className="text-green-800">
-                Concept mapping CSVs generated from Step 2 —{' '}
+                Concept mapping CSVs generated from Step 9 —{' '}
                 {Object.keys(mappingFiles).join(', ').replace(/_/g, ' ')}
               </span>
             ) : (
