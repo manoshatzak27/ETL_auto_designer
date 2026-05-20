@@ -83,7 +83,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Provider Mapping</h2>
+          <h2 className="text-xl font-bold text-primary">Provider Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
             Map source columns to the OMOP PROVIDER table. Providers are uniquely identified
             healthcare individuals (physicians, nurses, etc.). If the source only gives specialty

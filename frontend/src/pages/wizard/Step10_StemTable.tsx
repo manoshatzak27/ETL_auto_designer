@@ -127,7 +127,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Stem Table Configuration</h2>
+          <h2 className="text-xl font-bold text-primary">Stem Table Configuration</h2>
           <p className="text-sm text-gray-500 mt-1">
             Classify source variables into visit-timepoint groups. The concept mappings you defined in Step 2 are used automatically.
           </p>

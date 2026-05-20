@@ -764,7 +764,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-5">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Concept Mapping</h2>
+          <h2 className="text-xl font-bold text-primary">Concept Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
             Map each source variable to OMOP concepts. Click a variable to expand it and see its values.
             Use batch mode to map multiple variables at once.

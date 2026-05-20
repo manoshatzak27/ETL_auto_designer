@@ -52,7 +52,7 @@ export default function Step1Upload({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Upload Source Dataset</h2>
+          <h2 className="text-xl font-bold text-primary">Upload Source Dataset</h2>
           <p className="text-sm text-gray-500 mt-1">
             Upload your flat source CSV file. The system will auto-detect the delimiter and encoding.
           </p>

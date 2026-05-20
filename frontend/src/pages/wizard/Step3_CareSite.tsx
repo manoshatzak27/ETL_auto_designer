@@ -76,7 +76,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Care Site Mapping</h2>
+          <h2 className="text-xl font-bold text-primary">Care Site Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
             Map source columns to the OMOP CARE_SITE table. A Care Site is a unique combination
             of a <strong>location</strong> and the <strong>nature of the site</strong> — such as its place of service,

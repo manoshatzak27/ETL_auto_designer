@@ -69,7 +69,7 @@ export default function Step7Generate({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Execute ETL Pipeline</h2>
+          <h2 className="text-xl font-bold text-primary">Execute ETL Pipeline</h2>
           <p className="text-sm text-gray-500 mt-1">
             Review your generated scripts, then run the full pipeline. Scripts are generated per table in the
             mapping steps — go back to any step to regenerate with updated settings.

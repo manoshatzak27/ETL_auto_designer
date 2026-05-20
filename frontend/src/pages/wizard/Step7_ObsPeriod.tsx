@@ -64,7 +64,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Observation Period Mapping</h2>
+          <h2 className="text-xl font-bold text-primary">Observation Period Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
             Define the time spans during which each patient was actively observed. Within these
             spans, clinical events are assumed to be fully recorded — absence of a record means

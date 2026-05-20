@@ -163,7 +163,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Location Mapping</h2>
+          <h2 className="text-xl font-bold text-primary">Location Mapping</h2>
           <p className="text-sm text-gray-500 mt-1">
             Map source columns to the OMOP LOCATION table. Locations are shared between Persons and
             Care Sites — define which columns hold each group's address below. All unique addresses
