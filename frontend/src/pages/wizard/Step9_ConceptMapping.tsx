@@ -676,7 +676,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   const [selectedCols, setSelectedCols] = useState<string[]>([])
 
   // Filter
-  const [filter, setFilter] = useState<'all' | 'unmapped' | 'mapped' | 'skipped'>('unmapped')
+  const [filter, setFilter] = useState<'all' | 'mapped' | 'skipped'>('all')
   const [search, setSearch] = useState('')
 
   const cols = project.source_columns || []
@@ -744,7 +744,6 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
     const d = decisions[col]
     if (filter === 'skipped') return d?.strategy === 'skip'
     if (filter === 'mapped') return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
-    if (filter === 'unmapped') return d && d.strategy !== 'skip' && !d.variable_concept && Object.keys(d.value_concepts).length === 0
     return true
   })
 
@@ -809,7 +808,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
             className="border border-gray-300 rounded-md px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
           <div className="flex gap-1">
-            {(['all', 'unmapped', 'mapped', 'skipped'] as const).map(f => (
+            {(['all', 'mapped', 'skipped'] as const).map(f => (
               <button
                 key={f}
                 onClick={() => setFilter(f)}
