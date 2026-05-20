@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../api/client'
-import type { Project, StemTableConfig, StemTableOverride } from '../../types'
+import type { Project, StemTableConfig, StemTableOverride, VisitOccurrenceConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -34,12 +34,28 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   useEffect(() => {
     Promise.all([
       getTableConfig(project.id, 'stem_table'),
+      getTableConfig(project.id, 'visit_occurrence'),
       getConceptDecisions(project.id),
-    ]).then(([ex, decisions]: [StemTableConfig & { extra_instructions?: string }, Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>]) => {
+    ]).then(([ex, visitCfg, decisions]: [StemTableConfig & { extra_instructions?: string }, VisitOccurrenceConfig, Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>]) => {
+      const visitLabels: string[] = (visitCfg?.visit_definitions ?? [])
+        .map((vd: { label: string }) => vd.label)
+        .filter(Boolean)
+
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
-        setCfg(ex)
+        // Sync variable_groups: add keys for new visit labels, preserve existing assignments
+        const syncedGroups = { ...ex.variable_groups }
+        for (const label of visitLabels) {
+          if (!(label in syncedGroups)) syncedGroups[label] = []
+        }
+        setCfg({ ...ex, variable_groups: syncedGroups })
+      } else if (visitLabels.length > 0) {
+        // No saved stem_table config yet — seed groups from visit labels
+        const groups: Record<string, string[]> = {}
+        for (const label of visitLabels) groups[label] = []
+        setCfg(prev => ({ ...prev, variable_groups: groups }))
       }
+
       const mapped = (project.source_columns || []).filter(col => {
         const d = decisions[col]
         if (!d || d.strategy === 'skip') return false
