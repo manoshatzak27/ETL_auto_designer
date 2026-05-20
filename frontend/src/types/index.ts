@@ -83,9 +83,6 @@ export interface VisitDefinition {
   type_concept_id: number
   visit_type_source_col?: string
   visit_type_value_map?: Record<string, number>
-  // visit_source_value: static text or derived from source column
-  source_value: string
-  visit_source_col?: string
   optional: boolean
   // inpatient fields
   admitted_from_concept_id?: number

@@ -139,10 +139,12 @@ def _build_table_prompt(project, table: str) -> str:
             "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
         )
     if table in _NEEDS_VISIT_LOOKUP:
+        source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
         adaptation_lines += [
             "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv (semicolon-delimited)",
             "  and build a dict keyed by visit_source_value: {row['visit_source_value']: row['visit_occurrence_id']}.",
-            "The record_source_value key format for visits is: '{person_source_value}-basedata-{visit_type}'",
+            f"The visit_source_value key format is: '{{person_source_value}}-{source_stem}-{{visit_label_normalized}}'",
+            "  where visit_label_normalized = visit label lowercased with spaces replaced by underscores.",
         ]
     adaptation_lines += [
         "",
@@ -152,6 +154,20 @@ def _build_table_prompt(project, table: str) -> str:
         "",
     ]
     lines += adaptation_lines
+
+    # ── visit_occurrence: visit_source_value auto-compute rule ───────────
+    if table == "visit_occurrence":
+        source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
+        lines += [
+            "## VISIT_SOURCE_VALUE — AUTO-COMPUTED",
+            f"VISIT_SOURCE_VALUE_FILENAME_STEM = '{source_stem}'",
+            "visit_source_value must be built at runtime as:",
+            f"  f\"{{person_source_value}}-{source_stem}-{{visit_label_normalized}}\"",
+            "where visit_label_normalized = visit label from config, lowercased, spaces → underscores.",
+            "Do NOT read visit_source_value from the config's source_value field — ignore it.",
+            "record_source_value must equal visit_source_value for every row.",
+            "",
+        ]
 
     # ── Source dataset ────────────────────────────────────────────────────
     lines += [

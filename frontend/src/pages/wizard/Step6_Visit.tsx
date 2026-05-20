@@ -21,15 +21,14 @@ const DEFAULT_VISIT: VisitDefinition = {
   date_col: '',
   visit_concept_id: 9202,
   type_concept_id: 32879,
-  source_value: '',
   optional: false,
 }
 
 const DEFAULTS: VisitOccurrenceConfig = {
   enabled: true,
   visit_definitions: [
-    { label: 'Onset', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, source_value: 'ONSET Visit', optional: false },
-    { label: '10y Follow-up', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, source_value: '10 year follow up', optional: true },
+    { label: 'Onset', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: false },
+    { label: '10y Follow-up', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: true },
   ],
 }
 
@@ -210,35 +209,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 />
               </div>
 
-              {/* ── Group 2: Source value ──────────────────────────────────── */}
-              <div className="border border-gray-100 rounded-lg p-4 flex flex-col gap-4 bg-gray-50">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Visit source value</p>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <FieldMapper
-                    label="visit_source_value column (optional)"
-                    sourceColumns={cols}
-                    value={vd.visit_source_col ?? ''}
-                    onChange={v => updateVisit(i, 'visit_source_col', v || undefined)}
-                    required={false}
-                    hint="Column whose value becomes visit_source_value. If not mapped, uses the static text."
-                  />
-                  <div>
-                    <label className="text-sm font-medium text-gray-700">
-                      {vd.visit_source_col ? 'visit_source_value (static fallback)' : 'visit_source_value'}
-                    </label>
-                    <input
-                      type="text"
-                      value={vd.source_value}
-                      onChange={e => updateVisit(i, 'source_value', e.target.value)}
-                      placeholder="e.g. ONSET Visit"
-                      className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Group 3: visit_concept_id ──────────────────────────────── */}
+              {/* ── Group 2: visit_concept_id ──────────────────────────────── */}
               <div className="border border-gray-100 rounded-lg p-4 flex flex-col gap-4 bg-gray-50">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">visit_concept_id</p>
@@ -276,7 +247,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 </div>
               </div>
 
-              {/* ── Group 4: visit_type_concept_id ────────────────────────── */}
+              {/* ── Group 3: visit_type_concept_id ────────────────────────── */}
               <div className="border border-gray-100 rounded-lg p-4 flex flex-col gap-4 bg-gray-50">
                 <div className="flex items-center justify-between">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">visit_type_concept_id</p>
