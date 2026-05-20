@@ -676,7 +676,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   const [selectedCols, setSelectedCols] = useState<string[]>([])
 
   // Filter
-  const [filter, setFilter] = useState<'all' | 'unmapped' | 'mapped' | 'skipped'>('all')
+  const [filter, setFilter] = useState<'all' | 'unmapped' | 'mapped' | 'skipped'>('unmapped')
   const [search, setSearch] = useState('')
 
   const cols = project.source_columns || []

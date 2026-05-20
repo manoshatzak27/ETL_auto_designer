@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig } from '../../api/client'
+import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../api/client'
 import type { Project, StemTableConfig, StemTableOverride } from '../../types'
 import WizardLayout from './WizardLayout'
 import ExtraInstructions from '../../components/ExtraInstructions'
@@ -21,7 +21,7 @@ const DEFAULTS: StemTableConfig = {
 
 export default function Step6StemTable({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const [mappedCols, setMappedCols] = useState<string[]>([])
   const [cfg, setCfg] = useState<StemTableConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
@@ -32,11 +32,20 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const hasMappings = !!mappingFiles.variable_mapping
 
   useEffect(() => {
-    getTableConfig(project.id, 'stem_table').then((ex: StemTableConfig & { extra_instructions?: string }) => {
+    Promise.all([
+      getTableConfig(project.id, 'stem_table'),
+      getConceptDecisions(project.id),
+    ]).then(([ex, decisions]: [StemTableConfig & { extra_instructions?: string }, Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>]) => {
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
       }
+      const mapped = (project.source_columns || []).filter(col => {
+        const d = decisions[col]
+        if (!d || d.strategy === 'skip') return false
+        return !!d.variable_concept || Object.keys(d.value_concepts).length > 0
+      })
+      setMappedCols(mapped)
     })
   }, [project.id])
 
@@ -160,7 +169,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
               <h3 className="font-medium text-gray-800">Variable Groups (Timepoints)</h3>
               <p className="text-xs text-gray-500 mt-0.5">
                 Each group corresponds to a visit type from Step 4. Variables not assigned to any group are ignored.
-                <span className="font-medium text-gray-600"> {totalAssigned}/{cols.length} columns assigned.</span>
+                <span className="font-medium text-gray-600"> {totalAssigned}/{mappedCols.length} mapped columns assigned.</span>
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -194,7 +203,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
                 </div>
                 <p className="text-xs text-gray-400">Click to toggle variable assignment:</p>
                 <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
-                  {cols.map(col => (
+                  {mappedCols.map(col => (
                     <button
                       key={col}
                       onClick={() => toggleVar(group, col)}
