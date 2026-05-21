@@ -133,7 +133,7 @@ export default function Step7Generate({ project, onUpdate }: Props) {
             configuration itself must be made in the corresponding step.
           </p>
           {TABLES.map(t => (
-            <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} />
+            <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" />
           ))}
         </div>
 
