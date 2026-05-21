@@ -174,13 +174,9 @@ export default function Step5Location({ project, onUpdate }: Props) {
           </p>
         </div>
 
-        {/* ── PERSON ADDRESS ── */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Person Address</span>
-            <div className="flex-1 h-px bg-border" />
-          </div>
+        {/* ── PERSON LOCATION ── */}
+        <div className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Person Location</p>
 
           <Card className="flex flex-col gap-5 p-6">
             <h3 className="font-semibold text-foreground">Address Lines</h3>
@@ -299,13 +295,9 @@ export default function Step5Location({ project, onUpdate }: Props) {
           </Card>
         </div>
 
-        {/* ── CARE SITE ADDRESS ── */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px bg-border" />
-            <span className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Care Site Address</span>
-            <div className="flex-1 h-px bg-border" />
-          </div>
+        {/* ── CARE SITE LOCATION ── */}
+        <div className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Care Site Location</p>
 
           <Card className="flex flex-col gap-5 p-6">
             <h3 className="font-semibold text-foreground">Address Lines</h3>
