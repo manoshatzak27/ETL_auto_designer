@@ -163,7 +163,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           )}
 
           <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/70 p-4">
-            <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Prefix Specialty</p>
+            <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">Prefix Specialty</p>
             <p className="text-xs text-muted-foreground">Specify a static specialty that applies to all providers (used as a prefix/default when no column mapping is available).</p>
             <div className="flex flex-col gap-1">
               <Label>Specialty</Label>

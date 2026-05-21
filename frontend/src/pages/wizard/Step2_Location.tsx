@@ -176,7 +176,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
 
         {/* ── PERSON LOCATION ── */}
         <div className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Person Location</p>
+          <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Person Location</p>
 
           <Card className="flex flex-col gap-5 p-6">
             <h3 className="font-semibold text-foreground">Address Lines</h3>
@@ -297,7 +297,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
 
         {/* ── CARE SITE LOCATION ── */}
         <div className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
-          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Care Site Location</p>
+          <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Care Site Location</p>
 
           <Card className="flex flex-col gap-5 p-6">
             <h3 className="font-semibold text-foreground">Address Lines</h3>

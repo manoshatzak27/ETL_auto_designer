@@ -173,7 +173,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
             <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
               {/* Visit header */}
               <div className="flex items-center justify-between">
-                <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Visit {i + 1}</p>
+                <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Visit {i + 1}</p>
                 {cfg.visit_definitions.length > 1 && (
                   <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive">
                     <Trash2 className="w-4 h-4" />
