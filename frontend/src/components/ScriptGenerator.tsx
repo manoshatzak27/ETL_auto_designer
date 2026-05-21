@@ -11,6 +11,8 @@ import {
   ChevronDown, ChevronUp, CheckCircle, FileCode2,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 
 interface Props {
   project: Project
@@ -18,9 +20,11 @@ interface Props {
   onUpdate: (p: Project) => void
   /** Called before every generate/regenerate to flush unsaved form state to the backend */
   beforeGenerate?: () => Promise<void>
+  /** Extra classes for the generate/regenerate button (e.g. a fixed width for uniform rows) */
+  buttonClassName?: string
 }
 
-export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate }: Props) {
+export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName }: Props) {
   const scripts: Record<string, string> = project.generated_scripts || {}
   const script = scripts[table] || null
 
@@ -69,30 +73,30 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   return (
     <div ref={previewRef} className="flex flex-col gap-3">
       {/* Generator card */}
-      <div className={clsx(
-        'border rounded-xl overflow-hidden',
-        script ? 'border-green-200' : 'border-blue-200',
+      <Card className={clsx(
+        'overflow-hidden p-0',
+        script ? 'border-green-200' : 'border-border',
       )}>
         {/* Header */}
         <div className={clsx(
           'flex items-center gap-3 px-5 py-4',
-          script ? 'bg-green-50' : 'bg-blue-50',
+          script ? 'bg-green-50' : 'bg-secondary/60',
         )}>
           <div className={clsx(
             'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0',
-            script ? 'bg-green-100' : 'bg-blue-100',
+            script ? 'bg-green-100' : 'bg-accent',
           )}>
             {generating
-              ? <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />
+              ? <RefreshCw className="w-4 h-4 text-primary animate-spin" />
               : script
                 ? <CheckCircle className="w-4 h-4 text-green-500" />
-                : <FileCode2 className="w-4 h-4 text-blue-500" />
+                : <FileCode2 className="w-4 h-4 text-primary" />
             }
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-800 font-mono">{table}.py</p>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-sm font-semibold text-foreground font-mono">{table}.py</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
               {generating
                 ? 'GPT-4o is writing the transformation script…'
                 : script
@@ -104,44 +108,42 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
 
           <div className="flex items-center gap-2 flex-shrink-0">
             {script && (
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setOpen(o => !o)}
-                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1.5 border border-gray-200 bg-white rounded-lg hover:bg-gray-50 transition-colors"
+                className="text-xs h-7 px-2.5"
               >
                 {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 {open ? 'Collapse' : 'View code'}
-              </button>
+              </Button>
             )}
 
-            <button
+            <Button
+              variant={script ? 'outline' : 'default'}
+              size="sm"
               onClick={handleGenerate}
               disabled={generating}
-              className={clsx(
-                'flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                script
-                  ? 'border border-blue-200 bg-white text-blue-600 hover:bg-blue-50'
-                  : 'bg-blue-600 text-white hover:bg-blue-700',
-                generating && 'opacity-60 cursor-not-allowed',
-              )}
+              className={clsx('text-xs h-7 px-4', buttonClassName)}
             >
               {generating
                 ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Generating…</>
-                : <><Sparkles className="w-3.5 h-3.5" />{script ? 'Regenerate' : `Generate ${table}.py`}</>
+                : <><Sparkles className="w-3.5 h-3.5 text-amber-500" />{script ? 'Regenerate' : `Generate ${table}.py`}</>
               }
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Error */}
         {error && (
-          <div className="px-5 py-3 bg-red-50 border-t border-red-100 text-xs text-red-700">
+          <div className="px-5 py-3 bg-destructive/10 border-t border-destructive/30 text-xs text-destructive">
             {error}
           </div>
         )}
 
         {/* Code preview */}
         {open && script && (
-          <div className="border-t border-gray-100">
+          <div className="border-t border-border">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
               <div className="flex items-center gap-2">
@@ -179,11 +181,11 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
             </div>
           </div>
         )}
-      </div>
+      </Card>
 
       {/* Hint when not yet generated */}
       {!script && !generating && (
-        <p className="text-xs text-gray-400 px-1">
+        <p className="text-xs text-muted-foreground px-1">
           You can also skip and generate all scripts at once from the final step.
         </p>
       )}

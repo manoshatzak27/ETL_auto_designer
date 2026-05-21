@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react'
-import clsx from 'clsx'
+import { cn } from '@/lib/utils'
 
 interface Props {
   log: string
@@ -21,19 +21,19 @@ export default function LogStream({ log, status }: Props) {
     <div className="flex flex-col gap-2">
       {status && (
         <div
-          className={clsx(
+          className={cn(
             'inline-flex items-center gap-2 px-3 py-1 rounded-full text-sm font-medium w-fit',
-            status === 'success' && 'bg-green-100 text-green-800',
-            status === 'error' && 'bg-red-100 text-red-800',
-            status === 'running' && 'bg-blue-100 text-blue-800',
+            status === 'success' && 'bg-success/10 text-success',
+            status === 'error' && 'bg-destructive/10 text-destructive',
+            status === 'running' && 'bg-primary/10 text-primary',
           )}
         >
           <span
-            className={clsx(
+            className={cn(
               'w-2 h-2 rounded-full',
-              status === 'success' && 'bg-green-500',
-              status === 'error' && 'bg-red-500',
-              status === 'running' && 'bg-blue-500 animate-pulse',
+              status === 'success' && 'bg-success',
+              status === 'error' && 'bg-destructive',
+              status === 'running' && 'bg-primary animate-pulse',
             )}
           />
           {status === 'success' ? 'Completed successfully' : status === 'error' ? 'Execution failed' : 'Running…'}

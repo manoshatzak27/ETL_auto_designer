@@ -1,3 +1,6 @@
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+
 interface Props {
   label: string
   sourceValues: string[]
@@ -21,28 +24,28 @@ export default function ValueConceptMapper({ label, sourceValues, mapping, onCha
   return (
     <div className="flex flex-col gap-2">
       <div>
-        <label className="text-sm font-medium text-gray-700">{label}</label>
-        {hint && <p className="text-xs text-gray-500 mt-0.5">{hint}</p>}
+        <Label>{label}</Label>
+        {hint && <p className="text-xs text-muted-foreground mt-0.5">{hint}</p>}
       </div>
-      <div className="border border-gray-200 rounded-lg overflow-hidden">
+      <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-sm">
-          <thead className="bg-gray-50">
+          <thead className="bg-muted">
             <tr>
-              <th className="text-left px-4 py-2 font-medium text-gray-600">Source Value</th>
-              <th className="text-left px-4 py-2 font-medium text-gray-600">OMOP Concept ID</th>
+              <th className="text-left px-4 py-2 font-medium text-muted-foreground">Source Value</th>
+              <th className="text-left px-4 py-2 font-medium text-muted-foreground">OMOP Concept ID</th>
             </tr>
           </thead>
           <tbody>
             {sourceValues.map((val, i) => (
-              <tr key={val} className={i % 2 === 0 ? 'bg-white' : 'bg-gray-50'}>
-                <td className="px-4 py-2 font-mono text-gray-800">{val}</td>
+              <tr key={val} className={i % 2 === 0 ? 'bg-card' : 'bg-muted'}>
+                <td className="px-4 py-2 font-mono text-foreground">{val}</td>
                 <td className="px-4 py-2">
-                  <input
+                  <Input
                     type="number"
                     value={mapping[val] ?? ''}
                     onChange={e => handleChange(val, e.target.value)}
                     placeholder="e.g. 8507"
-                    className="w-full border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="h-8 py-1"
                   />
                 </td>
               </tr>
