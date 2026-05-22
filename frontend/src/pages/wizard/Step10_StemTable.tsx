@@ -6,15 +6,7 @@ import { getStructuralColumns } from '../../utils'
 import WizardLayout from './WizardLayout'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
-import { Plus, Trash2, CheckCircle, AlertCircle, Database } from 'lucide-react'
-
-const DOMAIN_TABLES = [
-  { table: 'measurement',          label: 'Measurement',          domainId: 1, color: 'bg-blue-100 text-blue-700 border-blue-200' },
-  { table: 'observation',          label: 'Observation',          domainId: 2, color: 'bg-purple-100 text-purple-700 border-purple-200' },
-  { table: 'drug_exposure',        label: 'Drug Exposure',        domainId: 3, color: 'bg-green-100 text-green-700 border-green-200' },
-  { table: 'procedure_occurrence', label: 'Procedure Occurrence', domainId: 4, color: 'bg-orange-100 text-orange-700 border-orange-200' },
-  { table: 'condition_occurrence', label: 'Condition Occurrence', domainId: 5, color: 'bg-red-100 text-red-700 border-red-200' },
-] as const
+import { Plus, Trash2, CheckCircle, AlertCircle } from 'lucide-react'
 
 interface Props {
   project: Project
@@ -177,8 +169,8 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Stem Table Configuration</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-xl font-bold text-primary">Stem Table Configuration</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             Classify source variables into visit-timepoint groups. The concept mappings you defined in Step 2 are used automatically.
           </p>
         </div>
@@ -204,25 +196,25 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
         </div>
 
         {/* Variable Groups */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-4">
+        <Card className="p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-medium text-gray-800">Variable Groups (Timepoints)</h3>
-              <p className="text-xs text-gray-500 mt-0.5">
+              <h3 className="font-semibold text-foreground">Variable Groups (Timepoints)</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Each group corresponds to a visit type from Step 4. Variables not assigned to any group are ignored.
-                <span className="font-medium text-gray-600"> {totalAssigned}/{mappedCols.length} mapped columns assigned.</span>
+                <span className="font-medium text-gray-600"> {totalAssigned}/{cols.length} columns assigned.</span>
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <input
+              <Input
                 type="text"
                 value={newGroupName}
                 onChange={e => setNewGroupName(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && addGroup()}
                 placeholder="New group name"
-                className="border border-gray-300 rounded-md px-2 py-1.5 text-sm w-36 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-36 h-8 text-sm"
               />
-              <button onClick={addGroup} className="flex items-center gap-1 text-sm text-blue-600 hover:text-blue-700 font-medium px-2 py-1.5 border border-blue-200 rounded-md">
+              <button onClick={addGroup} className="flex items-center gap-1 text-sm text-primary hover:text-primary/80 font-medium px-2 py-1.5 border border-border rounded-md">
                 <Plus className="w-3.5 h-3.5" /> Add
               </button>
             </div>
@@ -230,19 +222,19 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
 
           <div className="flex flex-col gap-4">
             {Object.entries(cfg.variable_groups).map(([group, selected]) => (
-              <div key={group} className="border border-gray-100 rounded-lg p-4 flex flex-col gap-3">
+              <div key={group} className="border border-border rounded-lg p-4 flex flex-col gap-3">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <h4 className="text-sm font-semibold text-gray-700">{group}</h4>
-                    <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+                    <h4 className="text-sm font-semibold text-foreground">{group}</h4>
+                    <span className="text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full">
                       {selected.length} variables
                     </span>
                   </div>
-                  <button onClick={() => removeGroup(group)} className="text-red-300 hover:text-red-500">
+                  <button onClick={() => removeGroup(group)} className="text-destructive/40 hover:text-destructive">
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <p className="text-xs text-gray-400">Click to toggle variable assignment:</p>
+                <p className="text-xs text-muted-foreground">Click to toggle variable assignment:</p>
                 <div className="flex flex-wrap gap-1.5 max-h-44 overflow-y-auto">
                   {mappedCols.map(col => (
                     <button
@@ -250,8 +242,8 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
                       onClick={() => toggleVar(group, col)}
                       className={`px-2 py-0.5 rounded text-xs font-mono transition-colors ${
                         selected.includes(col)
-                          ? 'bg-blue-600 text-white shadow-sm'
-                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                          ? 'bg-primary text-primary-foreground shadow-sm'
+                          : 'bg-muted text-muted-foreground hover:bg-muted/70'
                       }`}
                     >
                       {col}
@@ -261,50 +253,50 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
               </div>
             ))}
           </div>
-        </div>
+        </Card>
 
         {/* Special Overrides */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-4">
+        <Card className="p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
             <div>
-              <h3 className="font-medium text-gray-800">Special Field Overrides</h3>
-              <p className="text-xs text-gray-500 mt-0.5">
+              <h3 className="font-semibold text-foreground">Special Field Overrides</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
                 Force a specific OMOP field value for individual variables after concept lookup.
-                Example: <code className="bg-gray-100 px-1 rounded">unit_concept_id = 9580</code> (months) for DUP, DUI, DAP, DAT.
+                Example: <code className="bg-accent px-1 rounded">unit_concept_id = 9580</code> (months) for DUP, DUI, DAP, DAT.
               </p>
             </div>
-            <button onClick={addOverride} className="flex items-center gap-1 text-xs text-blue-600 hover:text-blue-700 font-medium">
+            <button onClick={addOverride} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium">
               <Plus className="w-3.5 h-3.5" /> Add override
             </button>
           </div>
 
           {cfg.special_overrides.length === 0 && (
-            <p className="text-xs text-gray-400 italic">No overrides defined.</p>
+            <p className="text-xs text-muted-foreground italic">No overrides defined.</p>
           )}
 
           <div className="flex flex-col gap-2">
             {cfg.special_overrides.map((ov, i) => (
 
-              <div key={i} className="flex items-center gap-2 p-3 bg-gray-50 rounded-lg">
-                <input
+              <div key={i} className="flex items-center gap-2 p-3 bg-muted rounded-lg">
+                <Input
                   type="text"
                   value={ov.variable}
                   onChange={e => updateOverride(i, 'variable', e.target.value)}
                   placeholder="Variable name"
-                  className="border border-gray-300 rounded px-2 py-1 text-sm font-mono w-28 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-28 h-8 text-sm font-mono"
                 />
-                <select
+                <Select
                   value={ov.field || 'unit_concept_id'}
                   onChange={e => updateOverride(i, 'field', e.target.value)}
-                  className="border border-gray-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="h-8 text-sm"
                 >
                   <option value="unit_concept_id">unit_concept_id</option>
                   <option value="operator_concept_id">operator_concept_id</option>
                   <option value="value_as_string">value_as_string</option>
                   <option value="source_value">source_value</option>
-                </select>
-                <span className="text-gray-400 font-mono">=</span>
-                <input
+                </Select>
+                <span className="text-muted-foreground font-mono">=</span>
+                <Input
                   type="text"
                   value={ov.field === 'value_as_string' ? (ov.value_as_string ?? '') : (ov.value?.toString() ?? '')}
                   onChange={e => {
@@ -312,54 +304,13 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
                     else updateOverride(i, 'value', parseInt(e.target.value) || 0)
                   }}
                   placeholder="value"
-                  className="border border-gray-300 rounded px-2 py-1 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-32 h-8 text-sm"
                 />
-                <button onClick={() => removeOverride(i)} className="text-red-400 hover:text-red-600 ml-auto">
+                <button onClick={() => removeOverride(i)} className="text-destructive/50 hover:text-destructive ml-auto">
                   <Trash2 className="w-3.5 h-3.5" />
                 </button>
               </div>
             ))}
-          </div>
-        </div>
-
-        {/* Domain Table Assignments (read from Step 9 concept decisions) */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-4">
-          <div className="flex items-center gap-2">
-            <Database className="w-4 h-4 text-indigo-500" />
-            <div>
-              <h3 className="font-medium text-gray-800">Domain Table Assignments</h3>
-              <p className="text-xs text-gray-500 mt-0.5">
-                Variables routed to OMOP domain tables based on the domain_id set in Step 9.
-                Each domain table script reads from <code className="bg-gray-100 px-1 rounded">stem_table.csv</code> and filters by domain_id.
-              </p>
-            </div>
-          </div>
-          <div className="flex flex-col gap-2">
-            {DOMAIN_TABLES.map(({ table, label, domainId, color }) => {
-              const cols = domainAssignments[domainId] || []
-              return (
-                <div key={table} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                  <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border ${color}`}>
-                    {domainId}
-                  </span>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-semibold text-gray-700">{label} <span className="font-mono text-gray-400">→ {table}.csv</span></p>
-                    {cols.length > 0 ? (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {cols.map(col => (
-                          <span key={col} className="bg-white border border-gray-200 text-gray-600 px-1.5 py-0 rounded text-xs font-mono">{col}</span>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 mt-0.5 italic">No columns assigned — set domain_id in Step 9 to populate this table.</p>
-                    )}
-                  </div>
-                  <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-medium ${cols.length > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
-                    {cols.length}
-                  </span>
-                </div>
-              )
-            })}
           </div>
         </div>
 

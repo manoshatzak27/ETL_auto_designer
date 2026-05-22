@@ -7,6 +7,10 @@ import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
+import { Input } from '@/components/ui/input'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -156,24 +160,24 @@ export default function Step2Person({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Person Table Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Map source columns to OMOP <code className="bg-gray-100 px-1 rounded">person</code> table fields.
+          <h2 className="text-xl font-bold text-primary">Person Table Mapping</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Map source columns to OMOP <code className="rounded bg-accent px-1">person</code> table fields.
           </p>
         </div>
 
         {/* Person ID */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Person id</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Person id</h3>
 
           <label className="flex items-center gap-3 cursor-pointer select-none">
             <input
               type="checkbox"
               checked={cfg.mappings.person_id.auto_increment ?? false}
               onChange={e => setField(['mappings', 'person_id', 'auto_increment'], e.target.checked)}
-              className="w-4 h-4 accent-blue-600 rounded"
+              className="w-4 h-4 accent-primary rounded"
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-foreground">
               Auto-increment Patient ID — assign sequential IDs (1, 2, 3…) without mapping to a source column
             </span>
           </label>
@@ -190,26 +194,26 @@ export default function Step2Person({ project, onUpdate }: Props) {
               />
 
               <div>
-                <label className="text-sm font-medium text-gray-700">Patient ID transform</label>
-                <select
+                <Label>Patient ID transform</Label>
+                <Select
                   value={cfg.mappings.person_id.transform}
                   onChange={e => setField(['mappings', 'person_id', 'transform'], e.target.value)}
-                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="mt-1"
                 >
                   <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
                   <option value="int">int(x) — for "1", "2" style IDs</option>
                   <option value="str">str(x) — keep as string</option>
-                </select>
+                </Select>
               </div>
             </>
           )}
-        </div>
+        </Card>
 
         {/* Gender */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+        <Card className="flex flex-col gap-5 p-6">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-800">Gender</h3>
-            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+            <h3 className="font-semibold text-foreground">Gender</h3>
+            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
           <FieldMapper
@@ -224,10 +228,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
           {cfg.mappings.gender_concept_id.source_col && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700">Gender value → OMOP concept mapping</label>
-                <button onClick={addGenderValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+                <Label>Gender value → OMOP concept mapping</Label>
+                <button onClick={addGenderValue} className="text-xs text-primary hover:underline">+ Add value</button>
               </div>
-              <p className="text-xs text-gray-500">Common: 8507 = Male, 8532 = Female</p>
+              <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female</p>
               <ValueConceptMapper
                 label=""
                 sourceValues={genderValues.length > 0 ? genderValues : Object.keys(cfg.mappings.gender_concept_id.value_map)}
@@ -238,20 +242,20 @@ export default function Step2Person({ project, onUpdate }: Props) {
           )}
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Default gender_concept_id</label>
-            <input
+            <Label>Default gender_concept_id</Label>
+            <Input
               type="number"
               value={cfg.mappings.gender_concept_id.default ?? 0}
               onChange={e => setField(['mappings', 'gender_concept_id', 'default'], parseInt(e.target.value))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1 w-32"
             />
-            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
-        </div>
+        </Card>
 
         {/* Date of Birth */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Date of Birth</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Date of Birth</h3>
 
           <FieldMapper
             label="Date of birth column"
@@ -267,8 +271,8 @@ export default function Step2Person({ project, onUpdate }: Props) {
           />
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Date format</label>
-            <input
+            <Label>Date format</Label>
+            <Input
               type="text"
               value={cfg.mappings.year_of_birth.date_format}
               onChange={e => {
@@ -277,17 +281,17 @@ export default function Step2Person({ project, onUpdate }: Props) {
                 setField(['mappings', 'day_of_birth', 'date_format'], e.target.value)
               }}
               placeholder="%Y-%m-%d"
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1 font-mono"
             />
-            <p className="text-xs text-gray-500 mt-1">Python strptime format, e.g. %Y-%m-%d or %d/%m/%Y</p>
+            <p className="mt-1 text-xs text-muted-foreground">Python strptime format, e.g. %Y-%m-%d or %d/%m/%Y</p>
           </div>
-        </div>
+        </Card>
 
         {/* Race */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
+        <Card className="flex flex-col gap-6 p-6">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-800">Race</h3>
-            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Race&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+            <h3 className="font-semibold text-foreground">Race</h3>
+            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Race&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
           <FieldMapper
@@ -300,8 +304,8 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-gray-700">Race value → OMOP concept mapping</label>
-              <button onClick={addRaceValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+              <Label>Race value → OMOP concept mapping</Label>
+              <button onClick={addRaceValue} className="text-xs text-primary hover:underline">+ Add value</button>
             </div>
             <ValueConceptMapper
               label=""
@@ -312,22 +316,22 @@ export default function Step2Person({ project, onUpdate }: Props) {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Default race_concept_id</label>
-            <input
+            <Label>Default race_concept_id</Label>
+            <Input
               type="number"
               value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
               onChange={e => setField(['mappings', 'race_concept_id', 'default'], parseInt(e.target.value))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1 w-32"
             />
-            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
-        </div>
+        </Card>
 
         {/* Ethnicity */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-6">
+        <Card className="flex flex-col gap-6 p-6">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-800">Ethnicity</h3>
-            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Ethnicity&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+            <h3 className="font-semibold text-foreground">Ethnicity</h3>
+            <a href="https://athena.ohdsi.org/search-terms/terms?domain=Ethnicity&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
           <FieldMapper
@@ -340,8 +344,8 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <div className="flex flex-col gap-2">
             <div className="flex items-center justify-between">
-              <label className="text-sm font-medium text-gray-700">Ethnicity value → OMOP concept mapping</label>
-              <button onClick={addEthnicityValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+              <Label>Ethnicity value → OMOP concept mapping</Label>
+              <button onClick={addEthnicityValue} className="text-xs text-primary hover:underline">+ Add value</button>
             </div>
             <ValueConceptMapper
               label=""
@@ -352,16 +356,16 @@ export default function Step2Person({ project, onUpdate }: Props) {
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Default ethnicity_concept_id</label>
-            <input
+            <Label>Default ethnicity_concept_id</Label>
+            <Input
               type="number"
               value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
               onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1 w-32"
             />
-            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
-        </div>
+        </Card>
 
         {/* Provider ID */}
         <ExtraInstructions

@@ -3,6 +3,7 @@ import python from 'react-syntax-highlighter/dist/esm/languages/hljs/python'
 import { githubGist } from 'react-syntax-highlighter/dist/esm/styles/hljs'
 import { Copy, Check } from 'lucide-react'
 import { useState } from 'react'
+import { Button } from '@/components/ui/button'
 
 SyntaxHighlighter.registerLanguage('python', python)
 
@@ -20,16 +21,18 @@ export default function CodePreview({ code }: Props) {
   }
 
   return (
-    <div className="relative border border-gray-200 rounded-lg overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-2 bg-gray-50 border-b border-gray-200">
-        <span className="text-xs font-medium text-gray-600">Generated ETL Script (Python)</span>
-        <button
+    <div className="relative border border-border rounded-xl overflow-hidden bg-card">
+      <div className="flex items-center justify-between px-4 py-2 bg-muted border-b border-border">
+        <span className="text-xs font-medium text-muted-foreground">Generated ETL Script (Python)</span>
+        <Button
+          variant="ghost"
+          size="sm"
           onClick={copy}
-          className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground h-auto py-1 px-2"
         >
           {copied ? <Check className="w-3.5 h-3.5 text-green-500" /> : <Copy className="w-3.5 h-3.5" />}
           {copied ? 'Copied!' : 'Copy'}
-        </button>
+        </Button>
       </div>
       <SyntaxHighlighter
         language="python"

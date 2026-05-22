@@ -6,6 +6,10 @@ import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 
 interface Props {
   project: Project
@@ -64,8 +68,8 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Observation Period Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-xl font-bold text-primary">Observation Period Mapping</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Define the time spans during which each patient was actively observed. Within these
             spans, clinical events are assumed to be fully recorded — absence of a record means
             the event did not occur. Each person must have at least one observation period.
@@ -73,7 +77,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
           </p>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+        <Card className="flex flex-col gap-5 p-6">
           <FieldMapper
             label="Start date column"
             sourceColumns={cols}
@@ -92,39 +96,39 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
           />
 
           <div>
-            <label className="text-sm font-medium text-gray-700">If end date is missing, fallback to:</label>
-            <select
+            <Label>If end date is missing, fallback to:</Label>
+            <Select
               value={cfg.end_date_fallback}
               onChange={e => setCfg(prev => ({ ...prev, end_date_fallback: e.target.value as 'start_date' | 'today' }))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
             >
               <option value="start_date">Start date (observation period of 1 day)</option>
               <option value="today">Today's date</option>
-            </select>
+            </Select>
           </div>
 
           <div>
-            <label className="text-sm font-medium text-gray-700">
+            <Label>
               period_type_concept_id
-              <span className="ml-1 font-normal text-gray-400">— how the period was determined</span>
-            </label>
-            <input
+              <span className="ml-1 font-normal text-muted-foreground">— how the period was determined</span>
+            </Label>
+            <Input
               type="number"
               value={cfg.period_type_concept_id}
               onChange={e => setCfg(prev => ({ ...prev, period_type_concept_id: parseInt(e.target.value) || 0 }))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
               placeholder="e.g. 32879"
             />
             <a
               href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="
               target="_blank"
               rel="noopener noreferrer"
-              className="mt-1 inline-block text-xs text-blue-600 hover:underline"
+              className="mt-1 inline-block text-xs text-primary hover:underline"
             >
               Accepted Concepts (Athena)
             </a>
           </div>
-        </div>
+        </Card>
 
         <ExtraInstructions
           tableName="observation_period"

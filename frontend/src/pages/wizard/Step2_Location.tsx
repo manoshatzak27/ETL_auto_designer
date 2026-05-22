@@ -7,6 +7,9 @@ import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -50,21 +53,21 @@ function AutoComputedBadge({ cfg, fields }: {
     .filter(Boolean) as string[]
 
   return (
-    <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 flex flex-col gap-2">
-      <p className="text-sm font-medium text-blue-800">Auto-computed — no mapping required</p>
-      <p className="text-sm text-blue-700">
+    <div className="rounded-lg border border-border bg-secondary/60 p-4 flex flex-col gap-2">
+      <p className="text-sm font-medium text-secondary-foreground">Auto-computed — no mapping required</p>
+      <p className="text-sm text-muted-foreground">
         Constructed by joining the mapped address fields with{' '}
-        <code className="bg-blue-100 px-1 rounded text-xs"> | </code>.
+        <code className="bg-accent px-1 rounded text-xs"> | </code>.
         Used as the deduplication key for the LOCATION table.
       </p>
       <div className="mt-1">
-        <p className="text-xs font-medium text-blue-600 mb-1">Contributing columns:</p>
+        <p className="text-xs font-medium text-primary mb-1">Contributing columns:</p>
         <div className="flex flex-wrap gap-1">
           {active.length > 0
             ? active.map(col => (
-                <span key={col} className="bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full">{col}</span>
+                <span key={col} className="bg-accent text-secondary-foreground text-xs px-2 py-0.5 rounded-full">{col}</span>
               ))
-            : <span className="text-xs italic text-blue-500">Map address fields above to see contributing columns</span>
+            : <span className="text-xs italic text-muted-foreground">Map address fields above to see contributing columns</span>
           }
         </div>
       </div>
@@ -163,24 +166,20 @@ export default function Step5Location({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Location Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-xl font-bold text-primary">Location Mapping</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             Map source columns to the OMOP LOCATION table. Locations are shared between Persons and
             Care Sites — define which columns hold each group's address below. All unique addresses
-            are combined and deduplicated into a single <code className="bg-gray-100 px-1 rounded">location.csv</code>.
+            are combined and deduplicated into a single <code className="bg-muted px-1 rounded">location.csv</code>.
           </p>
         </div>
 
-        {/* ── PERSON ADDRESS ── */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-sm font-semibold text-gray-600 uppercase tracking-wide">Person Address</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
+        {/* ── PERSON LOCATION ── */}
+        <div className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
+          <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Person Location</p>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">Address Lines</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">Address Lines</h3>
             <FieldMapper
               label="address_1"
               sourceColumns={cols}
@@ -195,20 +194,20 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('address_2_col')}
               hint="Second line of the address (max 50 chars)."
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">City</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">City</h3>
             <FieldMapper
               label="city"
               sourceColumns={cols}
               value={cfg.city_col}
               onChange={set('city_col')}
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">State & ZIP</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">State & ZIP</h3>
             <FieldMapper
               label="state"
               sourceColumns={cols}
@@ -223,12 +222,12 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('zip_col')}
               hint="Zip / postal code stored as a string (up to 9 chars). Leading zeros are preserved."
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <Card className="flex flex-col gap-5 p-6">
             <div className="flex items-center justify-between">
-              <h3 className="font-medium text-gray-800">Country</h3>
-              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+              <h3 className="font-semibold text-foreground">Country</h3>
+              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
             </div>
             <FieldMapper
               label="county"
@@ -238,13 +237,13 @@ export default function Step5Location({ project, onUpdate }: Props) {
               hint="County or region (max 20 chars). Source values are stored in the county field; each value can be mapped to a country_concept_id below."
             />
             {cfg.county_col && (
-              <div className="flex flex-col gap-3 pl-2 border-l-2 border-blue-100">
+              <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="text-sm font-medium text-gray-700">Country value → OMOP concept ID mapping</label>
-                    <p className="text-xs text-gray-500 mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                    <Label>Country value → OMOP concept ID mapping</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
                   </div>
-                  <button onClick={addCountyValue} className="text-xs text-blue-600 hover:underline">+ Add value</button>
+                  <button onClick={addCountyValue} className="text-xs text-primary hover:underline">+ Add value</button>
                 </div>
                 <ValueConceptMapper
                   label=""
@@ -256,56 +255,52 @@ export default function Step5Location({ project, onUpdate }: Props) {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
-                <input
+                <Label>Default country_concept_id</Label>
+                <Input
                   type="number"
                   value={cfg.country_concept_id_default ?? 0}
                   onChange={e => setCfg(prev => ({ ...prev, country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="mt-1 w-32"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   {cfg.county_col
                     ? 'Used when a person source value is not in the map above (0 = unknown).'
                     : 'Applied to all person rows when no county column is mapped (0 = unknown).'}
                 </p>
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700">Default country_source_value</label>
-                <input
+                <Label>Default country_source_value</Label>
+                <Input
                   type="text"
                   value={cfg.country_source_value}
                   onChange={e => setCfg(prev => ({ ...prev, country_source_value: e.target.value }))}
                   placeholder="e.g. United States, GR"
-                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="mt-1"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   {cfg.county_col
                     ? 'Fallback when no county column value is present (max 80 chars).'
                     : 'Applied to all person rows when no county column is mapped (max 80 chars).'}
                 </p>
               </div>
             </div>
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
-            <h3 className="font-medium text-gray-800">Person Location Source Value</h3>
+          <Card className="flex flex-col gap-3 p-6">
+            <h3 className="font-semibold text-foreground">Person Location Source Value</h3>
             <AutoComputedBadge
               cfg={{ ...cfg, country_source_value: cfg.county_col ? '' : cfg.country_source_value }}
               fields={PERSON_ADDR_FIELDS}
             />
-          </div>
+          </Card>
         </div>
 
-        {/* ── CARE SITE ADDRESS ── */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-3">
-            <div className="flex-1 h-px bg-gray-200" />
-            <span className="text-sm font-semibold text-gray-600 uppercase tracking-wide">Care Site Address</span>
-            <div className="flex-1 h-px bg-gray-200" />
-          </div>
+        {/* ── CARE SITE LOCATION ── */}
+        <div className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
+          <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Care Site Location</p>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">Address Lines</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">Address Lines</h3>
             <FieldMapper
               label="address_1"
               sourceColumns={cols}
@@ -320,20 +315,20 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('cs_address_2_col')}
               hint="Second line of the care site address (max 50 chars)."
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">City</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">City</h3>
             <FieldMapper
               label="city"
               sourceColumns={cols}
               value={cfg.cs_city_col}
               onChange={set('cs_city_col')}
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">State & ZIP</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">State & ZIP</h3>
             <FieldMapper
               label="state"
               sourceColumns={cols}
@@ -348,12 +343,12 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('cs_zip_col')}
               hint="Zip / postal code stored as a string (up to 9 chars)."
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <Card className="flex flex-col gap-5 p-6">
             <div className="flex items-center justify-between">
-              <h3 className="font-medium text-gray-800">Country</h3>
-              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+              <h3 className="font-semibold text-foreground">Country</h3>
+              <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
             </div>
             <FieldMapper
               label="county"
@@ -363,11 +358,11 @@ export default function Step5Location({ project, onUpdate }: Props) {
               hint="County or region (max 20 chars). Source values can be mapped to a country_concept_id below."
             />
             {cfg.cs_county_col && (
-              <div className="flex flex-col gap-3 pl-2 border-l-2 border-blue-100">
+              <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="text-sm font-medium text-gray-700">Country value → OMOP concept ID mapping</label>
-                    <p className="text-xs text-gray-500 mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                    <Label>Country value → OMOP concept ID mapping</Label>
+                    <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
                   </div>
                 </div>
                 <ValueConceptMapper
@@ -380,39 +375,39 @@ export default function Step5Location({ project, onUpdate }: Props) {
             )}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="text-sm font-medium text-gray-700">Default country_concept_id</label>
-                <input
+                <Label>Default country_concept_id</Label>
+                <Input
                   type="number"
                   value={cfg.cs_country_concept_id_default ?? 0}
                   onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="mt-1 w-32"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   {cfg.cs_county_col
                     ? 'Used when a care site county value is not in the map above (0 = unknown).'
                     : 'Applied to all care site rows when no county column is mapped (0 = unknown).'}
                 </p>
               </div>
               <div>
-                <label className="text-sm font-medium text-gray-700">Default country_source_value</label>
-                <input
+                <Label>Default country_source_value</Label>
+                <Input
                   type="text"
                   value={cfg.cs_country_source_value}
                   onChange={e => setCfg(prev => ({ ...prev, cs_country_source_value: e.target.value }))}
                   placeholder="e.g. United States, GR"
-                  className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="mt-1"
                 />
-                <p className="text-xs text-gray-500 mt-1">
+                <p className="text-xs text-muted-foreground mt-1">
                   {cfg.cs_county_col
                     ? 'Fallback when no care site county column value is present (max 80 chars).'
                     : 'Applied to all care site rows when no county column is mapped (max 80 chars).'}
                 </p>
               </div>
             </div>
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-            <h3 className="font-medium text-gray-800">Coordinates</h3>
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">Coordinates</h3>
             <FieldMapper
               label="latitude"
               sourceColumns={cols}
@@ -427,15 +422,15 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('cs_longitude_col')}
               hint="Decimal longitude — must be between −180 and 180."
             />
-          </div>
+          </Card>
 
-          <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-3">
-            <h3 className="font-medium text-gray-800">Care Site Location Source Value</h3>
+          <Card className="flex flex-col gap-3 p-6">
+            <h3 className="font-semibold text-foreground">Care Site Location Source Value</h3>
             <AutoComputedBadge
               cfg={{ ...cfg, cs_country_source_value: cfg.cs_county_col ? '' : cfg.cs_country_source_value }}
               fields={CS_ADDR_FIELDS}
             />
-          </div>
+          </Card>
         </div>
 
         <ExtraInstructions

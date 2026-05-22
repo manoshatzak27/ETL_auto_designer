@@ -7,6 +7,9 @@ import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 
 interface Props {
   project: Project
@@ -83,19 +86,19 @@ export default function Step7Provider({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Provider Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-xl font-bold text-primary">Provider Mapping</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Map source columns to the OMOP PROVIDER table. Providers are uniquely identified
             healthcare individuals (physicians, nurses, etc.). If the source only gives specialty
             without individual identifiers, generic pooled provider records are acceptable.
           </p>
         </div>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Provider Identity</h3>
-          <p className="text-xs text-gray-500">
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Provider Identity</h3>
+          <p className="text-xs text-muted-foreground">
             <span className="font-medium">provider_source_value</span> is auto-computed as{' '}
-            <code className="bg-gray-100 px-1 rounded">care_site_id | provider_name</code> and used as the deduplication key.
+            <code className="rounded bg-accent px-1">care_site_id | provider_name</code> and used as the deduplication key.
           </p>
 
           <FieldMapper
@@ -129,12 +132,12 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             onChange={set('year_of_birth_col')}
             hint="Column containing the provider's birth year (integer)."
           />
-        </div>
+        </Card>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+        <Card className="flex flex-col gap-5 p-6">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-800">Specialty</h3>
-            <a href="http://athena.ohdsi.org/search-terms/terms?domain=Provider&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+            <h3 className="font-semibold text-foreground">Specialty</h3>
+            <a href="http://athena.ohdsi.org/search-terms/terms?domain=Provider&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
           <FieldMapper
@@ -159,37 +162,36 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             />
           )}
 
-          <div className="flex flex-col gap-3 p-4 bg-gray-50 border border-gray-200 rounded-lg">
-            <p className="text-xs font-medium text-gray-600 uppercase tracking-wide">Prefix Specialty</p>
-            <p className="text-xs text-gray-500">Specify a static specialty that applies to all providers (used as a prefix/default when no column mapping is available).</p>
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/70 p-4">
+            <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">Prefix Specialty</p>
+            <p className="text-xs text-muted-foreground">Specify a static specialty that applies to all providers (used as a prefix/default when no column mapping is available).</p>
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-gray-700">Specialty</label>
-              <input
+              <Label>Specialty</Label>
+              <Input
                 type="text"
                 value={cfg.prefix_specialty ?? ''}
                 onChange={e => setCfg(prev => ({ ...prev, prefix_specialty: e.target.value }))}
                 placeholder="e.g. Internal Medicine"
-                className="border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-sm font-medium text-gray-700">Specialty concept ID</label>
-              <input
+              <Label>Specialty concept ID</Label>
+              <Input
                 type="number"
                 value={cfg.prefix_specialty_concept_id ?? ''}
                 onChange={e => setCfg(prev => ({ ...prev, prefix_specialty_concept_id: e.target.value === '' ? null : parseInt(e.target.value) }))}
                 placeholder="e.g. 38004477"
-                className="border border-gray-300 rounded-md px-3 py-2 text-sm w-48 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                className="w-48"
               />
-              <p className="text-xs text-gray-500">OMOP Provider-domain concept ID for the prefix specialty.</p>
+              <p className="text-xs text-muted-foreground">OMOP Provider-domain concept ID for the prefix specialty.</p>
             </div>
           </div>
-        </div>
+        </Card>
 
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+        <Card className="flex flex-col gap-5 p-6">
           <div className="flex items-center justify-between">
-            <h3 className="font-medium text-gray-800">Gender</h3>
-            <a href="http://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-blue-600 hover:underline">Accepted Concepts</a>
+            <h3 className="font-semibold text-foreground">Gender</h3>
+            <a href="http://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
           <FieldMapper
@@ -207,9 +209,9 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           {cfg.gender_source_value_col && (
             <div className="flex flex-col gap-2">
               <div className="flex items-center justify-between">
-                <label className="text-sm font-medium text-gray-700">Gender value → gender_concept_id</label>
+                <Label>Gender value → gender_concept_id</Label>
               </div>
-              <p className="text-xs text-gray-500">Common: 8507 = Male, 8532 = Female, 8551 = Unknown</p>
+              <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown</p>
               <ValueConceptMapper
                 label=""
                 sourceValues={distinctVals(cfg.gender_source_value_col)}
@@ -221,16 +223,16 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           )}
 
           <div>
-            <label className="text-sm font-medium text-gray-700">Default gender_concept_id</label>
-            <input
+            <Label>Default gender_concept_id</Label>
+            <Input
               type="number"
               value={cfg.gender_concept_id_default ?? 0}
               onChange={e => setCfg(prev => ({ ...prev, gender_concept_id_default: parseInt(e.target.value) }))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-32 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1 w-32"
             />
-            <p className="text-xs text-gray-500 mt-1">Used when a source value is not in the map above (0 = unknown).</p>
+            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
           </div>
-        </div>
+        </Card>
 
         <ExtraInstructions
           tableName="provider"

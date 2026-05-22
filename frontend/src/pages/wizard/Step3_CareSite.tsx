@@ -6,6 +6,9 @@ import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
 
 interface Props {
   project: Project
@@ -76,8 +79,8 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Care Site Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
+          <h2 className="text-xl font-bold text-primary">Care Site Mapping</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
             Map source columns to the OMOP CARE_SITE table. A Care Site is a unique combination
             of a <strong>location</strong> and the <strong>nature of the site</strong> — such as its place of service,
             name, or another characteristic. It represents institutional (physical or organizational) units
@@ -88,8 +91,8 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
         </div>
 
         {/* Identifiers */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Identifiers</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Identifiers</h3>
           <FieldMapper
             label="care_site_name"
             sourceColumns={cols}
@@ -98,44 +101,44 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
             hint="The name of the care site as it appears in the source data (max 255 chars)."
           />
           <div className="flex flex-col gap-1">
-            <label className="text-sm font-medium text-gray-700">care_site_source_value</label>
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 flex flex-col gap-1">
-              <p className="text-sm font-medium text-blue-800">Auto-computed — no mapping required</p>
-              <p className="text-sm text-blue-700">
+            <Label>care_site_source_value</Label>
+            <div className="flex flex-col gap-1 rounded-lg border border-border bg-secondary/60 p-3">
+              <p className="text-sm font-medium text-secondary-foreground">Auto-computed — no mapping required</p>
+              <p className="text-sm text-muted-foreground">
                 Constructed as{' '}
-                <code className="bg-blue-100 px-1 rounded text-xs">location_id + " | " + care_site_name</code>.
+                <code className="rounded bg-accent px-1 text-xs">location_id + " | " + care_site_name</code>.
                 The location_id is resolved from the care site address columns mapped in the{' '}
                 <strong>Location step</strong>.
               </p>
             </div>
           </div>
-        </div>
+        </Card>
 
         {/* Place of Service */}
-        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
-          <h3 className="font-medium text-gray-800">Place of Service</h3>
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Place of Service</h3>
           <div>
-            <label className="text-sm font-medium text-gray-700">
+            <Label>
               place_of_service_concept_id
-              <span className="ml-1 font-normal text-gray-400">— predominant care setting (Visit domain)</span>
-            </label>
-            <p className="text-xs text-gray-500 mt-0.5 mb-1">
+              <span className="ml-1 font-normal text-muted-foreground">— predominant care setting (Visit domain)</span>
+            </Label>
+            <p className="mb-1 mt-0.5 text-xs text-muted-foreground">
               A high-level characterization of the Care Site. Choose the Visit-domain standard concept
               that best represents the setting in which most care is delivered here. If visits vary widely,
               leave unset and rely on the visit-level concept instead.
             </p>
-            <select
+            <Select
               value={cfg.place_of_service_concept_id ?? ''}
               onChange={e => setCfg(prev => ({
                 ...prev,
                 place_of_service_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
               }))}
-              className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+              className="mt-1"
             >
               {PLACE_OF_SERVICE_OPTIONS.map(o => (
                 <option key={o.id ?? 'null'} value={o.id ?? ''}>{o.label}</option>
               ))}
-            </select>
+            </Select>
           </div>
           <FieldMapper
             label="place_of_service_source_value"
@@ -144,7 +147,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
             onChange={set('place_of_service_source_value_col')}
             hint="Verbatim place-of-service value from the source data (max 50 chars)."
           />
-        </div>
+        </Card>
 
         <ExtraInstructions
           tableName="care_site"

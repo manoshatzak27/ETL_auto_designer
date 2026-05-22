@@ -8,6 +8,10 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Plus, Trash2, ExternalLink } from 'lucide-react'
+import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
+import { Select } from '@/components/ui/select'
 
 interface Props {
   project: Project
@@ -87,7 +91,7 @@ function AthenaLink({ href }: { href: string }) {
       href={href}
       target="_blank"
       rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 text-xs text-blue-500 hover:text-blue-700 hover:underline"
+      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
     >
       Find on Athena <ExternalLink className="w-3 h-3" />
     </a>
@@ -156,37 +160,38 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     >
       <div className="flex flex-col gap-6">
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Visit Occurrence Mapping</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Define the clinical visits. Each visit definition creates one row in <code className="bg-gray-100 px-1 rounded">visit_occurrence</code> per patient.
+          <h2 className="text-xl font-bold text-primary">Visit Occurrence Mapping</h2>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Define the clinical visits. Each visit definition creates one row in <code className="bg-muted px-1 rounded">visit_occurrence</code> per patient.
             Map each CDM field to a source column and assign OMOP concept IDs to the values.
           </p>
         </div>
 
-        <div className="flex flex-col gap-4">
+        <div className="flex flex-col gap-6">
           {cfg.visit_definitions.map((vd, i) => (
-            <div key={i} className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+            <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
+              {/* Visit header */}
               <div className="flex items-center justify-between">
-                <h3 className="font-medium text-gray-800">Visit {i + 1}</h3>
+                <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Visit {i + 1}</p>
                 {cfg.visit_definitions.length > 1 && (
-                  <button onClick={() => removeVisit(i)} className="text-red-400 hover:text-red-600">
+                  <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive">
                     <Trash2 className="w-4 h-4" />
                   </button>
                 )}
               </div>
 
               {/* ── Group 1: Identity & dates ─────────────────────────────── */}
-              <div className="border border-gray-100 rounded-lg p-4 flex flex-col gap-4 bg-gray-50">
-                <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">Visit identity &amp; dates</p>
+              <Card className="flex flex-col gap-4 p-6">
+                <h3 className="font-semibold text-foreground">Visit identity &amp; dates</h3>
 
                 <div>
-                  <label className="text-sm font-medium text-gray-700">Visit label</label>
-                  <input
+                  <Label>Visit label</Label>
+                  <Input
                     type="text"
                     value={vd.label}
                     onChange={e => updateVisit(i, 'label', e.target.value)}
                     placeholder="e.g. Onset, Baseline, 10y Follow-up"
-                    className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="mt-1"
                   />
                 </div>
 
@@ -207,12 +212,40 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   required={false}
                   hint="Separate end date column. Leave blank to use start date as end date (for same-day visits)."
                 />
-              </div>
+              </Card>
 
-              {/* ── Group 2: visit_concept_id ──────────────────────────────── */}
-              <div className="border border-gray-100 rounded-lg p-4 flex flex-col gap-4 bg-gray-50">
+              {/* ── Group 2: Source value ──────────────────────────────────── */}
+              <Card className="flex flex-col gap-4 p-6">
+                <h3 className="font-semibold text-foreground">Visit source value</h3>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <FieldMapper
+                    label="visit_source_value column (optional)"
+                    sourceColumns={cols}
+                    value={vd.visit_source_col ?? ''}
+                    onChange={v => updateVisit(i, 'visit_source_col', v || undefined)}
+                    required={false}
+                    hint="Column whose value becomes visit_source_value. If not mapped, uses the static text."
+                  />
+                  <div>
+                    <Label>
+                      {vd.visit_source_col ? 'visit_source_value (static fallback)' : 'visit_source_value'}
+                    </Label>
+                    <Input
+                      type="text"
+                      value={vd.source_value}
+                      onChange={e => updateVisit(i, 'source_value', e.target.value)}
+                      placeholder="e.g. ONSET Visit"
+                      className="mt-1"
+                    />
+                  </div>
+                </div>
+              </Card>
+
+              {/* ── Group 3: visit_concept_id ──────────────────────────────── */}
+              <Card className="flex flex-col gap-4 p-6">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">visit_concept_id</p>
+                  <h3 className="font-semibold text-foreground">visit_concept_id</h3>
                   <AthenaLink href={ATHENA.visit_concept_id} />
                 </div>
 
@@ -234,23 +267,23 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   />
                 )}
                 <div>
-                  <label className="text-xs text-gray-500">
+                  <label className="text-xs text-muted-foreground">
                     {vd.visit_concept_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
                   </label>
-                  <select
+                  <Select
                     value={vd.visit_concept_id}
                     onChange={e => updateVisit(i, 'visit_concept_id', parseInt(e.target.value))}
-                    className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="mt-1"
                   >
                     {VISIT_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                  </select>
+                  </Select>
                 </div>
-              </div>
+              </Card>
 
-              {/* ── Group 3: visit_type_concept_id ────────────────────────── */}
-              <div className="border border-gray-100 rounded-lg p-4 flex flex-col gap-4 bg-gray-50">
+              {/* ── Group 4: visit_type_concept_id ────────────────────────── */}
+              <Card className="flex flex-col gap-4 p-6">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide">visit_type_concept_id</p>
+                  <h3 className="font-semibold text-foreground">visit_type_concept_id</h3>
                   <AthenaLink href={ATHENA.visit_type_concept_id} />
                 </div>
 
@@ -272,28 +305,28 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   />
                 )}
                 <div>
-                  <label className="text-xs text-gray-500">
+                  <label className="text-xs text-muted-foreground">
                     {vd.visit_type_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
                   </label>
-                  <select
+                  <Select
                     value={vd.type_concept_id}
                     onChange={e => updateVisit(i, 'type_concept_id', parseInt(e.target.value))}
-                    className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="mt-1"
                   >
                     {TYPE_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                  </select>
+                  </Select>
                 </div>
-              </div>
+              </Card>
 
               {/* Inpatient fields */}
               {INPATIENT_CONCEPT_IDS.has(vd.visit_concept_id) && (
-                <div className="border border-blue-100 bg-blue-50 rounded-lg p-4 flex flex-col gap-5">
-                  <p className="text-xs font-semibold text-blue-700 uppercase tracking-wide">Inpatient / multi-day visit fields</p>
+                <Card className="flex flex-col gap-5 p-6">
+                  <h3 className="font-semibold text-foreground">Inpatient / multi-day visit fields</h3>
 
                   {/* admitted_from_concept_id */}
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-700">admitted_from_concept_id</label>
+                      <Label>admitted_from_concept_id</Label>
                       <AthenaLink href={ATHENA.admitted_from_concept_id} />
                     </div>
                     <FieldMapper
@@ -315,26 +348,26 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     )}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-xs text-gray-500">
+                        <label className="text-xs text-muted-foreground">
                           {vd.admitted_from_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
                         </label>
-                        <select
+                        <Select
                           value={vd.admitted_from_concept_id ?? 0}
                           onChange={e => updateVisit(i, 'admitted_from_concept_id', parseInt(e.target.value))}
-                          className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="mt-1"
                         >
                           {ADMITTED_FROM_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </select>
+                        </Select>
                       </div>
                       {!vd.admitted_from_source_col && (
                         <div>
-                          <label className="text-sm font-medium text-gray-700">admitted_from_source_value</label>
-                          <input
+                          <Label>admitted_from_source_value</Label>
+                          <Input
                             type="text"
                             value={vd.admitted_from_source_value ?? ''}
                             onChange={e => updateVisit(i, 'admitted_from_source_value', e.target.value || undefined)}
                             placeholder="e.g. HOME, ER, LTC"
-                            className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="mt-1"
                           />
                         </div>
                       )}
@@ -344,7 +377,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   {/* discharged_to_concept_id */}
                   <div className="flex flex-col gap-2">
                     <div className="flex items-center justify-between">
-                      <label className="text-sm font-medium text-gray-700">discharged_to_concept_id</label>
+                      <Label>discharged_to_concept_id</Label>
                       <AthenaLink href={ATHENA.discharged_to_concept_id} />
                     </div>
                     <FieldMapper
@@ -366,40 +399,40 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     )}
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="text-xs text-gray-500">
+                        <label className="text-xs text-muted-foreground">
                           {vd.discharged_to_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
                         </label>
-                        <select
+                        <Select
                           value={vd.discharged_to_concept_id ?? 0}
                           onChange={e => updateVisit(i, 'discharged_to_concept_id', parseInt(e.target.value))}
-                          className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm bg-white w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          className="mt-1"
                         >
                           {DISCHARGED_TO_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </select>
+                        </Select>
                       </div>
                       {!vd.discharged_to_source_col && (
                         <div>
-                          <label className="text-sm font-medium text-gray-700">discharged_to_source_value</label>
-                          <input
+                          <Label>discharged_to_source_value</Label>
+                          <Input
                             type="text"
                             value={vd.discharged_to_source_value ?? ''}
                             onChange={e => updateVisit(i, 'discharged_to_source_value', e.target.value || undefined)}
                             placeholder="e.g. HOME, SNF, TRANSFER"
-                            className="mt-1 border border-gray-300 rounded-md px-3 py-2 text-sm w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            className="mt-1"
                           />
                         </div>
                       )}
                     </div>
                   </div>
-                </div>
+                </Card>
               )}
 
-              <label className="flex items-center gap-2 text-sm text-gray-600 cursor-pointer">
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
                 <input
                   type="checkbox"
                   checked={vd.optional}
                   onChange={e => updateVisit(i, 'optional', e.target.checked)}
-                  className="rounded"
+                  className="rounded accent-primary"
                 />
                 Optional (skip if date column is empty)
               </label>
@@ -409,7 +442,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
         <button
           onClick={addVisit}
-          className="flex items-center gap-2 text-sm text-blue-600 hover:text-blue-700 font-medium"
+          className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium"
         >
           <Plus className="w-4 h-4" /> Add another visit type
         </button>

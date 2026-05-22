@@ -10,9 +10,12 @@ import { getChatHistory, sendChatMessage, clearChatHistory } from '../api/client
 import type { Project, ChatMessage } from '../types'
 import {
   MessageSquare, X, Send, RefreshCw, Trash2,
-  ChevronDown, Bot, User, Sparkles, Code2,
+  Bot, User, Sparkles, Code2,
 } from 'lucide-react'
-import clsx from 'clsx'
+import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
+import { Textarea } from '@/components/ui/textarea'
 
 const TABLES = [
   { key: 'location',             label: 'location.py' },
@@ -125,59 +128,60 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
     <>
       {/* Floating toggle button */}
       {!open && (
-        <button
+        <Button
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 right-6 z-40 flex items-center gap-2 px-4 py-3 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-all font-medium text-sm"
+          className="fixed bottom-20 right-6 z-40 rounded-full px-4 py-3 shadow-lg font-medium text-sm"
         >
           <MessageSquare className="w-4 h-4" />
           Chat with AI
-        </button>
+        </Button>
       )}
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-[72px] right-4 z-50 flex flex-col w-[420px] h-[580px] bg-white border border-gray-200 rounded-2xl shadow-2xl">
+        <div className="fixed bottom-[72px] right-4 z-50 flex flex-col w-[420px] h-[580px] bg-card border border-border rounded-2xl shadow-2xl">
           {/* Header */}
-          <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-indigo-50 rounded-t-2xl flex-shrink-0">
-            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center flex-shrink-0">
-              <Sparkles className="w-4 h-4 text-blue-600" />
+          <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-secondary/60 rounded-t-2xl flex-shrink-0">
+            <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
+              <Sparkles className="w-4 h-4 text-amber-500" />
             </div>
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-gray-800">AI Code Assistant</p>
-              <p className="text-xs text-gray-500 truncate">Ask questions or request changes</p>
+              <p className="text-sm font-semibold text-foreground">AI Code Assistant</p>
+              <p className="text-xs text-muted-foreground truncate">Ask questions or request changes</p>
             </div>
-            <button
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={handleClear}
               title="Clear history"
-              className="p-1.5 text-gray-400 hover:text-red-500 rounded-lg hover:bg-red-50 transition-colors"
+              className="w-7 h-7 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
             >
               <Trash2 className="w-3.5 h-3.5" />
-            </button>
-            <button
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
               onClick={() => setOpen(false)}
-              className="p-1.5 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-100 transition-colors"
+              className="w-7 h-7 text-muted-foreground hover:text-foreground"
             >
               <X className="w-4 h-4" />
-            </button>
+            </Button>
           </div>
 
           {/* Table selector */}
-          <div className="px-3 py-2 border-b border-gray-100 flex-shrink-0">
-            <div className="relative">
-              <select
-                value={table}
-                onChange={e => setTable(e.target.value)}
-                className="w-full text-xs font-mono bg-gray-50 border border-gray-200 rounded-lg px-3 py-2 pr-8 appearance-none text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-300"
-              >
-                {TABLES.map(t => (
-                  <option key={t.key} value={t.key}>
-                    {t.label}
-                    {!(project.generated_scripts || {})[t.key] ? ' (not generated)' : ''}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown className="w-3.5 h-3.5 text-gray-400 absolute right-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
-            </div>
+          <div className="px-3 py-2 border-b border-border flex-shrink-0">
+            <Select
+              value={table}
+              onChange={e => setTable(e.target.value)}
+              className="text-xs font-mono"
+            >
+              {TABLES.map(t => (
+                <option key={t.key} value={t.key}>
+                  {t.label}
+                  {!(project.generated_scripts || {})[t.key] ? ' (not generated)' : ''}
+                </option>
+              ))}
+            </Select>
             {!hasScript && (
               <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
                 <Code2 className="w-3 h-3" />
@@ -190,18 +194,18 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
           <div className="flex-1 overflow-y-auto px-3 py-3 flex flex-col gap-3 min-h-0">
             {loadingHistory && (
               <div className="flex justify-center py-8">
-                <RefreshCw className="w-4 h-4 text-gray-400 animate-spin" />
+                <RefreshCw className="w-4 h-4 text-muted-foreground animate-spin" />
               </div>
             )}
 
             {!loadingHistory && visibleMessages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full text-center gap-3 py-8">
-                <div className="w-12 h-12 rounded-full bg-blue-50 flex items-center justify-center">
-                  <MessageSquare className="w-5 h-5 text-blue-400" />
+                <div className="w-12 h-12 rounded-full bg-secondary/60 flex items-center justify-center">
+                  <MessageSquare className="w-5 h-5 text-primary" />
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-gray-700">No messages yet</p>
-                  <p className="text-xs text-gray-400 mt-1 max-w-[240px]">
+                  <p className="text-sm font-medium text-foreground">No messages yet</p>
+                  <p className="text-xs text-muted-foreground mt-1 max-w-[240px]">
                     Ask about the code, request changes, or get an explanation of how it works.
                   </p>
                 </div>
@@ -214,7 +218,7 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
                     <button
                       key={suggestion}
                       onClick={() => setInput(suggestion)}
-                      className="text-xs text-left text-blue-600 hover:text-blue-800 bg-blue-50 hover:bg-blue-100 px-3 py-2 rounded-lg transition-colors"
+                      className="text-xs text-left text-primary hover:text-primary/80 bg-secondary/60 hover:bg-accent px-3 py-2 rounded-lg transition-colors"
                     >
                       {suggestion}
                     </button>
@@ -230,41 +234,37 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
             {sending && <TypingIndicator />}
 
             {error && (
-              <p className="text-xs text-red-600 text-center px-2">{error}</p>
+              <p className="text-xs text-destructive text-center px-2">{error}</p>
             )}
 
             <div ref={bottomRef} />
           </div>
 
           {/* Input */}
-          <div className="px-3 py-3 border-t border-gray-100 flex-shrink-0">
+          <div className="px-3 py-3 border-t border-border flex-shrink-0">
             <div className="flex items-end gap-2">
-              <textarea
+              <Textarea
                 ref={inputRef}
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask about the code or request changes… (Enter to send)"
                 rows={2}
-                className="flex-1 resize-none text-sm border border-gray-200 rounded-xl px-3 py-2.5 focus:outline-none focus:ring-2 focus:ring-blue-300 placeholder:text-gray-400 bg-gray-50"
+                className="flex-1 resize-none text-sm rounded-xl px-3 py-2.5 min-h-0"
               />
-              <button
+              <Button
+                size="icon"
                 onClick={handleSend}
                 disabled={!input.trim() || sending}
-                className={clsx(
-                  'flex-shrink-0 w-9 h-9 rounded-xl flex items-center justify-center transition-colors',
-                  input.trim() && !sending
-                    ? 'bg-blue-600 text-white hover:bg-blue-700'
-                    : 'bg-gray-100 text-gray-400 cursor-not-allowed',
-                )}
+                className="flex-shrink-0 w-9 h-9 rounded-xl"
               >
                 {sending
                   ? <RefreshCw className="w-4 h-4 animate-spin" />
                   : <Send className="w-4 h-4" />
                 }
-              </button>
+              </Button>
             </div>
-            <p className="text-xs text-gray-400 mt-1.5 text-center">
+            <p className="text-xs text-muted-foreground mt-1.5 text-center">
               Shift+Enter for newline · Enter to send
             </p>
           </div>
@@ -278,24 +278,24 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user'
 
   return (
-    <div className={clsx('flex gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
+    <div className={cn('flex gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
       {/* Avatar */}
-      <div className={clsx(
+      <div className={cn(
         'w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 mt-0.5',
-        isUser ? 'bg-blue-100' : 'bg-gray-100',
+        isUser ? 'bg-accent' : 'bg-muted',
       )}>
         {isUser
-          ? <User className="w-3.5 h-3.5 text-blue-600" />
-          : <Bot className="w-3.5 h-3.5 text-gray-600" />
+          ? <User className="w-3.5 h-3.5 text-primary" />
+          : <Bot className="w-3.5 h-3.5 text-muted-foreground" />
         }
       </div>
 
       {/* Bubble */}
-      <div className={clsx(
+      <div className={cn(
         'max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm',
         isUser
-          ? 'bg-blue-600 text-white rounded-tr-sm'
-          : 'bg-gray-100 text-gray-800 rounded-tl-sm',
+          ? 'bg-primary text-primary-foreground rounded-tr-sm'
+          : 'bg-muted text-foreground rounded-tl-sm',
       )}>
         {msg.code_updated && (
           <div className="flex items-center gap-1.5 mb-2 text-xs text-green-700 bg-green-100 rounded-lg px-2.5 py-1.5 font-medium">
@@ -321,9 +321,9 @@ function FormattedMessage({ content, isUser }: { content: string; isUser: boolea
           return (
             <pre
               key={i}
-              className={clsx(
+              className={cn(
                 'text-xs font-mono rounded-lg px-3 py-2.5 overflow-x-auto whitespace-pre',
-                isUser ? 'bg-blue-700 text-blue-100' : 'bg-gray-800 text-gray-100',
+                isUser ? 'bg-primary/80 text-primary-foreground' : 'bg-gray-800 text-gray-100',
               )}
             >
               {code}
@@ -343,15 +343,15 @@ function FormattedMessage({ content, isUser }: { content: string; isUser: boolea
 function TypingIndicator() {
   return (
     <div className="flex gap-2">
-      <div className="w-7 h-7 rounded-full bg-gray-100 flex items-center justify-center flex-shrink-0">
-        <Bot className="w-3.5 h-3.5 text-gray-600" />
+      <div className="w-7 h-7 rounded-full bg-muted flex items-center justify-center flex-shrink-0">
+        <Bot className="w-3.5 h-3.5 text-muted-foreground" />
       </div>
-      <div className="bg-gray-100 rounded-2xl rounded-tl-sm px-4 py-3">
+      <div className="bg-muted rounded-2xl rounded-tl-sm px-4 py-3">
         <div className="flex gap-1 items-center h-4">
           {[0, 1, 2].map(i => (
             <span
               key={i}
-              className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce"
+              className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce"
               style={{ animationDelay: `${i * 150}ms` }}
             />
           ))}
