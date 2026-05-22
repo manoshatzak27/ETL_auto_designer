@@ -7,6 +7,17 @@ import WizardLayout from './WizardLayout'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Plus, Trash2, CheckCircle, AlertCircle } from 'lucide-react'
+import { Card } from '../../components/ui/card'
+import { Input } from '../../components/ui/input'
+import { Select } from '../../components/ui/select'
+
+const DOMAIN_TABLES = [
+  { table: 'measurement', label: 'Measurement', domainId: 1, color: 'bg-blue-50 text-blue-700 border-blue-200' },
+  { table: 'observation', label: 'Observation', domainId: 2, color: 'bg-purple-50 text-purple-700 border-purple-200' },
+  { table: 'drug_exposure', label: 'Drug Exposure', domainId: 3, color: 'bg-green-50 text-green-700 border-green-200' },
+  { table: 'procedure_occurrence', label: 'Procedure Occurrence', domainId: 4, color: 'bg-orange-50 text-orange-700 border-orange-200' },
+  { table: 'condition_occurrence', label: 'Condition Occurrence', domainId: 5, color: 'bg-red-50 text-red-700 border-red-200' },
+]
 
 interface Props {
   project: Project
@@ -202,7 +213,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
               <h3 className="font-semibold text-foreground">Variable Groups (Timepoints)</h3>
               <p className="text-xs text-muted-foreground mt-0.5">
                 Each group corresponds to a visit type from Step 4. Variables not assigned to any group are ignored.
-                <span className="font-medium text-gray-600"> {totalAssigned}/{cols.length} columns assigned.</span>
+                <span className="font-medium text-gray-600"> {totalAssigned}/{mappedCols.length} columns assigned.</span>
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -312,7 +323,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
               </div>
             ))}
           </div>
-        </div>
+        </Card>
 
         <ExtraInstructions
           tableName="stem_table"
