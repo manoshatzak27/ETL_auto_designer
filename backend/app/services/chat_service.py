@@ -19,6 +19,11 @@ SUPPORTED_TABLES = [
     "observation_period",
     "stem_table",
     "death",
+    "measurement",
+    "observation",
+    "drug_exposure",
+    "procedure_occurrence",
+    "condition_occurrence",
 ]
 
 

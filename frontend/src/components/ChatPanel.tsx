@@ -15,14 +15,19 @@ import {
 import clsx from 'clsx'
 
 const TABLES = [
-  { key: 'location',           label: 'location.py' },
-  { key: 'care_site',          label: 'care_site.py' },
-  { key: 'provider',           label: 'provider.py' },
-  { key: 'person',             label: 'person.py' },
-  { key: 'visit_occurrence',   label: 'visit_occurrence.py' },
-  { key: 'observation_period', label: 'observation_period.py' },
-  { key: 'stem_table',         label: 'stem_table.py' },
-  { key: 'death',              label: 'death.py' },
+  { key: 'location',             label: 'location.py' },
+  { key: 'care_site',            label: 'care_site.py' },
+  { key: 'provider',             label: 'provider.py' },
+  { key: 'person',               label: 'person.py' },
+  { key: 'visit_occurrence',     label: 'visit_occurrence.py' },
+  { key: 'observation_period',   label: 'observation_period.py' },
+  { key: 'stem_table',           label: 'stem_table.py' },
+  { key: 'death',                label: 'death.py' },
+  { key: 'measurement',          label: 'measurement.py' },
+  { key: 'observation',          label: 'observation.py' },
+  { key: 'drug_exposure',        label: 'drug_exposure.py' },
+  { key: 'procedure_occurrence', label: 'procedure_occurrence.py' },
+  { key: 'condition_occurrence', label: 'condition_occurrence.py' },
 ]
 
 interface Props {
