@@ -31,9 +31,13 @@ visit_type_concept_id — two modes:
       fall back to type_concept_id if not found.
    b. Fixed: use type_concept_id directly.
 
-visit_source_value — two modes:
-   a. Column-mapped: if visit_source_col is set, read that column value from the source row and use it.
-   b. Static: use the source_value string from config (e.g. "ONSET Visit").
+visit_source_value — auto-computed (never taken from config):
+   Format: "{person_source_value}-{source_filename_stem}-{visit_label_normalized}"
+   - person_source_value: the raw source ID value for that person (same as used for person_id lookup)
+   - source_filename_stem: the source file stem provided in the VISIT_SOURCE_VALUE_FILENAME_STEM instruction (no path, no extension)
+   - visit_label_normalized: the visit definition label lowercased with spaces replaced by underscores
+   Example: if person_source_value="P001", source file is "basedata.csv", label is "Onset"
+            → visit_source_value = "P001-basedata-onset"
 visit_source_concept_id: leave as 0 (no OMOP-supported source vocabulary).
 
 admitted_from_concept_id / admitted_from_source_value — two modes (only for multi-day visits):
@@ -59,7 +63,8 @@ provider_id: leave as NULL (not configured in this UI step).
 care_site_id: leave as NULL (not configured in this UI step).
 
 record_source_value (custom extension):
-- Format: "{person_source_value}-basedata-{visit_label_normalized}"
+- IMPORTANT: record_source_value must equal visit_source_value for every row — they share the same format.
+- Format: "{person_source_value}-{source_filename_stem}-{visit_label_normalized}"
 - visit_label_normalized = visit label lowercased with spaces replaced by underscores.
 - This field is NOT part of the OMOP CDM; it is a lookup key used by stem_table and death scripts.
 

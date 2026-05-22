@@ -30,10 +30,14 @@ Apply special_overrides AFTER the base lookup:
 
 Visit assignment:
 - Use the variable_groups to determine which visit_type the variable belongs to
-- Build record_source_value as "{person_id}-basedata-{visit_group_label}" and look up visit_occurrence_id from the visits lookup dict
+- Build record_source_value as "{person_source_value}-{source_filename_stem}-{visit_label}" and look up visit_occurrence_id from the visits lookup dict
 
 Date assignment:
 - Each variable_group has an associated date column (from visit_definitions): use that date as start_date
+
+Field definitions for source fields:
+- source_value: set to the raw source column name (i.e., the variable name, e.g. "DUP", "BMI"). This is the column header from the source CSV, NOT a concept ID.
+- value_source_value: set to the raw source value as it appeared in the source data (i.e., str(row[variable]) before any mapping). If the value is NaN/null, use empty string.
 
 stem_table columns (output order):
 id (sequential), domain_id (leave blank, filled during routing), person_id, visit_occurrence_id,
