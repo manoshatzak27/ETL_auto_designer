@@ -26,6 +26,8 @@ const DEFAULTS: LocationConfig = {
   state_col: '',
   zip_col: '',
   county_col: '',
+  county_source_value: '',
+  country_col: '',
   country_source_value: '',
   latitude_col: '',
   longitude_col: '',
@@ -35,11 +37,14 @@ const DEFAULTS: LocationConfig = {
   cs_state_col: '',
   cs_zip_col: '',
   cs_county_col: '',
+  cs_county_source_value: '',
+  cs_country_col: '',
   cs_country_source_value: '',
   cs_latitude_col: '',
   cs_longitude_col: '',
   country_concept_id_map: {},
   country_concept_id_default: 0,
+  cs_country_concept_id_map: {},
   cs_country_concept_id_default: 0,
 }
 
@@ -84,8 +89,8 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
-  const [countyValues, setCountyValues] = useState<string[]>([])
-  const [csCountyValues, setCsCountyValues] = useState<string[]>([])
+  const [countryValues, setCountryValues] = useState<string[]>([])
+  const [csCountryValues, setCsCountryValues] = useState<string[]>([])
 
   useEffect(() => {
     Promise.all([
@@ -100,16 +105,20 @@ export default function Step5Location({ project, onUpdate }: Props) {
           ...ex,
           country_concept_id_map: ex.country_concept_id_map ?? {},
           country_concept_id_default: ex.country_concept_id_default ?? 0,
+          cs_country_concept_id_map: ex.cs_country_concept_id_map ?? {},
           cs_country_concept_id_default: ex.cs_country_concept_id_default ?? 0,
           country_source_value: ex.country_source_value ?? '',
           cs_country_source_value: ex.cs_country_source_value ?? '',
+          county_source_value: ex.county_source_value ?? '',
+          cs_county_source_value: ex.cs_county_source_value ?? '',
         }
-        if (loaded.county_col) {
+        if (loaded.country_col) {
           const savedKeys = Object.keys(loaded.country_concept_id_map)
-          setCountyValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.county_col]?.distinct_values ?? []))
+          setCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.country_col]?.distinct_values ?? []))
         }
-        if (loaded.cs_county_col) {
-          setCsCountyValues(infos[loaded.cs_county_col]?.distinct_values ?? [])
+        if (loaded.cs_country_col) {
+          const savedKeys = Object.keys(loaded.cs_country_concept_id_map)
+          setCsCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.cs_country_col]?.distinct_values ?? []))
         }
         setCfg(loaded)
       }
@@ -131,19 +140,24 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const set = (field: keyof LocationConfig) => (v: string) =>
     setCfg(prev => ({ ...prev, [field]: v }))
 
-  const handleCountyColChange = (col: string) => {
-    setCfg(prev => ({ ...prev, county_col: col, country_concept_id_map: {} }))
-    setCountyValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
+  const handleCountryColChange = (col: string) => {
+    setCfg(prev => ({ ...prev, country_col: col, country_concept_id_map: {} }))
+    setCountryValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
-  const handleCsCountyColChange = (col: string) => {
-    setCfg(prev => ({ ...prev, cs_county_col: col }))
-    setCsCountyValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
+  const handleCsCountryColChange = (col: string) => {
+    setCfg(prev => ({ ...prev, cs_country_col: col, cs_country_concept_id_map: {} }))
+    setCsCountryValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
-  const addCountyValue = () => {
+  const addCountryValue = () => {
     const val = prompt('Enter a source country value (e.g. US, GR, United States):')
-    if (val) setCountyValues(prev => [...new Set([...prev, val])])
+    if (val) setCountryValues(prev => [...new Set([...prev, val])])
+  }
+
+  const addCsCountryValue = () => {
+    const val = prompt('Enter a source country value (e.g. US, GR, United States):')
+    if (val) setCsCountryValues(prev => [...new Set([...prev, val])])
   }
 
   const PERSON_ADDR_FIELDS: (keyof LocationConfig)[] = [
@@ -209,7 +223,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
           </Card>
 
           <Card className="flex flex-col gap-5 p-6">
-            <h3 className="font-semibold text-foreground">State & ZIP</h3>
+            <h3 className="font-semibold text-foreground">State, ZIP & County</h3>
             <FieldMapper
               label="state"
               sourceColumns={cols}
@@ -224,6 +238,26 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('zip_col')}
               hint="Zip / postal code stored as a string (up to 9 chars). Leading zeros are preserved."
             />
+            <FieldMapper
+              label="county"
+              sourceColumns={cols}
+              value={cfg.county_col}
+              onChange={set('county_col')}
+              hint="County or sub-region (max 20 chars)."
+            />
+            {!cfg.county_col && (
+              <div>
+                <Label>Default county</Label>
+                <Input
+                  type="text"
+                  value={cfg.county_source_value}
+                  onChange={e => setCfg(prev => ({ ...prev, county_source_value: e.target.value }))}
+                  placeholder="e.g. King County"
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Applied to all person rows when no county column is mapped (max 20 chars).</p>
+              </div>
+            )}
           </Card>
 
           <Card className="flex flex-col gap-5 p-6">
@@ -232,66 +266,59 @@ export default function Step5Location({ project, onUpdate }: Props) {
               <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
             </div>
             <FieldMapper
-              label="county"
+              label="country"
               sourceColumns={cols}
-              value={cfg.county_col}
-              onChange={handleCountyColChange}
-              hint="County or region (max 20 chars). Source values are stored in the county field; each value can be mapped to a country_concept_id below."
+              value={cfg.country_col}
+              onChange={handleCountryColChange}
+              hint="Map to a source column, or leave empty to set a default country for all rows."
             />
-            {cfg.county_col && (
+            {cfg.country_col ? (
               <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
                 <div className="flex items-center justify-between">
                   <div>
                     <Label>Country value → OMOP concept ID mapping</Label>
                     <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
                   </div>
-                  <button onClick={addCountyValue} className="text-xs text-primary hover:underline">+ Add value</button>
+                  <button onClick={addCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
                 </div>
                 <ValueConceptMapper
                   label=""
-                  sourceValues={countyValues.length > 0 ? countyValues : Object.keys(cfg.country_concept_id_map)}
+                  sourceValues={countryValues.length > 0 ? countryValues : Object.keys(cfg.country_concept_id_map)}
                   mapping={cfg.country_concept_id_map}
                   onChange={m => setCfg(prev => ({ ...prev, country_concept_id_map: m }))}
                 />
               </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Default country_concept_id</Label>
+                  <Input
+                    type="number"
+                    value={cfg.country_concept_id_default ?? 0}
+                    onChange={e => setCfg(prev => ({ ...prev, country_concept_id_default: parseInt(e.target.value) || 0 }))}
+                    className="mt-1 w-32"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Applied to all person rows (0 = unknown).</p>
+                </div>
+                <div>
+                  <Label>Default country_source_value</Label>
+                  <Input
+                    type="text"
+                    value={cfg.country_source_value}
+                    onChange={e => setCfg(prev => ({ ...prev, country_source_value: e.target.value }))}
+                    placeholder="e.g. United States"
+                    className="mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Applied to all person rows (max 80 chars).</p>
+                </div>
+              </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Default country_concept_id</Label>
-                <Input
-                  type="number"
-                  value={cfg.country_concept_id_default ?? 0}
-                  onChange={e => setCfg(prev => ({ ...prev, country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                  className="mt-1 w-32"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {cfg.county_col
-                    ? 'Used when a person source value is not in the map above (0 = unknown).'
-                    : 'Applied to all person rows when no county column is mapped (0 = unknown).'}
-                </p>
-              </div>
-              <div>
-                <Label>Default country_source_value</Label>
-                <Input
-                  type="text"
-                  value={cfg.country_source_value}
-                  onChange={e => setCfg(prev => ({ ...prev, country_source_value: e.target.value }))}
-                  placeholder="e.g. United States, GR"
-                  className="mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {cfg.county_col
-                    ? 'Fallback when no county column value is present (max 80 chars).'
-                    : 'Applied to all person rows when no county column is mapped (max 80 chars).'}
-                </p>
-              </div>
-            </div>
           </Card>
 
           <Card className="flex flex-col gap-3 p-6">
             <h3 className="font-semibold text-foreground">Person Location Source Value</h3>
             <AutoComputedBadge
-              cfg={{ ...cfg, country_source_value: cfg.county_col ? '' : cfg.country_source_value }}
+              cfg={cfg}
               fields={PERSON_ADDR_FIELDS}
             />
           </Card>
@@ -348,7 +375,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
           </Card>
 
           <Card className="flex flex-col gap-5 p-6">
-            <h3 className="font-semibold text-foreground">State & ZIP</h3>
+            <h3 className="font-semibold text-foreground">State, ZIP & County</h3>
             <FieldMapper
               label="state"
               sourceColumns={cols}
@@ -363,6 +390,26 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('cs_zip_col')}
               hint="Zip / postal code stored as a string (up to 9 chars)."
             />
+            <FieldMapper
+              label="county"
+              sourceColumns={cols}
+              value={cfg.cs_county_col}
+              onChange={set('cs_county_col')}
+              hint="County or sub-region (max 20 chars)."
+            />
+            {!cfg.cs_county_col && (
+              <div>
+                <Label>Default county</Label>
+                <Input
+                  type="text"
+                  value={cfg.cs_county_source_value}
+                  onChange={e => setCfg(prev => ({ ...prev, cs_county_source_value: e.target.value }))}
+                  placeholder="e.g. King County"
+                  className="mt-1"
+                />
+                <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows when no county column is mapped (max 20 chars).</p>
+              </div>
+            )}
           </Card>
 
           <Card className="flex flex-col gap-5 p-6">
@@ -371,65 +418,59 @@ export default function Step5Location({ project, onUpdate }: Props) {
               <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
             </div>
             <FieldMapper
-              label="county"
+              label="country"
               sourceColumns={cols}
-              value={cfg.cs_county_col}
-              onChange={handleCsCountyColChange}
-              hint="County or region (max 20 chars). Source values can be mapped to a country_concept_id below."
+              value={cfg.cs_country_col}
+              onChange={handleCsCountryColChange}
+              hint="Map to a source column, or leave empty to set a default country for all rows."
             />
-            {cfg.cs_county_col && (
+            {cfg.cs_country_col ? (
               <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
                 <div className="flex items-center justify-between">
                   <div>
                     <Label>Country value → OMOP concept ID mapping</Label>
                     <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
                   </div>
+                  <button onClick={addCsCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
                 </div>
                 <ValueConceptMapper
                   label=""
-                  sourceValues={csCountyValues.length > 0 ? csCountyValues : Object.keys(cfg.country_concept_id_map)}
-                  mapping={cfg.country_concept_id_map}
-                  onChange={m => setCfg(prev => ({ ...prev, country_concept_id_map: m }))}
+                  sourceValues={csCountryValues.length > 0 ? csCountryValues : Object.keys(cfg.cs_country_concept_id_map)}
+                  mapping={cfg.cs_country_concept_id_map}
+                  onChange={m => setCfg(prev => ({ ...prev, cs_country_concept_id_map: m }))}
                 />
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label>Default country_concept_id</Label>
+                  <Input
+                    type="number"
+                    value={cfg.cs_country_concept_id_default ?? 0}
+                    onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
+                    className="mt-1 w-32"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows (0 = unknown).</p>
+                </div>
+                <div>
+                  <Label>Default country_source_value</Label>
+                  <Input
+                    type="text"
+                    value={cfg.cs_country_source_value}
+                    onChange={e => setCfg(prev => ({ ...prev, cs_country_source_value: e.target.value }))}
+                    placeholder="e.g. United States"
+                    className="mt-1"
+                  />
+                  <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows (max 80 chars).</p>
+                </div>
               </div>
             )}
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label>Default country_concept_id</Label>
-                <Input
-                  type="number"
-                  value={cfg.cs_country_concept_id_default ?? 0}
-                  onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                  className="mt-1 w-32"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {cfg.cs_county_col
-                    ? 'Used when a care site county value is not in the map above (0 = unknown).'
-                    : 'Applied to all care site rows when no county column is mapped (0 = unknown).'}
-                </p>
-              </div>
-              <div>
-                <Label>Default country_source_value</Label>
-                <Input
-                  type="text"
-                  value={cfg.cs_country_source_value}
-                  onChange={e => setCfg(prev => ({ ...prev, cs_country_source_value: e.target.value }))}
-                  placeholder="e.g. United States, GR"
-                  className="mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1">
-                  {cfg.cs_county_col
-                    ? 'Fallback when no care site county column value is present (max 80 chars).'
-                    : 'Applied to all care site rows when no county column is mapped (max 80 chars).'}
-                </p>
-              </div>
-            </div>
           </Card>
 
           <Card className="flex flex-col gap-3 p-6">
             <h3 className="font-semibold text-foreground">Care Site Location Source Value</h3>
             <AutoComputedBadge
-              cfg={{ ...cfg, cs_country_source_value: cfg.cs_county_col ? '' : cfg.cs_country_source_value }}
+              cfg={cfg}
               fields={CS_ADDR_FIELDS}
             />
           </Card>

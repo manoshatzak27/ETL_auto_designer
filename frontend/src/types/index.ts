@@ -117,6 +117,8 @@ export interface LocationConfig {
   state_col: string
   zip_col: string
   county_col: string
+  county_source_value: string
+  country_col: string
   country_source_value: string
   latitude_col: string
   longitude_col: string
@@ -127,6 +129,8 @@ export interface LocationConfig {
   cs_state_col: string
   cs_zip_col: string
   cs_county_col: string
+  cs_county_source_value: string
+  cs_country_col: string
   cs_country_source_value: string
   cs_latitude_col: string
   cs_longitude_col: string
@@ -134,6 +138,7 @@ export interface LocationConfig {
   country_concept_id_map: Record<string, number>
   country_concept_id_default: number
   // Care site country config
+  cs_country_concept_id_map: Record<string, number>
   cs_country_concept_id_default: number
 }
 
