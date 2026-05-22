@@ -30,7 +30,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
 
   // Check which mapping CSVs were generated in Step 2
   const mappingFiles = project.mapping_files || {}
-  const hasMappings = !!mappingFiles.variable_mapping
+  const hasMappings = Object.values(mappingFiles).some(v => !!v)
 
   useEffect(() => {
     Promise.all([
