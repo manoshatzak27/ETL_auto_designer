@@ -28,25 +28,27 @@ VALID_END = "2099-12-31"
 CUSTOM_CONCEPT_THRESHOLD = 2_000_000_000
 
 
-def _base_row(variable: str, concept: dict) -> dict:
+def _base_row(variable: str, concept: dict, domain_id: int | None = None) -> dict:
     return {
         "variable_source_code": variable,
         "source_code_description": concept.get("description", ""),
         "target_concept_id": concept["concept_id"],
         "target_concept_name": concept.get("concept_name", ""),
+        "domain_id": domain_id if domain_id is not None else "",
         "valid_start_date": VALID_START,
         "valid_end_date": VALID_END,
         "invalid_reason": "",
     }
 
 
-def _value_row(variable: str, value: str, concept: dict) -> dict:
+def _value_row(variable: str, value: str, concept: dict, domain_id: int | None = None) -> dict:
     return {
         "variable_source_code": variable,
         "value_source_code": value,
         "source_code_description": concept.get("description", ""),
         "target_concept_id": concept["concept_id"],
         "target_concept_name": concept.get("concept_name", ""),
+        "domain_id": domain_id if domain_id is not None else "",
         "valid_start_date": VALID_START,
         "valid_end_date": VALID_END,
         "invalid_reason": "",
@@ -73,10 +75,11 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
 
         var_concept = decision.get("variable_concept") or {}
         val_concepts: dict = decision.get("value_concepts") or {}
+        domain_id: int | None = decision.get("domain_id") or None
 
         # --- variable_mapping.csv ---
         if strategy in ("map_variable", "map_both") and var_concept.get("concept_id"):
-            variable_rows.append(_base_row(variable, var_concept))
+            variable_rows.append(_base_row(variable, var_concept, domain_id=domain_id))
             if var_concept["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
                 custom_rows.append(_custom_row(var_concept))
 
@@ -84,7 +87,7 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
         if strategy == "map_values":
             for val, vc in val_concepts.items():
                 if vc.get("concept_id"):
-                    var_value_rows.append(_value_row(variable, val, vc))
+                    var_value_rows.append(_value_row(variable, val, vc, domain_id=domain_id))
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
                         custom_rows.append(_custom_row(vc))
 
@@ -92,7 +95,7 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
         if strategy == "map_both":
             for val, vc in val_concepts.items():
                 if vc.get("concept_id"):
-                    value_rows.append(_value_row(variable, val, vc))
+                    value_rows.append(_value_row(variable, val, vc, domain_id=domain_id))
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
                         custom_rows.append(_custom_row(vc))
 

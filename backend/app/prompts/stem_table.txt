@@ -39,8 +39,23 @@ Field definitions for source fields:
 - source_value: set to the raw source column name (i.e., the variable name, e.g. "DUP", "BMI"). This is the column header from the source CSV, NOT a concept ID.
 - value_source_value: set to the raw source value as it appeared in the source data (i.e., str(row[variable]) before any mapping). If the value is NaN/null, use empty string.
 
+domain_id lookup (implement exactly this pattern right after loading var_map / var_val_map):
+```python
+domain_map = {}
+if not vm.empty and 'domain_id' in vm.columns:
+    for _, r in vm.iterrows():
+        if pd.notna(r['domain_id']) and r['domain_id'] != '':
+            domain_map[r['variable_source_code'].lower()] = int(r['domain_id'])
+if not vv.empty and 'domain_id' in vv.columns:
+    for _, r in vv.iterrows():
+        k = r['variable_source_code'].lower()
+        if k not in domain_map and pd.notna(r['domain_id']) and r['domain_id'] != '':
+            domain_map[k] = int(r['domain_id'])
+```
+Then in each stem_table record set: `'domain_id': domain_map.get(variable.lower(), '')`
+
 stem_table columns (output order):
-id (sequential), domain_id (leave blank, filled during routing), person_id, visit_occurrence_id,
+id (sequential), domain_id, person_id, visit_occurrence_id,
 visit_detail_id, concept_id, start_date, start_datetime, end_date, end_datetime,
 type_concept_id (=32879), operator_concept_id, value_as_number, value_as_string,
 value_as_concept_id, unit_concept_id, range_low, range_high, provider_id,

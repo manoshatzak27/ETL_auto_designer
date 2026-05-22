@@ -1,0 +1,28 @@
+Populate the PROCEDURE_OCCURRENCE table by reading from the staging stem_table and filtering to domain_id == 4.
+
+Input:  ETL_OUTPUT_DIR/stem_table.csv  (semicolon-delimited, UTF-8)
+Output: ETL_OUTPUT_DIR/procedure_occurrence.csv (semicolon-delimited, UTF-8)
+
+Column mapping (stem_table → procedure_occurrence):
+  procedure_occurrence_id       ← sequential integer starting at 1
+  person_id                     ← person_id (int)
+  procedure_concept_id          ← concept_id (int, 0 if null/empty)
+  procedure_date                ← start_date
+  procedure_datetime            ← start_datetime (None if blank)
+  procedure_end_date            ← end_date (None if blank)
+  procedure_end_datetime        ← end_datetime (None if blank)
+  procedure_type_concept_id     ← type_concept_id (int, 32879 if null/empty)
+  modifier_concept_id           ← modifier_concept_id (int or None if blank)
+  quantity                      ← quantity (int or None if blank; default to 1 if value is 0)
+  provider_id                   ← provider_id (int or None if blank)
+  visit_occurrence_id           ← visit_occurrence_id (int or None if blank)
+  visit_detail_id               ← visit_detail_id (int or None if blank)
+  procedure_source_value        ← source_value
+  procedure_source_concept_id   ← source_concept_id (int, 0 if blank)
+  modifier_source_value         ← None
+
+Filter logic:
+  - Only include rows where domain_id is not null/blank AND int(domain_id) == 4
+  - Skip rows where person_id is null/blank
+
+Numeric safety: wrap every int/float cast in try/except, fall back to 0 or None as appropriate.

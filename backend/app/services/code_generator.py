@@ -26,7 +26,21 @@ SUPPORTED_TABLES = [
     "observation_period",
     "stem_table",
     "death",
+    "measurement",
+    "observation",
+    "drug_exposure",
+    "procedure_occurrence",
+    "condition_occurrence",
 ]
+
+# Domain routing tables: read from stem_table.csv and filter by domain_id
+_DOMAIN_TABLES: dict[str, int] = {
+    "measurement": 1,
+    "observation": 2,
+    "drug_exposure": 3,
+    "procedure_occurrence": 4,
+    "condition_occurrence": 5,
+}
 
 # Tables that have a VOLABIOS reference script available
 _REFERENCE_FILES: dict[str, str] = {
@@ -100,60 +114,85 @@ def _build_table_prompt(project, table: str) -> str:
     _CONCEPT_MAPPING_TABLES = {"stem_table", "death"}
 
     # ── Standalone adapter instructions ──────────────────────────────────
-    env_vars = [
-        "  - ETL_SOURCE_PATH   → FULL path to the source CSV file (use directly as the file path)"
-        "  - ETL_OUTPUT_DIR    → output directory for OMOP CSVs",
-    ]
-    if table in _CONCEPT_MAPPING_TABLES:
-        env_vars += [
-            "  - ETL_MAPPING_variable_mapping        → direct file path to variable_mapping.csv (may be empty/absent)",
-            "  - ETL_MAPPING_value_mapping            → direct file path to value_mapping.csv (may be empty/absent)",
-            "  - ETL_MAPPING_variable_value_mapping  → direct file path to variable_value_mapping.csv (may be empty/absent)",
-            "    All mapping CSVs use comma delimiter and UTF-8 encoding.",
-            "    If a path env var is empty or the file does not exist, treat that mapping as an empty dict.",
-            "    CSV column names (exact):",
-            "      variable_mapping.csv:       variable_source_code, target_concept_id",
-            "      value_mapping.csv:          variable_source_code, value_source_code, target_concept_id",
-            "      variable_value_mapping.csv: variable_source_code, value_source_code, target_concept_id",
-            "    Example load pattern:",
-            "      def _load_csv(path):",
-            "          if not path: return pd.DataFrame()",
-            "          try: return pd.read_csv(path, sep=',', encoding='utf-8')",
-            "          except FileNotFoundError: return pd.DataFrame()",
-            "      vm = _load_csv(os.environ.get('ETL_MAPPING_variable_mapping',''))",
-            "      var_map = {r['variable_source_code'].lower(): r['target_concept_id'] for _,r in vm.iterrows()} if not vm.empty else {}",
-        ]
-
     _NEEDS_PERSON_LOOKUP = {"visit_occurrence", "observation_period", "stem_table", "death"}
     _NEEDS_VISIT_LOOKUP = {"stem_table", "death"}
 
-    adaptation_lines = [
-        "## ADAPTATION RULES",
-        "The reference uses a `wrapper` object. Your script must NOT use it.",
-        "Instead, read data from files using these environment variables:",
-        *env_vars,
-        "",
-    ]
-    if table in _NEEDS_PERSON_LOOKUP:
-        adaptation_lines.append(
-            "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
-        )
-    if table in _NEEDS_VISIT_LOOKUP:
-        source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
-        adaptation_lines += [
-            "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv (semicolon-delimited)",
-            "  and build a dict keyed by visit_source_value: {row['visit_source_value']: row['visit_occurrence_id']}.",
-            f"The visit_source_value key format is: '{{person_source_value}}-{source_stem}-{{visit_label_normalized}}'",
-            "  where visit_label_normalized = visit label lowercased with spaces replaced by underscores.",
+    if table in _DOMAIN_TABLES:
+        # Domain routing tables read from stem_table.csv — no source file, no wrapper
+        domain_id_val = _DOMAIN_TABLES[table]
+        lines += [
+            "## DOMAIN ROUTING RULES",
+            f"This script populates the OMOP {table.upper()} table from the staging stem_table.",
+            f"Input:   ETL_OUTPUT_DIR/stem_table.csv (semicolon-delimited, UTF-8)",
+            f"Filter:  only rows where domain_id == {domain_id_val}",
+            f"Output:  ETL_OUTPUT_DIR/{table}.csv (semicolon-delimited, UTF-8)",
+            "Env var: ETL_OUTPUT_DIR → directory containing stem_table.csv and where output is written",
+            "Print progress: e.g. 'Writing {table}.csv ... done (N records)'".format(table=table),
+            "Guard: include `if __name__ == '__main__': main()`",
+            "",
         ]
-    adaptation_lines += [
-        "",
-        "Output: write semicolon-delimited (;) UTF-8 CSV to ETL_OUTPUT_DIR/{table}.csv".format(table=table),
-        "Print progress: e.g. 'Writing {table}.csv ... done (N records)'".format(table=table),
-        "Guard: include `if __name__ == '__main__': main()`",
-        "",
-    ]
-    lines += adaptation_lines
+        # Inject stem_table config as context
+        stem_cfg: dict = (project.etl_config or {}).get("stem_table", {})
+        if stem_cfg:
+            lines += [
+                "## STEM TABLE CONFIG (context only — do not re-implement stem table logic)",
+                "```json",
+                json.dumps(stem_cfg, indent=2),
+                "```",
+                "",
+            ]
+    else:
+        env_vars = [
+            "  - ETL_SOURCE_PATH   → FULL path to the source CSV file (use directly as the file path)"
+            "  - ETL_OUTPUT_DIR    → output directory for OMOP CSVs",
+        ]
+        if table in _CONCEPT_MAPPING_TABLES:
+            env_vars += [
+                "  - ETL_MAPPING_variable_mapping        → direct file path to variable_mapping.csv (may be empty/absent)",
+                "  - ETL_MAPPING_value_mapping            → direct file path to value_mapping.csv (may be empty/absent)",
+                "  - ETL_MAPPING_variable_value_mapping  → direct file path to variable_value_mapping.csv (may be empty/absent)",
+                "    All mapping CSVs use comma delimiter and UTF-8 encoding.",
+                "    If a path env var is empty or the file does not exist, treat that mapping as an empty dict.",
+                "    CSV column names (exact):",
+                "      variable_mapping.csv:       variable_source_code, target_concept_id",
+                "      value_mapping.csv:          variable_source_code, value_source_code, target_concept_id",
+                "      variable_value_mapping.csv: variable_source_code, value_source_code, target_concept_id",
+                "    Example load pattern:",
+                "      def _load_csv(path):",
+                "          if not path: return pd.DataFrame()",
+                "          try: return pd.read_csv(path, sep=',', encoding='utf-8')",
+                "          except FileNotFoundError: return pd.DataFrame()",
+                "      vm = _load_csv(os.environ.get('ETL_MAPPING_variable_mapping',''))",
+                "      var_map = {r['variable_source_code'].lower(): r['target_concept_id'] for _,r in vm.iterrows()} if not vm.empty else {}",
+            ]
+
+        adaptation_lines = [
+            "## ADAPTATION RULES",
+            "The reference uses a `wrapper` object. Your script must NOT use it.",
+            "Instead, read data from files using these environment variables:",
+            *env_vars,
+            "",
+        ]
+        if table in _NEEDS_PERSON_LOOKUP:
+            adaptation_lines.append(
+                "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
+            )
+        if table in _NEEDS_VISIT_LOOKUP:
+            source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
+            adaptation_lines += [
+                "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv (semicolon-delimited)",
+                "  and build a dict keyed by visit_source_value: {row['visit_source_value']: row['visit_occurrence_id']}.",
+                f"The visit_source_value key format is: '{{person_source_value}}-{source_stem}-{{visit_label_normalized}}'",
+                "  where visit_label_normalized = visit label lowercased with spaces replaced by underscores.",
+            ]
+        adaptation_lines += [
+            "",
+            "Output: write semicolon-delimited (;) UTF-8 CSV to ETL_OUTPUT_DIR/{table}.csv".format(table=table),
+            "Print progress: e.g. 'Writing {table}.csv ... done (N records)'".format(table=table),
+            "Guard: include `if __name__ == '__main__': main()`",
+            "",
+        ]
+        lines += adaptation_lines
 
     # ── visit_occurrence: visit_source_value auto-compute rule ───────────
     if table == "visit_occurrence":
