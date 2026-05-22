@@ -94,21 +94,32 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           </p>
         </div>
 
+        {/* Provider Name */}
         <Card className="flex flex-col gap-5 p-6">
-          <h3 className="font-semibold text-foreground">Provider Identity</h3>
-          <p className="text-xs text-muted-foreground">
-            <span className="font-medium">provider_source_value</span> is auto-computed as{' '}
-            <code className="rounded bg-accent px-1">care_site_id | provider_name</code> and used as the deduplication key.
-          </p>
-
+          <h3 className="font-semibold text-foreground">Provider Name</h3>
           <FieldMapper
             label="provider_name"
             sourceColumns={cols}
             value={cfg.provider_name_col}
             onChange={set('provider_name_col')}
-            hint="Name of the provider as it appears in the source (max 255 chars). Also used to build provider_source_value."
+            hint="Name of the provider as it appears in the source (max 255 chars)."
           />
+          <div className="flex flex-col gap-1">
+            <Label>provider_source_value</Label>
+            <div className="flex flex-col gap-1 rounded-lg border border-border bg-secondary/60 p-3">
+              <p className="text-sm font-medium text-secondary-foreground">Auto-computed — no mapping required</p>
+              <p className="text-sm text-muted-foreground">
+                Constructed as{' '}
+                <code className="rounded bg-accent px-1 text-xs">care_site_id + " | " + provider_name</code>.
+                Used as the deduplication key for the PROVIDER table.
+              </p>
+            </div>
+          </div>
+        </Card>
 
+        {/* NPI */}
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">NPI</h3>
           <FieldMapper
             label="npi"
             sourceColumns={cols}
@@ -116,7 +127,11 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             onChange={set('npi_col')}
             hint="National Provider Identifier (US). Max 20 chars."
           />
+        </Card>
 
+        {/* DEA */}
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">DEA</h3>
           <FieldMapper
             label="dea"
             sourceColumns={cols}
@@ -124,7 +139,11 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             onChange={set('dea_col')}
             hint="DEA identifier for controlled substance prescriptions. Max 20 chars."
           />
+        </Card>
 
+        {/* Year of Birth */}
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Year of Birth</h3>
           <FieldMapper
             label="year_of_birth"
             sourceColumns={cols}
