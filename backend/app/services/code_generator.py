@@ -449,8 +449,14 @@ async def generate_all_table_scripts(project) -> dict[str, str]:
     config: dict = project.etl_config or {}
     tables = [t for t in SUPPORTED_TABLES if t in config]
 
+    # Always include domain tables when stem_table is configured (they depend on it)
+    if "stem_table" in config:
+        for dt in _DOMAIN_TABLES:
+            if dt not in tables:
+                tables.append(dt)
+
     if not tables:
-        tables = SUPPORTED_TABLES
+        tables = list(SUPPORTED_TABLES)
 
     tasks = {t: generate_table_script(project, t) for t in tables}
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)

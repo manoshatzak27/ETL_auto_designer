@@ -6,7 +6,15 @@ import { getStructuralColumns } from '../../utils'
 import WizardLayout from './WizardLayout'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
-import { Plus, Trash2, CheckCircle, AlertCircle } from 'lucide-react'
+import { Plus, Trash2, CheckCircle, AlertCircle, Database } from 'lucide-react'
+
+const DOMAIN_TABLES = [
+  { table: 'measurement',          label: 'Measurement',          domainId: 1, color: 'bg-blue-100 text-blue-700 border-blue-200' },
+  { table: 'observation',          label: 'Observation',          domainId: 2, color: 'bg-purple-100 text-purple-700 border-purple-200' },
+  { table: 'drug_exposure',        label: 'Drug Exposure',        domainId: 3, color: 'bg-green-100 text-green-700 border-green-200' },
+  { table: 'procedure_occurrence', label: 'Procedure Occurrence', domainId: 4, color: 'bg-orange-100 text-orange-700 border-orange-200' },
+  { table: 'condition_occurrence', label: 'Condition Occurrence', domainId: 5, color: 'bg-red-100 text-red-700 border-red-200' },
+] as const
 
 interface Props {
   project: Project
@@ -22,7 +30,7 @@ const DEFAULTS: StemTableConfig = {
 
 export default function Step6StemTable({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const [rawDecisions, setRawDecisions] = useState<Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>>({})
+  const [rawDecisions, setRawDecisions] = useState<Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown>; domain_id?: number | null }>>({})
   const [cfg, setCfg] = useState<StemTableConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
@@ -70,6 +78,17 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       return !!d.variable_concept || Object.keys(d.value_concepts).length > 0
     })
   }, [rawDecisions, project.source_columns, project.etl_config])
+
+  const domainAssignments = useMemo(() => {
+    const grouped: Record<number, string[]> = { 1: [], 2: [], 3: [], 4: [], 5: [] }
+    for (const [col, decision] of Object.entries(rawDecisions)) {
+      if (decision.strategy !== 'skip' && decision.domain_id != null) {
+        const id = decision.domain_id as number
+        if (id in grouped) grouped[id].push(col)
+      }
+    }
+    return grouped
+  }, [rawDecisions])
 
   const updateGroup = (group: string, selected: string[]) => {
     setCfg(prev => ({ ...prev, variable_groups: { ...prev.variable_groups, [group]: selected } }))
@@ -303,6 +322,47 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
           </div>
         </div>
 
+        {/* Domain Table Assignments (read from Step 9 concept decisions) */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-4">
+          <div className="flex items-center gap-2">
+            <Database className="w-4 h-4 text-indigo-500" />
+            <div>
+              <h3 className="font-medium text-gray-800">Domain Table Assignments</h3>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Variables routed to OMOP domain tables based on the domain_id set in Step 9.
+                Each domain table script reads from <code className="bg-gray-100 px-1 rounded">stem_table.csv</code> and filters by domain_id.
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            {DOMAIN_TABLES.map(({ table, label, domainId, color }) => {
+              const cols = domainAssignments[domainId] || []
+              return (
+                <div key={table} className="flex items-start gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
+                  <span className={`flex-shrink-0 text-xs font-bold px-2 py-0.5 rounded-full border ${color}`}>
+                    {domainId}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-gray-700">{label} <span className="font-mono text-gray-400">→ {table}.csv</span></p>
+                    {cols.length > 0 ? (
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {cols.map(col => (
+                          <span key={col} className="bg-white border border-gray-200 text-gray-600 px-1.5 py-0 rounded text-xs font-mono">{col}</span>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 mt-0.5 italic">No columns assigned — set domain_id in Step 9 to populate this table.</p>
+                    )}
+                  </div>
+                  <span className={`text-xs px-2 py-0.5 rounded-full flex-shrink-0 font-medium ${cols.length > 0 ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-400'}`}>
+                    {cols.length}
+                  </span>
+                </div>
+              )
+            })}
+          </div>
+        </div>
+
         <ExtraInstructions
           tableName="stem_table"
           value={extraInstructions}
@@ -315,6 +375,37 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
         />
+
+        {/* Domain table script generators */}
+        <div className="bg-white border border-gray-200 rounded-xl p-6 flex flex-col gap-5">
+          <div>
+            <h3 className="font-medium text-gray-800">Domain Table Scripts</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Each script reads <code className="bg-gray-100 px-1 rounded">stem_table.csv</code> from the output directory
+              and routes rows to the appropriate OMOP table based on domain_id. Generate the stem table first.
+            </p>
+          </div>
+          {DOMAIN_TABLES.map(({ table, label, domainId, color }) => {
+            const cols = domainAssignments[domainId] || []
+            return (
+              <div key={table} className="flex flex-col gap-2">
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${color}`}>{domainId}</span>
+                  <span className="text-sm font-medium text-gray-700">{label}</span>
+                  {cols.length > 0 && (
+                    <span className="text-xs text-gray-400">{cols.length} variable{cols.length !== 1 ? 's' : ''}</span>
+                  )}
+                </div>
+                <ScriptGenerator
+                  project={project}
+                  table={table}
+                  onUpdate={onUpdate}
+                  beforeGenerate={saveConfig}
+                />
+              </div>
+            )
+          })}
+        </div>
       </div>
     </WizardLayout>
   )
