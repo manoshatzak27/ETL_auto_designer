@@ -118,6 +118,8 @@ export interface LocationConfig {
   zip_col: string
   county_col: string
   country_source_value: string
+  latitude_col: string
+  longitude_col: string
   // Care site address columns
   cs_address_1_col: string
   cs_address_2_col: string

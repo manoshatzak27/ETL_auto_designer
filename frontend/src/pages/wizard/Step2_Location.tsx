@@ -27,6 +27,8 @@ const DEFAULTS: LocationConfig = {
   zip_col: '',
   county_col: '',
   country_source_value: '',
+  latitude_col: '',
+  longitude_col: '',
   cs_address_1_col: '',
   cs_address_2_col: '',
   cs_city_col: '',
@@ -293,6 +295,24 @@ export default function Step5Location({ project, onUpdate }: Props) {
               fields={PERSON_ADDR_FIELDS}
             />
           </Card>
+
+          <Card className="flex flex-col gap-5 p-6">
+            <h3 className="font-semibold text-foreground">Coordinates</h3>
+            <FieldMapper
+              label="latitude"
+              sourceColumns={cols}
+              value={cfg.latitude_col}
+              onChange={set('latitude_col')}
+              hint="Decimal latitude — must be between −90 and 90."
+            />
+            <FieldMapper
+              label="longitude"
+              sourceColumns={cols}
+              value={cfg.longitude_col}
+              onChange={set('longitude_col')}
+              hint="Decimal longitude — must be between −180 and 180."
+            />
+          </Card>
         </div>
 
         {/* ── CARE SITE LOCATION ── */}
@@ -406,6 +426,14 @@ export default function Step5Location({ project, onUpdate }: Props) {
             </div>
           </Card>
 
+          <Card className="flex flex-col gap-3 p-6">
+            <h3 className="font-semibold text-foreground">Care Site Location Source Value</h3>
+            <AutoComputedBadge
+              cfg={{ ...cfg, cs_country_source_value: cfg.cs_county_col ? '' : cfg.cs_country_source_value }}
+              fields={CS_ADDR_FIELDS}
+            />
+          </Card>
+
           <Card className="flex flex-col gap-5 p-6">
             <h3 className="font-semibold text-foreground">Coordinates</h3>
             <FieldMapper
@@ -421,14 +449,6 @@ export default function Step5Location({ project, onUpdate }: Props) {
               value={cfg.cs_longitude_col}
               onChange={set('cs_longitude_col')}
               hint="Decimal longitude — must be between −180 and 180."
-            />
-          </Card>
-
-          <Card className="flex flex-col gap-3 p-6">
-            <h3 className="font-semibold text-foreground">Care Site Location Source Value</h3>
-            <AutoComputedBadge
-              cfg={{ ...cfg, cs_country_source_value: cfg.cs_county_col ? '' : cfg.cs_country_source_value }}
-              fields={CS_ADDR_FIELDS}
             />
           </Card>
         </div>
