@@ -30,7 +30,7 @@ export default function ExtraInstructions({ value, onChange, tableName }: Props)
 
       {open && (
         <div className="bg-card px-5 py-4">
-          <p className="text-xs text-muted-foreground mb-2">
+          <p className="text-sm text-muted-foreground mb-2">
             Describe any custom transformation logic, special cases, or constraints for the{' '}
             <code className="bg-muted px-1 rounded">{tableName}</code> script.
             This text is injected verbatim into the AI prompt.
