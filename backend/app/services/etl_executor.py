@@ -18,6 +18,12 @@ EXECUTION_ORDER = [
     "observation_period",
     "stem_table",
     "death",
+    # Domain routing tables — read from stem_table.csv, must run after stem_table
+    "measurement",
+    "observation",
+    "drug_exposure",
+    "procedure_occurrence",
+    "condition_occurrence",
 ]
 
 
