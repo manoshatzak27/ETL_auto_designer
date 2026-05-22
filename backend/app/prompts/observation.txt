@@ -5,7 +5,7 @@ Output: ETL_OUTPUT_DIR/observation.csv (semicolon-delimited, UTF-8)
 
 Column mapping (stem_table → observation):
   observation_id                ← sequential integer starting at 1
-  person_id                     ← person_id (int)
+  person_id                     ← person_id (use the cast from the PERSON ID TYPE section)
   observation_concept_id        ← concept_id (int, 0 if null/empty)
   observation_date              ← start_date
   observation_datetime          ← start_datetime (None if blank)

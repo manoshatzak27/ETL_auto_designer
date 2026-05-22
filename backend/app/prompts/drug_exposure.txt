@@ -5,7 +5,7 @@ Output: ETL_OUTPUT_DIR/drug_exposure.csv (semicolon-delimited, UTF-8)
 
 Column mapping (stem_table → drug_exposure):
   drug_exposure_id              ← sequential integer starting at 1
-  person_id                     ← person_id (int)
+  person_id                     ← person_id (use the cast from the PERSON ID TYPE section)
   drug_concept_id               ← concept_id (int, 0 if null/empty)
   drug_exposure_start_date      ← start_date
   drug_exposure_start_datetime  ← start_datetime (None if blank)

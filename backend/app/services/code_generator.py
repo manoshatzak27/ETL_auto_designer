@@ -131,6 +131,29 @@ def _build_table_prompt(project, table: str) -> str:
             "Guard: include `if __name__ == '__main__': main()`",
             "",
         ]
+        # Inject person_id type so the generated script reads it correctly from stem_table.csv
+        person_id_cfg: dict = (project.etl_config or {}).get("person", {}).get("mappings", {}).get("person_id", {})
+        if person_id_cfg.get("auto_increment"):
+            pid_note = "person_id in stem_table.csv is a sequential integer (auto-incremented). Read it as int."
+            pid_cast = "int(row['person_id'])"
+        else:
+            transform = person_id_cfg.get("transform", "int_float")
+            if transform == "str":
+                pid_note = "person_id in stem_table.csv is a string (user chose str transform). Read it as str — do NOT cast to int."
+                pid_cast = "str(row['person_id'])"
+            elif transform == "int":
+                pid_note = "person_id in stem_table.csv is an integer (user chose int transform). Read it as int."
+                pid_cast = "int(row['person_id'])"
+            else:  # int_float (default)
+                pid_note = "person_id in stem_table.csv was stored via int(float(...)) (user chose int_float transform). Read it as int."
+                pid_cast = "int(float(row['person_id']))"
+        lines += [
+            "## PERSON ID TYPE",
+            pid_note,
+            f"Use this exact cast when reading person_id: `{pid_cast}`",
+            "Wrap the cast in try/except and skip the row if it fails.",
+            "",
+        ]
         # Inject stem_table config as context
         stem_cfg: dict = (project.etl_config or {}).get("stem_table", {})
         if stem_cfg:
@@ -154,9 +177,9 @@ def _build_table_prompt(project, table: str) -> str:
                 "    All mapping CSVs use comma delimiter and UTF-8 encoding.",
                 "    If a path env var is empty or the file does not exist, treat that mapping as an empty dict.",
                 "    CSV column names (exact):",
-                "      variable_mapping.csv:       variable_source_code, target_concept_id",
+                "      variable_mapping.csv:       variable_source_code, target_concept_id, domain_id",
                 "      value_mapping.csv:          variable_source_code, value_source_code, target_concept_id",
-                "      variable_value_mapping.csv: variable_source_code, value_source_code, target_concept_id",
+                "      variable_value_mapping.csv: variable_source_code, value_source_code, target_concept_id, domain_id",
                 "    Example load pattern:",
                 "      def _load_csv(path):",
                 "          if not path: return pd.DataFrame()",

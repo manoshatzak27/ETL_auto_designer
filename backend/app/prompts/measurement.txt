@@ -5,7 +5,7 @@ Output: ETL_OUTPUT_DIR/measurement.csv (semicolon-delimited, UTF-8)
 
 Column mapping (stem_table → measurement):
   measurement_id                ← sequential integer starting at 1
-  person_id                     ← person_id (int)
+  person_id                     ← person_id (use the cast from the PERSON ID TYPE section)
   measurement_concept_id        ← concept_id (int, 0 if null/empty)
   measurement_date              ← start_date
   measurement_datetime          ← start_datetime (None if blank)
