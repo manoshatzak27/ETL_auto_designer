@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getColumnValues,
@@ -37,7 +37,18 @@ interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
   value_concepts: Record<string, ConceptRef>
+  domain_id: number | null
 }
+
+// ── Constants ──────────────────────────────────────────────────────────────
+
+const DOMAIN_OPTIONS = [
+  { label: 'Measurement',          value: 1 },
+  { label: 'Observation',          value: 2 },
+  { label: 'Drug Exposure',        value: 3 },
+  { label: 'Procedure Occurrence', value: 4 },
+  { label: 'Condition Occurrence', value: 5 },
+] as const
 
 interface ColumnInfo {
   distinct_values: string[]
@@ -56,6 +67,68 @@ const STRATEGY_META: Record<Strategy, { label: string; icon: React.ReactNode; co
   skip:         { label: 'Skip',         icon: <SkipForward className="w-3.5 h-3.5" />, color: 'bg-gray-100 text-gray-400' },
 }
 
+
+// ── Domain picker ─────────────────────────────────────────────────────────
+
+function DomainPicker({ value, onChange }: { value: number | null; onChange: (v: number | null) => void }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  const selected = DOMAIN_OPTIONS.find(d => d.value === value)
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className={clsx(
+          'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs w-full text-left transition-colors',
+          value !== null
+            ? 'border-indigo-300 bg-indigo-50 text-indigo-800'
+            : 'border-gray-300 text-gray-400 bg-white hover:border-gray-400',
+        )}
+      >
+        <span className="flex-1">{selected ? `${selected.label} · ${selected.value}` : 'Select domain…'}</span>
+        {value !== null && (
+          <span
+            role="button"
+            onClick={e => { e.stopPropagation(); onChange(null) }}
+            className="text-gray-300 hover:text-red-400 cursor-pointer"
+          ><X className="w-3 h-3" /></span>
+        )}
+        <ChevronDown className={clsx('w-3.5 h-3.5 flex-shrink-0 transition-transform text-gray-400', open && 'rotate-180')} />
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-20 bg-white border border-gray-200 rounded-lg shadow-lg w-full overflow-hidden">
+          {DOMAIN_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false) }}
+              className={clsx(
+                'w-full text-left px-3 py-2 text-xs hover:bg-indigo-50 border-b last:border-0 border-gray-100 flex items-center justify-between',
+                value === opt.value && 'bg-indigo-50 text-indigo-700 font-medium',
+              )}
+            >
+              <span>{opt.label}</span>
+              <span className="text-gray-400 font-mono">{opt.value}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
 
 // ── Mini concept search hook ───────────────────────────────────────────────
 
@@ -416,6 +489,19 @@ function VariableRow({
             </div>
           )}
 
+          {/* Domain picker */}
+          {decision.strategy !== 'skip' && (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-xs font-semibold text-gray-600">
+                OMOP Domain <span className="font-normal text-gray-400">(stem_table domain_id)</span>
+              </p>
+              <DomainPicker
+                value={decision.domain_id ?? null}
+                onChange={v => onChange({ ...decision, domain_id: v })}
+              />
+            </div>
+          )}
+
           {/* Strategy selector */}
           <div>
             <p className="text-xs font-semibold text-gray-600 mb-2">Mapping strategy</p>
@@ -525,6 +611,7 @@ function BatchPanel({
         strategy,
         variable_concept: (strategy === 'map_variable' || strategy === 'map_both') ? batchConcept : null,
         value_concepts: (strategy === 'map_values' || strategy === 'map_both') ? { ...valueConcepts } : {},
+        domain_id: existing.domain_id ?? null,
       }
     }
     onApply(updates)
@@ -658,7 +745,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
       setColumnInfos(infos)
       const init: Record<string, VariableDecision> = {}
       for (const col of conceptCols) {
-        init[col] = saved[col] ?? { strategy: 'skip', variable_concept: null, value_concepts: {} }
+        init[col] = saved[col] ?? { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
       }
       setDecisions(init)
     }).finally(() => setLoading(false))
@@ -823,7 +910,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
                 key={col}
                 column={col}
                 info={columnInfos[col] ?? null}
-                decision={decisions[col] ?? { strategy: 'map_variable', variable_concept: null, value_concepts: {} }}
+                decision={decisions[col] ?? { strategy: 'map_variable', variable_concept: null, value_concepts: {}, domain_id: null }}
                 projectId={project.id}
                 checked={selectedCols.includes(col)}
                 onCheck={c => toggleSelect(col, c)}
