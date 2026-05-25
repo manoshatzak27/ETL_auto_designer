@@ -396,9 +396,9 @@ function VariableRow({
 
   // Auto-detect domain when variable concept changes
   useEffect(() => {
-    if (domainMode !== 'auto') return
     const concept = decision.variable_concept
-    if (!concept) { setRawDomain(null); setLookupFailed(false); return }
+    if (!concept) { setRawDomain(null); setLookupFailed(false); onChange({ ...decision, domain_id: null }); return }
+    if (domainMode !== 'auto') return
 
     setLookupFailed(false)
 
@@ -557,7 +557,7 @@ function VariableRow({
                   >Auto</button>
                   <button
                     type="button"
-                    onClick={() => setDomainMode('manual')}
+                    onClick={() => { setDomainMode('manual'); onChange({ ...decision, domain_id: null }); }}
                     className={clsx('px-2 py-0.5 border-l border-gray-200', domainMode === 'manual' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
                   >Manual</button>
                 </div>
