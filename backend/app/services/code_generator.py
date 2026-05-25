@@ -444,8 +444,476 @@ def _build_table_prompt(project, table: str) -> str:
     return "\n".join(lines)
 
 
+def _xtr(var: str, col: str, indent: int = 8) -> str:
+    """Return a line of generated Python that safely extracts a source column into a local var."""
+    pad = " " * indent
+    if not col:
+        return f"{pad}{var} = None"
+    c = repr(col)
+    return f"{pad}{var} = (str(row.get({c}, '')).strip() or None) if pd.notnull(row.get({c})) else None"
+
+
+def _generate_location_script(project) -> str:
+    """Deterministic template-based generator for the OMOP location script."""
+    loc = (project.etl_config or {}).get("location", {})
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+
+    a1_col = loc.get("address_1_col", "")
+    a2_col = loc.get("address_2_col", "")
+    city_col = loc.get("city_col", "")
+    state_col = loc.get("state_col", "")
+    zip_col = loc.get("zip_col", "")
+    county_col = loc.get("county_col", "")
+    country_sv = loc.get("country_source_value", "")
+    lat_col = loc.get("latitude_col", "")
+    lon_col = loc.get("longitude_col", "")
+
+
+    cs_a1_col = loc.get("cs_address_1_col", "")
+    cs_a2_col = loc.get("cs_address_2_col", "")
+    cs_city_col = loc.get("cs_city_col", "")
+    cs_state_col = loc.get("cs_state_col", "")
+    cs_zip_col = loc.get("cs_zip_col", "")
+    cs_county_col = loc.get("cs_county_col", "")
+    cs_country_sv = loc.get("cs_country_source_value", "")
+    cs_lat_col = loc.get("cs_latitude_col", "")
+    cs_lon_col = loc.get("cs_longitude_col", "")
+
+    cid_map = json.dumps(loc.get("country_concept_id_map", {}))
+    cid_default = loc.get("country_concept_id_default", 0)
+    cs_cid_map = json.dumps(loc.get("cs_country_concept_id_map", {}))
+    cs_cid_default = loc.get("cs_country_concept_id_default", 0)
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "def _to_lat(val):\n"
+        "    try:\n"
+        "        f = float(val)\n"
+        "        if -90 <= f <= 90:\n"
+        "            return f\n"
+        "        print(f'WARNING: latitude value {f} is out of range [-90, 90] — set to NULL')\n"
+        "        return None\n"
+        "    except (TypeError, ValueError):\n"
+        "        return None\n"
+        "\n"
+        "def _to_lon(val):\n"
+        "    try:\n"
+        "        f = float(val)\n"
+        "        if -180 <= f <= 180:\n"
+        "            return f\n"
+        "        print(f'WARNING: longitude value {f} is out of range [-180, 180] — set to NULL')\n"
+        "        return None\n"
+        "    except (TypeError, ValueError):\n"
+        "        return None\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    person_config = {\n"
+        f'        "address_1_col": {repr(a1_col)},\n'
+        f'        "address_2_col": {repr(a2_col)},\n'
+        f'        "city_col": {repr(city_col)},\n'
+        f'        "state_col": {repr(state_col)},\n'
+        f'        "zip_col": {repr(zip_col)},\n'
+        f'        "county_col": {repr(county_col)},\n'
+        f'        "country_source_value": {repr(country_sv)},\n'
+        f'        "latitude_col": {repr(lat_col)},\n'
+        f'        "longitude_col": {repr(lon_col)},\n'
+        "    }\n"
+        "\n"
+        "    care_site_config = {\n"
+        f'        "address_1_col": {repr(cs_a1_col)},\n'
+        f'        "address_2_col": {repr(cs_a2_col)},\n'
+        f'        "city_col": {repr(cs_city_col)},\n'
+        f'        "state_col": {repr(cs_state_col)},\n'
+        f'        "zip_col": {repr(cs_zip_col)},\n'
+        f'        "county_col": {repr(cs_county_col)},\n'
+        f'        "country_source_value": {repr(cs_country_sv)},\n'
+        f'        "latitude_col": {repr(cs_lat_col)},\n'
+        f'        "longitude_col": {repr(cs_lon_col)},\n'
+        "    }\n"
+        "\n"
+        f"    country_concept_id_map = {cid_map}\n"
+        f"    country_concept_id_default = {cid_default}\n"
+        f"    cs_country_concept_id_map = {cs_cid_map}\n"
+        f"    cs_country_concept_id_default = {cs_cid_default}\n"
+        "\n"
+        "    rows = []\n"
+        "\n"
+        "    for _, row in df.iterrows():\n"
+        + _xtr("address_1", a1_col) + "\n"
+        + _xtr("address_2", a2_col) + "\n"
+        + _xtr("city", city_col) + "\n"
+        + _xtr("state", state_col) + "\n"
+        + _xtr("zip_code", zip_col) + "\n"
+        + _xtr("county", county_col) + "\n"
+        + _xtr("latitude", lat_col) + "\n"
+        + _xtr("longitude", lon_col) + "\n"
+        + '        country_source_value = person_config["country_source_value"]\n'
+        + "\n"
+        + '        location_source_value = " | ".join(filter(None, [address_1, address_2, city, state, zip_code, county, country_source_value]))[:255]\n'
+        + "        country_concept_id = country_concept_id_map.get(county, country_concept_id_default)\n"
+        + "        if country_concept_id == 0:\n"
+        + "            country_concept_id = None\n"
+        + "\n"
+        + "        if any([address_1, city, state, zip_code]):\n"
+        + "            rows.append([\n"
+        + "                None,\n"
+        + "                address_1[:50] if address_1 else None,\n"
+        + "                address_2[:50] if address_2 else None,\n"
+        + "                city[:50] if city else None,\n"
+        + "                state[:2] if state else None,\n"
+        + "                zip_code if zip_code else None,\n"
+        + "                county[:20] if county else None,\n"
+        + "                location_source_value,\n"
+        + "                country_concept_id,\n"
+        + "                country_source_value,\n"
+        + "                _to_lat(latitude),\n"
+        + "                _to_lon(longitude),\n"
+        + "            ])\n"
+        + "\n"
+        + _xtr("cs_address_1", cs_a1_col) + "\n"
+        + _xtr("cs_address_2", cs_a2_col) + "\n"
+        + _xtr("cs_city", cs_city_col) + "\n"
+        + _xtr("cs_state", cs_state_col) + "\n"
+        + _xtr("cs_zip_code", cs_zip_col) + "\n"
+        + _xtr("cs_county", cs_county_col) + "\n"
+        + '        cs_country_source_value = care_site_config["country_source_value"]\n'
+        + _xtr("cs_latitude", cs_lat_col) + "\n"
+        + _xtr("cs_longitude", cs_lon_col) + "\n"
+        + "\n"
+        + '        cs_location_source_value = " | ".join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n'
+        + "        cs_country_concept_id = cs_country_concept_id_map.get(cs_county, cs_country_concept_id_default)\n"
+        + "        if cs_country_concept_id == 0:\n"
+        + "            cs_country_concept_id = None\n"
+        + "\n"
+        + "        if any([cs_address_1, cs_city, cs_state, cs_zip_code]):\n"
+        + "            rows.append([\n"
+        + "                None,\n"
+        + "                cs_address_1[:50] if cs_address_1 else None,\n"
+        + "                cs_address_2[:50] if cs_address_2 else None,\n"
+        + "                cs_city[:50] if cs_city else None,\n"
+        + "                cs_state[:2] if cs_state else None,\n"
+        + "                cs_zip_code if cs_zip_code else None,\n"
+        + "                cs_county[:20] if cs_county else None,\n"
+        + "                cs_location_source_value,\n"
+        + "                cs_country_concept_id,\n"
+        + "                cs_country_source_value,\n"
+        + "                _to_lat(cs_latitude),\n"
+        + "                _to_lon(cs_longitude),\n"
+        + "            ])\n"
+        + "\n"
+        + "    output_df = pd.DataFrame(rows, columns=[\n"
+        + '        "location_id", "address_1", "address_2", "city", "state", "zip", "county",\n'
+        + '        "location_source_value", "country_concept_id", "country_source_value", "latitude", "longitude"\n'
+        + "    ])\n"
+        + "\n"
+        + '    output_df = output_df.drop_duplicates(subset=["location_source_value"], keep="first")\n'
+        + '    output_df["location_id"] = range(1, len(output_df) + 1)\n'
+        + "\n"
+        + "    output_file = os.path.join(output_dir, 'location.csv')\n"
+        + "    output_df.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        + "    print(f'Writing location.csv ... done ({len(output_df)} records)')\n"
+        + "\n"
+        + "if __name__ == '__main__':\n"
+        + "    main()\n"
+    )
+
+
+def _generate_care_site_script(project) -> str:
+    """Deterministic template-based generator for the OMOP care_site script."""
+    cs_cfg = (project.etl_config or {}).get("care_site", {})
+    loc = (project.etl_config or {}).get("location", {})
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+
+    name_col = cs_cfg.get("care_site_name_col", "")
+    pos_col = cs_cfg.get("place_of_service_col", "")
+    pos_value_map = cs_cfg.get("place_of_service_value_map", {})
+
+    cs_a1_col = loc.get("cs_address_1_col", "")
+    cs_a2_col = loc.get("cs_address_2_col", "")
+    cs_city_col = loc.get("cs_city_col", "")
+    cs_state_col = loc.get("cs_state_col", "")
+    cs_zip_col = loc.get("cs_zip_col", "")
+    cs_county_col = loc.get("cs_county_col", "")
+    cs_country_sv = loc.get("cs_country_source_value", "")
+
+    has_location = any([cs_a1_col, cs_a2_col, cs_city_col, cs_state_col, cs_zip_col, cs_county_col, cs_country_sv])
+
+    location_block = (
+        "    location_lookup = {}\n"
+        "    location_file = os.path.join(output_dir, 'location.csv')\n"
+        "    if os.path.exists(location_file):\n"
+        "        try:\n"
+        "            loc_df = pd.read_csv(location_file, delimiter=';', encoding='utf-8')\n"
+        "            location_lookup = dict(zip(loc_df['location_source_value'], loc_df['location_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load location.csv: {e}')\n"
+        if has_location else
+        "    location_lookup = {}\n"
+    )
+
+    cs_extractions = (
+        _xtr("cs_address_1", cs_a1_col, 12) + "\n"
+        + _xtr("cs_address_2", cs_a2_col, 12) + "\n"
+        + _xtr("cs_city", cs_city_col, 12) + "\n"
+        + _xtr("cs_state", cs_state_col, 12) + "\n"
+        + _xtr("cs_zip_code", cs_zip_col, 12) + "\n"
+        + _xtr("cs_county", cs_county_col, 12) + "\n"
+        + f"            cs_country_source_value = {repr(cs_country_sv)}\n"
+        + "            cs_location_source_value = ' | '.join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n"
+        + "            location_id = location_lookup.get(cs_location_source_value)\n"
+        if has_location else
+        "            location_id = None\n"
+    )
+
+    name_extraction = (
+        f"            care_site_name = (str(row.get({repr(name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
+        if name_col else
+        "            care_site_name = None\n"
+    )
+
+    pos_sv_extraction = (
+        f"            pos_source_value = (str(row.get({repr(pos_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(pos_col)})) else None\n"
+        f"            place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
+        if pos_col else
+        "            pos_source_value = None\n"
+        "            place_of_service_concept_id = None\n"
+    )
+
+    dedup_block = (
+        "    if not df_out.empty:\n"
+        "        df_out['_name_norm'] = df_out['care_site_name'].str.strip().str.lower()\n"
+        "        df_out = df_out.drop_duplicates(subset=['_name_norm'], keep='first')\n"
+        "        df_out = df_out.drop(columns=['_name_norm'])\n"
+        if name_col else
+        ""
+    )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        f"    care_site_name_col = {repr(name_col)}\n"
+        f"    pos_value_map = {json.dumps(pos_value_map)}\n"
+        "\n"
+        + location_block
+        + "\n"
+        "    rows = []\n"
+        "    for _, row in df.iterrows():\n"
+        "        try:\n"
+        + cs_extractions
+        + name_extraction
+        + "            care_site_source_value = (str(location_id) + ' | ' + care_site_name)[:50] if care_site_name else None\n"
+        + pos_sv_extraction
+        + "            rows.append({\n"
+        + "                'care_site_name': care_site_name[:255] if care_site_name else None,\n"
+        + "                'place_of_service_concept_id': place_of_service_concept_id,\n"
+        + "                'location_id': location_id,\n"
+        + "                'care_site_source_value': care_site_source_value,\n"
+        + "                'place_of_service_source_value': pos_source_value[:50] if pos_source_value else None,\n"
+        + "            })\n"
+        + "        except Exception as e:\n"
+        + "            print(f'WARNING: skipping row — {e}')\n"
+        + "\n"
+        + "    df_out = pd.DataFrame(rows)\n"
+        + dedup_block
+        + "    df_out = df_out.reset_index(drop=True)\n"
+        + "    df_out['care_site_id'] = df_out.index + 1\n"
+        + "\n"
+        + "    df_out = df_out[['care_site_id', 'care_site_name', 'place_of_service_concept_id',\n"
+        + "                     'location_id', 'care_site_source_value', 'place_of_service_source_value']]\n"
+        + "\n"
+        + "    output_file = os.path.join(output_dir, 'care_site.csv')\n"
+        + "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        + "    print(f'Writing care_site.csv ... done ({len(df_out)} records)')\n"
+        + "\n"
+        + "if __name__ == '__main__':\n"
+        + "    main()\n"
+    )
+
+
+def _generate_provider_script(project) -> str:
+    """Deterministic template-based generator for the OMOP provider script."""
+    prov = (project.etl_config or {}).get("provider", {})
+    cs_cfg = (project.etl_config or {}).get("care_site", {})
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+
+    name_col = prov.get("provider_name_col", "")
+    npi_col = prov.get("npi_col", "")
+    dea_col = prov.get("dea_col", "")
+    yob_col = prov.get("year_of_birth_col", "")
+    specialty_col = prov.get("specialty_source_value_col", "")
+    specialty_map = prov.get("specialty_concept_value_map", {})
+    prefix_specialty = prov.get("prefix_specialty", "") or ""
+    prefix_specialty_cid = prov.get("prefix_specialty_concept_id")
+    gender_col = prov.get("gender_source_value_col", "")
+    gender_map = prov.get("gender_concept_value_map", {})
+    gender_default = prov.get("gender_concept_id_default", 0) or 0
+    cs_name_col = cs_cfg.get("care_site_name_col", "")
+
+    if cs_name_col:
+        care_site_block = (
+            "    care_site_lookup = {}\n"
+            "    care_site_file = os.path.join(output_dir, 'care_site.csv')\n"
+            "    if os.path.exists(care_site_file):\n"
+            "        try:\n"
+            "            cs_df = pd.read_csv(care_site_file, delimiter=';', encoding='utf-8')\n"
+            "            care_site_lookup = {str(r['care_site_name']): int(r['care_site_id']) for _, r in cs_df.iterrows()}\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load care_site.csv: {e}')\n"
+        )
+        cs_lookup_line = (
+            f"            raw_cs_name = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
+            "            care_site_id = care_site_lookup.get(raw_cs_name) if raw_cs_name else None\n"
+        )
+    else:
+        care_site_block = "    care_site_lookup = {}\n"
+        cs_lookup_line = "            care_site_id = None\n"
+
+    if specialty_col:
+        specialty_lines = (
+            f"            specialty_source_value = (str(row.get({repr(specialty_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(specialty_col)})) else None\n"
+            "            specialty_concept_id = specialty_map.get(specialty_source_value, 0) if specialty_source_value else 0\n"
+        )
+    elif prefix_specialty:
+        _sv = prefix_specialty[:50]
+        _cid = prefix_specialty_cid if prefix_specialty_cid is not None else 0
+        specialty_lines = (
+            f"            specialty_source_value = {repr(_sv)}\n"
+            f"            specialty_concept_id = {_cid}\n"
+        )
+    else:
+        specialty_lines = (
+            "            specialty_source_value = None\n"
+            "            specialty_concept_id = 0\n"
+        )
+
+    if gender_col:
+        gender_lines = (
+            f"            gender_source_value = (str(row.get({repr(gender_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(gender_col)})) else None\n"
+            "            gender_concept_id = gender_map.get(gender_source_value, gender_default) if gender_source_value else gender_default\n"
+        )
+    else:
+        gender_lines = (
+            "            gender_source_value = None\n"
+            "            gender_concept_id = gender_default\n"
+        )
+
+    name_line = (
+        f"            provider_name = (str(row.get({repr(name_col)}, '')).strip()[:255] or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
+        if name_col else
+        "            provider_name = None\n"
+    )
+    npi_line = (
+        f"            npi = (str(row.get({repr(npi_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(npi_col)})) else None\n"
+        if npi_col else
+        "            npi = None\n"
+    )
+    dea_line = (
+        f"            dea = (str(row.get({repr(dea_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(dea_col)})) else None\n"
+        if dea_col else
+        "            dea = None\n"
+    )
+    yob_lines = (
+        f"            _yob_raw = row.get({repr(yob_col)})\n"
+        "            try:\n"
+        "                year_of_birth = int(_yob_raw) if pd.notnull(_yob_raw) else None\n"
+        "            except (TypeError, ValueError):\n"
+        "                year_of_birth = None\n"
+        if yob_col else
+        "            year_of_birth = None\n"
+    )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        f"    specialty_map = {json.dumps(specialty_map)}\n"
+        f"    gender_map = {json.dumps(gender_map)}\n"
+        f"    gender_default = {gender_default}\n"
+        "\n"
+        + care_site_block
+        + "\n"
+        "    rows = []\n"
+        "    seen = set()\n"
+        "    for _, row in df.iterrows():\n"
+        "        try:\n"
+        + name_line
+        + npi_line
+        + dea_line
+        + yob_lines
+        + specialty_lines
+        + cs_lookup_line
+        + gender_lines
+        + "            provider_source_value = (str(care_site_id) + ' | ' + (provider_name or ''))[:50]\n"
+        + "            if provider_source_value in seen:\n"
+        + "                continue\n"
+        + "            seen.add(provider_source_value)\n"
+        + "            rows.append({\n"
+        + "                'provider_id': None,\n"
+        + "                'provider_name': provider_name,\n"
+        + "                'npi': npi,\n"
+        + "                'dea': dea,\n"
+        + "                'specialty_concept_id': specialty_concept_id,\n"
+        + "                'care_site_id': care_site_id,\n"
+        + "                'year_of_birth': year_of_birth,\n"
+        + "                'gender_concept_id': gender_concept_id,\n"
+        + "                'provider_source_value': provider_source_value,\n"
+        + "                'specialty_source_value': specialty_source_value,\n"
+        + "                'specialty_source_concept_id': 0,\n"
+        + "                'gender_source_value': gender_source_value,\n"
+        + "                'gender_source_concept_id': 0,\n"
+        + "            })\n"
+        + "        except Exception as e:\n"
+        + "            print(f'WARNING: skipping row — {e}')\n"
+        + "\n"
+        + "    df_out = pd.DataFrame(rows)\n"
+        + "    df_out['provider_id'] = range(1, len(df_out) + 1)\n"
+        + "\n"
+        + "    df_out = df_out[['provider_id', 'provider_name', 'npi', 'dea', 'specialty_concept_id',\n"
+        + "                     'care_site_id', 'year_of_birth', 'gender_concept_id', 'provider_source_value',\n"
+        + "                     'specialty_source_value', 'specialty_source_concept_id',\n"
+        + "                     'gender_source_value', 'gender_source_concept_id']]\n"
+        + "\n"
+        + "    output_file = os.path.join(output_dir, 'provider.csv')\n"
+        + "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        + "    print(f'Writing provider.csv ... done ({len(df_out)} records)')\n"
+        + "\n"
+        + "if __name__ == '__main__':\n"
+        + "    main()\n"
+    )
+
+
 async def generate_table_script(project, table: str) -> str:
     """Generate the Python ETL script for a single OMOP table."""
+    if table == "location":
+        return _generate_location_script(project)
+    if table == "care_site":
+        return _generate_care_site_script(project)
+    if table == "provider":
+        return _generate_provider_script(project)
+
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 
     system = _system_prompt()
