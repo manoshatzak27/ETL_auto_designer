@@ -106,7 +106,6 @@ export default function Step3Visit({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
-  const [sourceValueModes, setSourceValueModes] = useState<Array<'column' | 'default'>>([])
   const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>([])
   const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>([])
 
@@ -127,7 +126,6 @@ export default function Step3Visit({ project, onUpdate }: Props) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
         const vds = ex.visit_definitions ?? []
-        setSourceValueModes(vds.map((vd: VisitDefinition) => ((vd as unknown as Record<string, unknown>).visit_source_col ? 'column' : 'column')))
         setConceptModes(vds.map((vd: VisitDefinition) => (vd.visit_concept_source_col ? 'column' : 'column')))
         setTypeModes(vds.map((vd: VisitDefinition) => (vd.visit_type_source_col ? 'column' : 'column')))
       }
@@ -148,14 +146,12 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
   const addVisit = () => {
     setCfg(prev => ({ ...prev, visit_definitions: [...prev.visit_definitions, { ...DEFAULT_VISIT }] }))
-    setSourceValueModes(prev => [...prev, 'column'])
     setConceptModes(prev => [...prev, 'column'])
     setTypeModes(prev => [...prev, 'column'])
   }
 
   const removeVisit = (i: number) => {
     setCfg(prev => ({ ...prev, visit_definitions: prev.visit_definitions.filter((_, j) => j !== i) }))
-    setSourceValueModes(prev => prev.filter((_, j) => j !== i))
     setConceptModes(prev => prev.filter((_, j) => j !== i))
     setTypeModes(prev => prev.filter((_, j) => j !== i))
   }
@@ -241,36 +237,24 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 />
               </Card>
 
-              {/* ── Group 2: Source value ──────────────────────────────────── */}
-              <Card className="flex flex-col gap-4 p-6">
+              {/* ── Group 2: Visit source value (auto-computed) ───────────── */}
+              <Card className="flex flex-col gap-2 p-6">
                 <h3 className="font-semibold text-foreground">Visit source value</h3>
-
-                <div className="flex gap-2">
-                  <button onClick={() => setMode(setSourceValueModes, i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(sourceValueModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => setMode(setSourceValueModes, i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(sourceValueModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
-                </div>
-
-                {getMode(sourceValueModes, i) === 'column' ? (
-                  <FieldMapper
-                    label="visit_source_value column"
-                    sourceColumns={availCols((vd as unknown as Record<string, unknown>).visit_source_col as string ?? '')}
-                    value={(vd as unknown as Record<string, unknown>).visit_source_col as string ?? ''}
-                    onChange={v => updateVisit(i, 'visit_source_col' as keyof VisitDefinition, v || undefined)}
-                    required={false}
-                    hint="Column whose value becomes visit_source_value."
-                  />
-                ) : (
-                  <div>
-                    <Label>visit_source_value</Label>
-                    <Input
-                      type="text"
-                      value={(vd as unknown as Record<string, unknown>).source_value as string ?? ''}
-                      onChange={e => updateVisit(i, 'source_value' as keyof VisitDefinition, e.target.value)}
-                      placeholder="e.g. ONSET Visit"
-                      className="mt-1"
-                    />
+                <div className="rounded-lg border border-border bg-secondary/60 p-4 flex flex-col gap-2">
+                  <p className="text-sm font-medium text-secondary-foreground">Auto-computed — no mapping required</p>
+                  <p className="text-sm text-muted-foreground">
+                    Constructed at ETL runtime by joining three parts with{' '}
+                    <code className="bg-accent px-1 rounded text-xs">-</code>:
+                    the person source value, the source filename stem, and the visit label (lowercased, spaces → underscores).
+                    Used as the lookup key that links records in stem_table and death to this visit.
+                  </p>
+                  <div className="mt-1">
+                    <p className="text-xs font-medium text-primary mb-1">Formula preview:</p>
+                    <code className="bg-accent text-secondary-foreground text-xs px-2 py-1 rounded block">
+                      {`<person_source_value>-<filename_stem>-${vd.label ? vd.label.toLowerCase().replace(/ /g, '_') : '<visit_label>'}`}
+                    </code>
                   </div>
-                )}
+                </div>
               </Card>
 
               {/* ── Group 3: visit_concept_id ──────────────────────────────── */}
