@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, PersonConfig, RaceEthnicityMapping } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -40,6 +41,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<PersonConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'person'), [project.etl_config])
+  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
   const [genderValues, setGenderValues] = useState<string[]>([])
   const [raceValues, setRaceValues] = useState<string[]>([])
   const [ethnicityValues, setEthnicityValues] = useState<string[]>([])
@@ -186,7 +191,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
             <>
               <FieldMapper
                 label="Patient ID column"
-                sourceColumns={cols}
+                sourceColumns={availCols(cfg.mappings.person_id.source_col)}
                 value={cfg.mappings.person_id.source_col}
                 onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
                 required
@@ -218,7 +223,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Gender column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.mappings.gender_concept_id.source_col)}
             value={cfg.mappings.gender_concept_id.source_col}
             onChange={handleGenderColChange}
             required
@@ -259,7 +264,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Date of birth column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.mappings.year_of_birth.source_col)}
             value={cfg.mappings.year_of_birth.source_col}
             onChange={v => {
               setField(['mappings', 'year_of_birth', 'source_col'], v)
@@ -296,7 +301,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Race column"
-            sourceColumns={cols}
+            sourceColumns={availCols((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
             value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
             onChange={handleRaceColChange}
             hint="Source column for race. Leave empty to use the default concept ID for all rows."
@@ -336,7 +341,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Ethnicity column"
-            sourceColumns={cols}
+            sourceColumns={availCols((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
             value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
             onChange={handleEthnicityColChange}
             hint="Source column for ethnicity. Leave empty to use the default concept ID for all rows."

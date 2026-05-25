@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, ProviderConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -40,6 +41,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'provider'), [project.etl_config])
+  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
 
   useEffect(() => {
     getTableConfig(project.id, 'provider').then((ex: ProviderConfig & { extra_instructions?: string }) => {
@@ -99,7 +104,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           <h3 className="font-semibold text-foreground">Provider Name</h3>
           <FieldMapper
             label="provider_name"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.provider_name_col)}
             value={cfg.provider_name_col}
             onChange={set('provider_name_col')}
             hint="Name of the provider as it appears in the source (max 255 chars)."
@@ -127,7 +132,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           <h3 className="font-semibold text-foreground">NPI</h3>
           <FieldMapper
             label="npi"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.npi_col)}
             value={cfg.npi_col}
             onChange={set('npi_col')}
             hint="National Provider Identifier (US). Max 20 chars."
@@ -139,7 +144,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           <h3 className="font-semibold text-foreground">DEA</h3>
           <FieldMapper
             label="dea"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.dea_col)}
             value={cfg.dea_col}
             onChange={set('dea_col')}
             hint="DEA identifier for controlled substance prescriptions. Max 20 chars."
@@ -151,7 +156,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           <h3 className="font-semibold text-foreground">Year of Birth</h3>
           <FieldMapper
             label="year_of_birth"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.year_of_birth_col)}
             value={cfg.year_of_birth_col}
             onChange={set('year_of_birth_col')}
             hint="Column containing the provider's birth year (integer)."
@@ -166,7 +171,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Specialty column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.specialty_source_value_col)}
             value={cfg.specialty_source_value_col}
             onChange={v => setCfg(prev => ({
               ...prev,
@@ -220,7 +225,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Gender column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.gender_source_value_col)}
             value={cfg.gender_source_value_col}
             onChange={v => setCfg(prev => ({
               ...prev,

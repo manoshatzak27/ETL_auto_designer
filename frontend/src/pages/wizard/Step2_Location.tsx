@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, LocationConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -86,6 +87,10 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<LocationConfig>(DEFAULTS)
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'location'), [project.etl_config])
+  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
@@ -198,14 +203,14 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">Address Lines</h3>
             <FieldMapper
               label="address_1"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.address_1_col)}
               value={cfg.address_1_col}
               onChange={set('address_1_col')}
               hint="First line of the address (max 50 chars)."
             />
             <FieldMapper
               label="address_2"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.address_2_col)}
               value={cfg.address_2_col}
               onChange={set('address_2_col')}
               hint="Second line of the address (max 50 chars)."
@@ -216,7 +221,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">City</h3>
             <FieldMapper
               label="city"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.city_col)}
               value={cfg.city_col}
               onChange={set('city_col')}
             />
@@ -226,21 +231,21 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">State, ZIP & County</h3>
             <FieldMapper
               label="state"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.state_col)}
               value={cfg.state_col}
               onChange={set('state_col')}
               hint="2-character state/province/district abbreviation."
             />
             <FieldMapper
               label="zip"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.zip_col)}
               value={cfg.zip_col}
               onChange={set('zip_col')}
               hint="Zip / postal code stored as a string (up to 9 chars). Leading zeros are preserved."
             />
             <FieldMapper
               label="county"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.county_col)}
               value={cfg.county_col}
               onChange={set('county_col')}
               hint="County or sub-region (max 20 chars)."
@@ -267,7 +272,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
             </div>
             <FieldMapper
               label="country"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.country_col)}
               value={cfg.country_col}
               onChange={handleCountryColChange}
               hint="Map to a source column, or leave empty to set a default country for all rows."
@@ -327,14 +332,14 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">Coordinates</h3>
             <FieldMapper
               label="latitude"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.latitude_col)}
               value={cfg.latitude_col}
               onChange={set('latitude_col')}
               hint="Decimal latitude — must be between −90 and 90."
             />
             <FieldMapper
               label="longitude"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.longitude_col)}
               value={cfg.longitude_col}
               onChange={set('longitude_col')}
               hint="Decimal longitude — must be between −180 and 180."
@@ -350,14 +355,14 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">Address Lines</h3>
             <FieldMapper
               label="address_1"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_address_1_col)}
               value={cfg.cs_address_1_col}
               onChange={set('cs_address_1_col')}
               hint="First line of the care site address (max 50 chars)."
             />
             <FieldMapper
               label="address_2"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_address_2_col)}
               value={cfg.cs_address_2_col}
               onChange={set('cs_address_2_col')}
               hint="Second line of the care site address (max 50 chars)."
@@ -368,7 +373,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">City</h3>
             <FieldMapper
               label="city"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_city_col)}
               value={cfg.cs_city_col}
               onChange={set('cs_city_col')}
             />
@@ -378,21 +383,21 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">State, ZIP & County</h3>
             <FieldMapper
               label="state"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_state_col)}
               value={cfg.cs_state_col}
               onChange={set('cs_state_col')}
               hint="2-character state/province/district abbreviation."
             />
             <FieldMapper
               label="zip"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_zip_col)}
               value={cfg.cs_zip_col}
               onChange={set('cs_zip_col')}
               hint="Zip / postal code stored as a string (up to 9 chars)."
             />
             <FieldMapper
               label="county"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_county_col)}
               value={cfg.cs_county_col}
               onChange={set('cs_county_col')}
               hint="County or sub-region (max 20 chars)."
@@ -419,7 +424,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
             </div>
             <FieldMapper
               label="country"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_country_col)}
               value={cfg.cs_country_col}
               onChange={handleCsCountryColChange}
               hint="Map to a source column, or leave empty to set a default country for all rows."
@@ -479,14 +484,14 @@ export default function Step5Location({ project, onUpdate }: Props) {
             <h3 className="font-semibold text-foreground">Coordinates</h3>
             <FieldMapper
               label="latitude"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_latitude_col)}
               value={cfg.cs_latitude_col}
               onChange={set('cs_latitude_col')}
               hint="Decimal latitude — must be between −90 and 90."
             />
             <FieldMapper
               label="longitude"
-              sourceColumns={cols}
+              sourceColumns={availCols(cfg.cs_longitude_col)}
               value={cfg.cs_longitude_col}
               onChange={set('cs_longitude_col')}
               hint="Decimal longitude — must be between −180 and 180."

@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig } from '../../api/client'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, CareSiteConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -37,6 +38,10 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<CareSiteConfig>(DEFAULTS)
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'care_site'), [project.etl_config])
+  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
 
@@ -95,7 +100,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
           <h3 className="font-semibold text-foreground">Care Site Name</h3>
           <FieldMapper
             label="care_site_name"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.care_site_name_col)}
             value={cfg.care_site_name_col}
             onChange={set('care_site_name_col')}
             hint="The name of the care site as it appears in the source data (max 255 chars)."
@@ -147,7 +152,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
           </div>
           <FieldMapper
             label="place_of_service_source_value"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.place_of_service_source_value_col)}
             value={cfg.place_of_service_source_value_col}
             onChange={set('place_of_service_source_value_col')}
             hint="Verbatim place-of-service value from the source data (max 50 chars)."

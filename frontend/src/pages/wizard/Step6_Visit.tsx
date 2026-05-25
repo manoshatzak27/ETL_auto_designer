@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
+import { getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, VisitOccurrenceConfig, VisitDefinition } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -105,6 +106,9 @@ export default function Step3Visit({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'visit_occurrence'), [project.etl_config])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || !crossUsed.has(c))
 
   useEffect(() => {
     getTableConfig(project.id, 'visit_occurrence').then((ex: VisitOccurrenceConfig & { extra_instructions?: string }) => {
@@ -197,7 +201,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
                 <FieldMapper
                   label="visit_start_date column"
-                  sourceColumns={cols}
+                  sourceColumns={availCols(vd.date_col)}
                   value={vd.date_col}
                   onChange={v => updateVisit(i, 'date_col', v)}
                   required={!vd.optional}
@@ -206,7 +210,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
                 <FieldMapper
                   label="visit_end_date column (optional)"
-                  sourceColumns={cols}
+                  sourceColumns={availCols(vd.end_date_col ?? '')}
                   value={vd.end_date_col ?? ''}
                   onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
                   required={false}
@@ -221,7 +225,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 <div className="grid grid-cols-2 gap-4">
                   <FieldMapper
                     label="visit_source_value column (optional)"
-                    sourceColumns={cols}
+                    sourceColumns={availCols(vd.visit_source_col ?? '')}
                     value={vd.visit_source_col ?? ''}
                     onChange={v => updateVisit(i, 'visit_source_col', v || undefined)}
                     required={false}
@@ -251,7 +255,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
                 <FieldMapper
                   label="Map from source column (optional)"
-                  sourceColumns={cols}
+                  sourceColumns={availCols(vd.visit_concept_source_col ?? '')}
                   value={vd.visit_concept_source_col ?? ''}
                   onChange={v => updateVisit(i, 'visit_concept_source_col', v || undefined)}
                   required={false}
@@ -289,7 +293,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
                 <FieldMapper
                   label="Map from source column (optional)"
-                  sourceColumns={cols}
+                  sourceColumns={availCols(vd.visit_type_source_col ?? '')}
                   value={vd.visit_type_source_col ?? ''}
                   onChange={v => updateVisit(i, 'visit_type_source_col', v || undefined)}
                   required={false}
@@ -331,7 +335,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     </div>
                     <FieldMapper
                       label="Map from source column (optional)"
-                      sourceColumns={cols}
+                      sourceColumns={availCols(vd.admitted_from_source_col ?? '')}
                       value={vd.admitted_from_source_col ?? ''}
                       onChange={v => updateVisit(i, 'admitted_from_source_col', v || undefined)}
                       required={false}
@@ -382,7 +386,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     </div>
                     <FieldMapper
                       label="Map from source column (optional)"
-                      sourceColumns={cols}
+                      sourceColumns={availCols(vd.discharged_to_source_col ?? '')}
                       value={vd.discharged_to_source_col ?? ''}
                       onChange={v => updateVisit(i, 'discharged_to_source_col', v || undefined)}
                       required={false}

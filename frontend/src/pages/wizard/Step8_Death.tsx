@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig } from '../../api/client'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, DeathConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -41,6 +42,10 @@ export default function Step8Death({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<DeathConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'death'), [project.etl_config])
+  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
 
   useEffect(() => {
     getTableConfig(project.id, 'death').then((ex: DeathConfig & { extra_instructions?: string }) => {
@@ -93,7 +98,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="Filter column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.filter_col)}
             value={cfg.filter_col}
             onChange={set('filter_col')}
             hint="The source column that indicates patient death status."
@@ -120,7 +125,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="death_date (required)"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.death_date_col)}
             value={cfg.death_date_col}
             onChange={set('death_date_col')}
             hint="Source column containing the date of death. If day/month unknown, December 31 is used by convention."
@@ -128,7 +133,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="death_datetime (optional)"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.death_datetime_col)}
             value={cfg.death_datetime_col}
             onChange={set('death_datetime_col')}
             hint="Source column containing the full datetime of death. Leave empty to populate as NULL."
@@ -185,7 +190,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="cause_source_value (optional)"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.cause_source_value_col)}
             value={cfg.cause_source_value_col}
             onChange={set('cause_source_value_col')}
             hint="Source column containing the raw cause of death code (max 50 chars)."

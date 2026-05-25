@@ -1,6 +1,7 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig } from '../../api/client'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, ObservationPeriodConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import FieldMapper from '../../components/FieldMapper'
@@ -31,6 +32,10 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period'), [project.etl_config])
+  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  const availCols = (currentValue: string) =>
+    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
 
   useEffect(() => {
     getTableConfig(project.id, 'observation_period').then((ex: ObservationPeriodConfig & { extra_instructions?: string }) => {
@@ -80,7 +85,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
         <Card className="flex flex-col gap-5 p-6">
           <FieldMapper
             label="Start date column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.start_date_col)}
             value={cfg.start_date_col}
             onChange={v => setCfg(prev => ({ ...prev, start_date_col: v }))}
             required
@@ -89,7 +94,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
 
           <FieldMapper
             label="End date column"
-            sourceColumns={cols}
+            sourceColumns={availCols(cfg.end_date_col)}
             value={cfg.end_date_col}
             onChange={v => setCfg(prev => ({ ...prev, end_date_col: v }))}
             hint="Enrollment end / last follow-up date. If absent, the last clinical event date or fallback below is used."
