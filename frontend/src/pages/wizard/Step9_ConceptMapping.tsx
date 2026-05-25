@@ -5,6 +5,7 @@ import {
   getConceptDecisions,
   saveConceptDecisions,
   generateMappingCsvs,
+  lookupConceptDomain,
 } from '../../api/client'
 import type { Project } from '../../types'
 import { getStructuralColumns } from '../../utils'
@@ -49,6 +50,17 @@ const DOMAIN_OPTIONS = [
   { label: 'Procedure Occurrence', value: 4 },
   { label: 'Condition Occurrence', value: 5 },
 ] as const
+
+const DOMAIN_STRING_MAP: Record<string, number> = {
+  'measurement': 1,
+  'observation': 2,
+  'drug': 3,
+  'drug exposure': 3,
+  'procedure': 4,
+  'procedure occurrence': 4,
+  'condition': 5,
+  'condition occurrence': 5,
+}
 
 interface ColumnInfo {
   distinct_values: string[]
@@ -374,6 +386,47 @@ function VariableRow({
   batchMode: boolean
 }) {
   const [open, setOpen] = useState(false)
+  const [domainMode, setDomainMode] = useState<'auto' | 'manual'>(() =>
+    decision.domain_id !== null ? 'manual' : 'auto'
+  )
+  const [lookingUpDomain, setLookingUpDomain] = useState(false)
+  // Raw domain string from CSV/EntityLinker (may not map to our 5 tables)
+  const [rawDomain, setRawDomain] = useState<string | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
+
+  // Auto-detect domain when variable concept changes
+  useEffect(() => {
+    if (domainMode !== 'auto') return
+    const concept = decision.variable_concept
+    if (!concept) { setRawDomain(null); setLookupFailed(false); return }
+
+    setLookupFailed(false)
+
+    // EntityLinker results already carry domain — use it directly
+    if (concept.domain) {
+      setRawDomain(concept.domain)
+      const numeric = DOMAIN_STRING_MAP[concept.domain.toLowerCase()]
+      if (numeric !== undefined) onChange({ ...decision, domain_id: numeric })
+      return
+    }
+
+    // Manual concept ID entry — look up in CONCEPT.csv
+    setLookingUpDomain(true)
+    setRawDomain(null)
+    lookupConceptDomain(concept.concept_id)
+      .then(res => {
+        if (res.found && res.domain_id) {
+          setRawDomain(res.domain_id)
+          const numeric = DOMAIN_STRING_MAP[res.domain_id.toLowerCase()]
+          if (numeric !== undefined) onChange({ ...decision, domain_id: numeric })
+        } else {
+          setRawDomain(null)
+        }
+      })
+      .catch(() => setLookupFailed(true))
+      .finally(() => setLookingUpDomain(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [decision.variable_concept?.concept_id, domainMode])
 
   const sm = STRATEGY_META[decision.strategy]
   const mappedValueCount = Object.keys(decision.value_concepts).length
@@ -492,13 +545,56 @@ function VariableRow({
           {/* Domain picker */}
           {decision.strategy !== 'skip' && (
             <div className="flex flex-col gap-1.5">
-              <p className="text-xs font-semibold text-gray-600">
-                OMOP Domain <span className="font-normal text-gray-400">(stem_table domain_id)</span>
-              </p>
-              <DomainPicker
-                value={decision.domain_id ?? null}
-                onChange={v => onChange({ ...decision, domain_id: v })}
-              />
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-semibold text-gray-600">
+                  OMOP Domain <span className="font-normal text-gray-400">(stem_table domain_id)</span>
+                </p>
+                <div className="flex rounded border border-gray-200 overflow-hidden text-xs">
+                  <button
+                    type="button"
+                    onClick={() => setDomainMode('auto')}
+                    className={clsx('px-2 py-0.5', domainMode === 'auto' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
+                  >Auto</button>
+                  <button
+                    type="button"
+                    onClick={() => setDomainMode('manual')}
+                    className={clsx('px-2 py-0.5 border-l border-gray-200', domainMode === 'manual' ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:bg-gray-50')}
+                  >Manual</button>
+                </div>
+              </div>
+
+              {domainMode === 'auto' ? (
+                <div className={clsx(
+                  'flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs',
+                  decision.domain_id !== null
+                    ? 'border-indigo-300 bg-indigo-50 text-indigo-800'
+                    : lookupFailed || (rawDomain && decision.domain_id === null)
+                      ? 'border-amber-200 bg-amber-50 text-amber-800'
+                      : 'border-gray-200 bg-gray-50 text-gray-400',
+                )}>
+                  {lookingUpDomain ? (
+                    <><Loader2 className="w-3 h-3 animate-spin flex-shrink-0" /> Looking up in CONCEPT.csv…</>
+                  ) : decision.domain_id !== null ? (
+                    <>
+                      <span className="font-medium">{DOMAIN_OPTIONS.find(d => d.value === decision.domain_id)?.label} · {decision.domain_id}</span>
+                      <span className="ml-auto text-indigo-400 bg-indigo-100 px-1.5 py-0.5 rounded text-[10px]">auto</span>
+                    </>
+                  ) : lookupFailed ? (
+                    <><AlertTriangle className="w-3 h-3 flex-shrink-0" /><span>Lookup failed — switch to Manual</span></>
+                  ) : rawDomain ? (
+                    <><AlertTriangle className="w-3 h-3 flex-shrink-0" /><span>Domain <strong>"{rawDomain}"</strong> is not a standard ETL table — switch to Manual to map it</span></>
+                  ) : decision.variable_concept ? (
+                    <><AlertTriangle className="w-3 h-3 flex-shrink-0" /><span>Concept not found in CONCEPT.csv — switch to Manual</span></>
+                  ) : (
+                    <span>Set a concept above to auto-detect domain</span>
+                  )}
+                </div>
+              ) : (
+                <DomainPicker
+                  value={decision.domain_id ?? null}
+                  onChange={v => onChange({ ...decision, domain_id: v })}
+                />
+              )}
             </div>
           )}
 

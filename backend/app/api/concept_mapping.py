@@ -2,6 +2,7 @@
 API routes for the concept mapping step (Step 2).
 
 Endpoints:
+  GET  /projects/concept-lookup              → look up domain for a concept_id in CONCEPT.csv
   GET  /projects/{id}/column-values          → unique values per source column
   GET  /projects/{id}/concept-decisions       → load saved decisions
   POST /projects/{id}/concept-decisions       → save decisions (full replace)
@@ -9,6 +10,7 @@ Endpoints:
 """
 from pathlib import Path
 from typing import Any
+import threading
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -21,6 +23,53 @@ from app.services.mapping_generator import generate_mapping_csvs
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["concept-mapping"])
+
+# ── Concept domain lookup (CONCEPT.csv cache) ───────────────────────────────
+
+_concept_df: "pd.DataFrame | None" = None
+_concept_lock = threading.Lock()
+
+
+def _get_concept_domain(concept_id: int) -> "str | None":
+    global _concept_df
+    if _concept_df is None:
+        with _concept_lock:
+            if _concept_df is None:
+                path = settings.get_upload_path() / "concepts" / "CONCEPT.csv"
+                if path.exists():
+                    try:
+                        _concept_df = pd.read_csv(
+                            path,
+                            sep="\t",
+                            usecols=["concept_id", "domain_id"],
+                            dtype={"domain_id": "category"},
+                            index_col="concept_id",
+                        )
+                        _concept_df.index = _concept_df.index.astype("int64")
+                    except Exception as exc:
+                        print(f"[concept-lookup] Failed to load CONCEPT.csv: {exc}")
+                        _concept_df = pd.DataFrame(
+                            columns=["domain_id"],
+                            index=pd.Index([], name="concept_id", dtype="int64"),
+                        )
+                else:
+                    print(f"[concept-lookup] CONCEPT.csv not found at {path}")
+                    _concept_df = pd.DataFrame(
+                        columns=["domain_id"],
+                        index=pd.Index([], name="concept_id", dtype="int64"),
+                    )
+    try:
+        val = _concept_df.at[concept_id, "domain_id"]
+        return str(val) if pd.notna(val) else None
+    except KeyError:
+        return None
+
+
+@router.get("/concept-lookup/domain")
+def concept_lookup(concept_id: int):
+    """Return the domain_id string for a given concept_id from CONCEPT.csv."""
+    domain = _get_concept_domain(concept_id)
+    return {"concept_id": concept_id, "domain_id": domain, "found": domain is not None}
 
 
 # ── Column unique values ────────────────────────────────────────────────────

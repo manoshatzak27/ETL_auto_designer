@@ -40,6 +40,9 @@ export const saveConceptDecisions = (projectId: string, decisions: Record<string
 export const generateMappingCsvs = (projectId: string) =>
   api.post(`/projects/${projectId}/generate-mapping-csvs`).then(r => r.data)
 
+export const lookupConceptDomain = (conceptId: number) =>
+  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; found: boolean })
+
 export const getSourcePreview = (projectId: string, rows = 5) =>
   api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
 
