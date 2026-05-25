@@ -104,6 +104,11 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             onChange={set('provider_name_col')}
             hint="Name of the provider as it appears in the source (max 255 chars)."
           />
+        </Card>
+
+        {/* Provider Source Value */}
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Provider Source Value</h3>
           <div className="flex flex-col gap-1">
             <Label>provider_source_value</Label>
             <div className="flex flex-col gap-1 rounded-lg border border-border bg-secondary/60 p-3">

@@ -90,9 +90,9 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
           </p>
         </div>
 
-        {/* Identifiers */}
+        {/* Care Site Name */}
         <Card className="flex flex-col gap-5 p-6">
-          <h3 className="font-semibold text-foreground">Identifiers</h3>
+          <h3 className="font-semibold text-foreground">Care Site Name</h3>
           <FieldMapper
             label="care_site_name"
             sourceColumns={cols}
@@ -100,6 +100,11 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
             onChange={set('care_site_name_col')}
             hint="The name of the care site as it appears in the source data (max 255 chars)."
           />
+        </Card>
+
+        {/* Care Site Source Value */}
+        <Card className="flex flex-col gap-5 p-6">
+          <h3 className="font-semibold text-foreground">Care Site Source Value</h3>
           <div className="flex flex-col gap-1">
             <Label>care_site_source_value</Label>
             <div className="flex flex-col gap-1 rounded-lg border border-border bg-secondary/60 p-3">
