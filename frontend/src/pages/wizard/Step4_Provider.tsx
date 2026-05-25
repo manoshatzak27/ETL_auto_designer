@@ -41,6 +41,8 @@ export default function Step7Provider({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
+  const [specialtyMode, setSpecialtyMode] = useState<'column' | 'prefix'>('column')
+  const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'provider'), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
   const availCols = (currentValue: string) =>
@@ -51,6 +53,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
+        if (ex.specialty_source_value_col) setSpecialtyMode('column')
+        else if (ex.prefix_specialty) setSpecialtyMode('prefix')
+        if (ex.gender_source_value_col) setGenderMode('column')
+        else if (ex.gender_concept_id_default) setGenderMode('default')
       }
     })
     getColumnValues(project.id).then(setColumnInfos)
@@ -75,6 +81,24 @@ export default function Step7Provider({ project, onUpdate }: Props) {
 
   const set = (field: keyof ProviderConfig) => (v: string) =>
     setCfg(prev => ({ ...prev, [field]: v }))
+
+  const switchGenderMode = (mode: 'column' | 'default') => {
+    setGenderMode(mode)
+    if (mode === 'default') {
+      setCfg(prev => ({ ...prev, gender_source_value_col: '', gender_concept_value_map: {} }))
+    } else {
+      setCfg(prev => ({ ...prev, gender_concept_id_default: 0 }))
+    }
+  }
+
+  const switchSpecialtyMode = (mode: 'column' | 'prefix') => {
+    setSpecialtyMode(mode)
+    if (mode === 'prefix') {
+      setCfg(prev => ({ ...prev, specialty_source_value_col: '', specialty_concept_value_map: {} }))
+    } else {
+      setCfg(prev => ({ ...prev, prefix_specialty: '', prefix_specialty_concept_id: null }))
+    }
+  }
 
   return (
     <WizardLayout
@@ -169,52 +193,64 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             <a href="http://athena.ohdsi.org/search-terms/terms?domain=Provider&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
-          <FieldMapper
-            label="Specialty column"
-            sourceColumns={availCols(cfg.specialty_source_value_col)}
-            value={cfg.specialty_source_value_col}
-            onChange={v => setCfg(prev => ({
-              ...prev,
-              specialty_source_value_col: v,
-              specialty_concept_value_map: v !== prev.specialty_source_value_col ? {} : prev.specialty_concept_value_map,
-            }))}
-            hint="Column containing the provider's specialty. Values will populate specialty_source_value and be mapped to specialty_concept_id below."
-          />
-
-          {cfg.specialty_source_value_col && (
-            <ValueConceptMapper
-              label="Specialty value → specialty_concept_id"
-              sourceValues={distinctVals(cfg.specialty_source_value_col)}
-              mapping={cfg.specialty_concept_value_map ?? {}}
-              onChange={m => setCfg(prev => ({ ...prev, specialty_concept_value_map: m }))}
-              hint="Assign an OMOP Provider-domain concept ID to each specialty value."
-            />
-          )}
-
-          <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/70 p-4">
-            <p className="text-sm font-medium uppercase tracking-wide text-muted-foreground">Prefix Specialty</p>
-            <p className="text-xs text-muted-foreground">Specify a static specialty that applies to all providers (used as a prefix/default when no column mapping is available).</p>
-            <div className="flex flex-col gap-1">
-              <Label>Specialty</Label>
-              <Input
-                type="text"
-                value={cfg.prefix_specialty ?? ''}
-                onChange={e => setCfg(prev => ({ ...prev, prefix_specialty: e.target.value }))}
-                placeholder="e.g. Internal Medicine"
-              />
-            </div>
-            <div className="flex flex-col gap-1">
-              <Label>Specialty concept ID</Label>
-              <Input
-                type="number"
-                value={cfg.prefix_specialty_concept_id ?? ''}
-                onChange={e => setCfg(prev => ({ ...prev, prefix_specialty_concept_id: e.target.value === '' ? null : parseInt(e.target.value) }))}
-                placeholder="e.g. 38004477"
-                className="w-48"
-              />
-              <p className="text-xs text-muted-foreground">OMOP Provider-domain concept ID for the prefix specialty.</p>
-            </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => switchSpecialtyMode('column')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${specialtyMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+            >Map a column</button>
+            <button
+              onClick={() => switchSpecialtyMode('prefix')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${specialtyMode === 'prefix' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+            >Set default</button>
           </div>
+
+          {specialtyMode === 'column' ? (
+            <div className="flex flex-col gap-3">
+              <FieldMapper
+                label="Specialty column"
+                sourceColumns={availCols(cfg.specialty_source_value_col)}
+                value={cfg.specialty_source_value_col}
+                onChange={v => setCfg(prev => ({
+                  ...prev,
+                  specialty_source_value_col: v,
+                  specialty_concept_value_map: v !== prev.specialty_source_value_col ? {} : prev.specialty_concept_value_map,
+                }))}
+                hint="Values will populate specialty_source_value and be mapped to specialty_concept_id below."
+              />
+              {cfg.specialty_source_value_col && (
+                <ValueConceptMapper
+                  label="Specialty value → specialty_concept_id"
+                  sourceValues={distinctVals(cfg.specialty_source_value_col)}
+                  mapping={cfg.specialty_concept_value_map ?? {}}
+                  onChange={m => setCfg(prev => ({ ...prev, specialty_concept_value_map: m }))}
+                  hint="Assign an OMOP Provider-domain concept ID to each specialty value."
+                />
+              )}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-3">
+              <div className="flex flex-col gap-1">
+                <Label>Specialty</Label>
+                <Input
+                  type="text"
+                  value={cfg.prefix_specialty ?? ''}
+                  onChange={e => setCfg(prev => ({ ...prev, prefix_specialty: e.target.value }))}
+                  placeholder="e.g. Internal Medicine"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <Label>Specialty concept ID</Label>
+                <Input
+                  type="number"
+                  value={cfg.prefix_specialty_concept_id ?? ''}
+                  onChange={e => setCfg(prev => ({ ...prev, prefix_specialty_concept_id: e.target.value === '' ? null : parseInt(e.target.value) }))}
+                  placeholder="e.g. 38004477"
+                  className="w-48"
+                />
+                <p className="text-xs text-muted-foreground">OMOP Provider-domain concept ID for the prefix specialty.</p>
+              </div>
+            </div>
+          )}
         </Card>
 
         <Card className="flex flex-col gap-5 p-6">
@@ -223,44 +259,55 @@ export default function Step7Provider({ project, onUpdate }: Props) {
             <a href="http://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
-          <FieldMapper
-            label="Gender column"
-            sourceColumns={availCols(cfg.gender_source_value_col)}
-            value={cfg.gender_source_value_col}
-            onChange={v => setCfg(prev => ({
-              ...prev,
-              gender_source_value_col: v,
-              gender_concept_value_map: v !== prev.gender_source_value_col ? {} : prev.gender_concept_value_map,
-            }))}
-            hint="Provider gender as it appears in the source. Values will populate gender_source_value and be mapped to gender_concept_id below."
-          />
+          <div className="flex gap-2">
+            <button
+              onClick={() => switchGenderMode('column')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${genderMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+            >Map a column</button>
+            <button
+              onClick={() => switchGenderMode('default')}
+              className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${genderMode === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+            >Set default</button>
+          </div>
 
-          {cfg.gender_source_value_col && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <Label>Gender value → gender_concept_id</Label>
-              </div>
-              <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown</p>
-              <ValueConceptMapper
-                label=""
-                sourceValues={distinctVals(cfg.gender_source_value_col)}
-                mapping={cfg.gender_concept_value_map ?? {}}
-                onChange={m => setCfg(prev => ({ ...prev, gender_concept_value_map: m }))}
-                hint="Assign an OMOP Gender-domain concept ID to each gender value."
+          {genderMode === 'column' ? (
+            <div className="flex flex-col gap-3">
+              <FieldMapper
+                label="Gender column"
+                sourceColumns={availCols(cfg.gender_source_value_col)}
+                value={cfg.gender_source_value_col}
+                onChange={v => setCfg(prev => ({
+                  ...prev,
+                  gender_source_value_col: v,
+                  gender_concept_value_map: v !== prev.gender_source_value_col ? {} : prev.gender_concept_value_map,
+                }))}
+                hint="Provider gender as it appears in the source. Values will populate gender_source_value and be mapped to gender_concept_id below."
               />
+              {cfg.gender_source_value_col && (
+                <div className="flex flex-col gap-2">
+                  <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown</p>
+                  <ValueConceptMapper
+                    label="Gender value → gender_concept_id"
+                    sourceValues={distinctVals(cfg.gender_source_value_col)}
+                    mapping={cfg.gender_concept_value_map ?? {}}
+                    onChange={m => setCfg(prev => ({ ...prev, gender_concept_value_map: m }))}
+                    hint="Assign an OMOP Gender-domain concept ID to each gender value."
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <Label>Default gender_concept_id</Label>
+              <Input
+                type="number"
+                value={cfg.gender_concept_id_default ?? 0}
+                onChange={e => setCfg(prev => ({ ...prev, gender_concept_id_default: parseInt(e.target.value) }))}
+                className="mt-1 w-32"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
             </div>
           )}
-
-          <div>
-            <Label>Default gender_concept_id</Label>
-            <Input
-              type="number"
-              value={cfg.gender_concept_id_default ?? 0}
-              onChange={e => setCfg(prev => ({ ...prev, gender_concept_id_default: parseInt(e.target.value) }))}
-              className="mt-1 w-32"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
-          </div>
         </Card>
 
         <ExtraInstructions

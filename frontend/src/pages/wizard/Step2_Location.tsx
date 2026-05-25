@@ -96,6 +96,8 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [countryValues, setCountryValues] = useState<string[]>([])
   const [csCountryValues, setCsCountryValues] = useState<string[]>([])
+  const [countryMode, setCountryMode] = useState<'column' | 'default'>('column')
+  const [csCountryMode, setCsCountryMode] = useState<'column' | 'default'>('column')
 
   useEffect(() => {
     Promise.all([
@@ -120,10 +122,12 @@ export default function Step5Location({ project, onUpdate }: Props) {
         if (loaded.country_col) {
           const savedKeys = Object.keys(loaded.country_concept_id_map)
           setCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.country_col]?.distinct_values ?? []))
+          setCountryMode('column')
         }
         if (loaded.cs_country_col) {
           const savedKeys = Object.keys(loaded.cs_country_concept_id_map)
           setCsCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.cs_country_col]?.distinct_values ?? []))
+          setCsCountryMode('column')
         }
         setCfg(loaded)
       }
@@ -153,6 +157,26 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const handleCsCountryColChange = (col: string) => {
     setCfg(prev => ({ ...prev, cs_country_col: col, cs_country_concept_id_map: {} }))
     setCsCountryValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
+  }
+
+  const switchCountryMode = (mode: 'column' | 'default') => {
+    setCountryMode(mode)
+    if (mode === 'default') {
+      setCfg(prev => ({ ...prev, country_col: '', country_concept_id_map: {} }))
+      setCountryValues([])
+    } else {
+      setCfg(prev => ({ ...prev, country_concept_id_default: 0, country_source_value: '' }))
+    }
+  }
+
+  const switchCsCountryMode = (mode: 'column' | 'default') => {
+    setCsCountryMode(mode)
+    if (mode === 'default') {
+      setCfg(prev => ({ ...prev, cs_country_col: '', cs_country_concept_id_map: {} }))
+      setCsCountryValues([])
+    } else {
+      setCfg(prev => ({ ...prev, cs_country_concept_id_default: 0, cs_country_source_value: '' }))
+    }
   }
 
   const addCountryValue = () => {
@@ -270,28 +294,41 @@ export default function Step5Location({ project, onUpdate }: Props) {
               <h3 className="font-semibold text-foreground">Country</h3>
               <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
             </div>
-            <FieldMapper
-              label="country"
-              sourceColumns={availCols(cfg.country_col)}
-              value={cfg.country_col}
-              onChange={handleCountryColChange}
-              hint="Map to a source column, or leave empty to set a default country for all rows."
-            />
-            {cfg.country_col ? (
-              <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Country value → OMOP concept ID mapping</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
-                  </div>
-                  <button onClick={addCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
-                </div>
-                <ValueConceptMapper
-                  label=""
-                  sourceValues={countryValues.length > 0 ? countryValues : Object.keys(cfg.country_concept_id_map)}
-                  mapping={cfg.country_concept_id_map}
-                  onChange={m => setCfg(prev => ({ ...prev, country_concept_id_map: m }))}
+            <div className="flex gap-2">
+              <button
+                onClick={() => switchCountryMode('column')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${countryMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+              >Map a column</button>
+              <button
+                onClick={() => switchCountryMode('default')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${countryMode === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+              >Set default</button>
+            </div>
+            {countryMode === 'column' ? (
+              <div className="flex flex-col gap-3">
+                <FieldMapper
+                  label="country"
+                  sourceColumns={availCols(cfg.country_col)}
+                  value={cfg.country_col}
+                  onChange={handleCountryColChange}
                 />
+                {cfg.country_col && (
+                  <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Country value → OMOP concept ID mapping</Label>
+                        <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                      </div>
+                      <button onClick={addCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
+                    </div>
+                    <ValueConceptMapper
+                      label=""
+                      sourceValues={countryValues.length > 0 ? countryValues : Object.keys(cfg.country_concept_id_map)}
+                      mapping={cfg.country_concept_id_map}
+                      onChange={m => setCfg(prev => ({ ...prev, country_concept_id_map: m }))}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-4">
@@ -422,28 +459,41 @@ export default function Step5Location({ project, onUpdate }: Props) {
               <h3 className="font-semibold text-foreground">Country</h3>
               <a href="https://athena.ohdsi.org/search-terms/terms?domain=Geography&standardConcept=Standard&page=1&pageSize=15&query=&boosts" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
             </div>
-            <FieldMapper
-              label="country"
-              sourceColumns={availCols(cfg.cs_country_col)}
-              value={cfg.cs_country_col}
-              onChange={handleCsCountryColChange}
-              hint="Map to a source column, or leave empty to set a default country for all rows."
-            />
-            {cfg.cs_country_col ? (
-              <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label>Country value → OMOP concept ID mapping</Label>
-                    <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
-                  </div>
-                  <button onClick={addCsCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
-                </div>
-                <ValueConceptMapper
-                  label=""
-                  sourceValues={csCountryValues.length > 0 ? csCountryValues : Object.keys(cfg.cs_country_concept_id_map)}
-                  mapping={cfg.cs_country_concept_id_map}
-                  onChange={m => setCfg(prev => ({ ...prev, cs_country_concept_id_map: m }))}
+            <div className="flex gap-2">
+              <button
+                onClick={() => switchCsCountryMode('column')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${csCountryMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+              >Map a column</button>
+              <button
+                onClick={() => switchCsCountryMode('default')}
+                className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${csCountryMode === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}
+              >Set default</button>
+            </div>
+            {csCountryMode === 'column' ? (
+              <div className="flex flex-col gap-3">
+                <FieldMapper
+                  label="country"
+                  sourceColumns={availCols(cfg.cs_country_col)}
+                  value={cfg.cs_country_col}
+                  onChange={handleCsCountryColChange}
                 />
+                {cfg.cs_country_col && (
+                  <div className="flex flex-col gap-3 pl-2 border-l-2 border-primary/30">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <Label>Country value → OMOP concept ID mapping</Label>
+                        <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                      </div>
+                      <button onClick={addCsCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
+                    </div>
+                    <ValueConceptMapper
+                      label=""
+                      sourceValues={csCountryValues.length > 0 ? csCountryValues : Object.keys(cfg.cs_country_concept_id_map)}
+                      mapping={cfg.cs_country_concept_id_map}
+                      onChange={m => setCfg(prev => ({ ...prev, cs_country_concept_id_map: m }))}
+                    />
+                  </div>
+                )}
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-4">

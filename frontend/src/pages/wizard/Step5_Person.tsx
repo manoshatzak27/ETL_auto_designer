@@ -49,6 +49,9 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [raceValues, setRaceValues] = useState<string[]>([])
   const [ethnicityValues, setEthnicityValues] = useState<string[]>([])
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
+  const [raceMode, setRaceMode] = useState<'column' | 'default'>('column')
+  const [ethnicityMode, setEthnicityMode] = useState<'column' | 'default'>('column')
 
   useEffect(() => {
     Promise.all([
@@ -71,13 +74,16 @@ export default function Step2Person({ project, onUpdate }: Props) {
         }
 
         const genderCol = m.gender_concept_id?.source_col
-        if (genderCol) setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {}))
+        if (genderCol) { setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {})); setGenderMode('column') }
+        else if (m.gender_concept_id?.default) setGenderMode('default')
 
         const raceCol = (m.race_concept_id as RaceEthnicityMapping)?.source_col
-        if (raceCol) setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+        if (raceCol) { setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setRaceMode('column') }
+        else if ((m.race_concept_id as RaceEthnicityMapping)?.default) setRaceMode('default')
 
         const ethCol = (m.ethnicity_concept_id as RaceEthnicityMapping)?.source_col
-        if (ethCol) setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+        if (ethCol) { setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setEthnicityMode('column') }
+        else if ((m.ethnicity_concept_id as RaceEthnicityMapping)?.default) setEthnicityMode('default')
 
         setCfg({
           ...DEFAULTS,
@@ -105,6 +111,39 @@ export default function Step2Person({ project, onUpdate }: Props) {
     setField([...field, 'source_col'], col)
     setField([...field, 'value_map'], {})
     setValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
+  }
+
+  const switchGenderMode = (mode: 'column' | 'default') => {
+    setGenderMode(mode)
+    if (mode === 'default') {
+      setField(['mappings', 'gender_concept_id', 'source_col'], '')
+      setField(['mappings', 'gender_concept_id', 'value_map'], {})
+      setGenderValues([])
+    } else {
+      setField(['mappings', 'gender_concept_id', 'default'], 0)
+    }
+  }
+
+  const switchRaceMode = (mode: 'column' | 'default') => {
+    setRaceMode(mode)
+    if (mode === 'default') {
+      setField(['mappings', 'race_concept_id', 'source_col'], '')
+      setField(['mappings', 'race_concept_id', 'value_map'], {})
+      setRaceValues([])
+    } else {
+      setField(['mappings', 'race_concept_id', 'default'], 0)
+    }
+  }
+
+  const switchEthnicityMode = (mode: 'column' | 'default') => {
+    setEthnicityMode(mode)
+    if (mode === 'default') {
+      setField(['mappings', 'ethnicity_concept_id', 'source_col'], '')
+      setField(['mappings', 'ethnicity_concept_id', 'value_map'], {})
+      setEthnicityValues([])
+    } else {
+      setField(['mappings', 'ethnicity_concept_id', 'default'], 0)
+    }
   }
 
   const handleGenderColChange = (col: string) => {
@@ -221,41 +260,49 @@ export default function Step2Person({ project, onUpdate }: Props) {
             <a href="https://athena.ohdsi.org/search-terms/terms?domain=Gender&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
-          <FieldMapper
-            label="Gender column"
-            sourceColumns={availCols(cfg.mappings.gender_concept_id.source_col)}
-            value={cfg.mappings.gender_concept_id.source_col}
-            onChange={handleGenderColChange}
-            required
-            hint="The source column that indicates biological sex."
-          />
+          <div className="flex gap-2">
+            <button onClick={() => switchGenderMode('column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${genderMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+            <button onClick={() => switchGenderMode('default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${genderMode === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+          </div>
 
-          {cfg.mappings.gender_concept_id.source_col && (
-            <div className="flex flex-col gap-2">
-              <div className="flex items-center justify-between">
-                <Label>Gender value → OMOP concept mapping</Label>
-                <button onClick={addGenderValue} className="text-xs text-primary hover:underline">+ Add value</button>
-              </div>
-              <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female</p>
-              <ValueConceptMapper
-                label=""
-                sourceValues={genderValues.length > 0 ? genderValues : Object.keys(cfg.mappings.gender_concept_id.value_map)}
-                mapping={cfg.mappings.gender_concept_id.value_map}
-                onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
+          {genderMode === 'column' ? (
+            <div className="flex flex-col gap-3">
+              <FieldMapper
+                label="Gender column"
+                sourceColumns={availCols(cfg.mappings.gender_concept_id.source_col)}
+                value={cfg.mappings.gender_concept_id.source_col}
+                onChange={handleGenderColChange}
+                required
+                hint="The source column that indicates biological sex."
               />
+              {cfg.mappings.gender_concept_id.source_col && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Gender value → OMOP concept mapping</Label>
+                    <button onClick={addGenderValue} className="text-xs text-primary hover:underline">+ Add value</button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female</p>
+                  <ValueConceptMapper
+                    label=""
+                    sourceValues={genderValues.length > 0 ? genderValues : Object.keys(cfg.mappings.gender_concept_id.value_map)}
+                    mapping={cfg.mappings.gender_concept_id.value_map}
+                    onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
+                  />
+                </div>
+              )}
+            </div>
+          ) : (
+            <div>
+              <Label>Default gender_concept_id</Label>
+              <Input
+                type="number"
+                value={cfg.mappings.gender_concept_id.default ?? 0}
+                onChange={e => setField(['mappings', 'gender_concept_id', 'default'], parseInt(e.target.value))}
+                className="mt-1 w-32"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
             </div>
           )}
-
-          <div>
-            <Label>Default gender_concept_id</Label>
-            <Input
-              type="number"
-              value={cfg.mappings.gender_concept_id.default ?? 0}
-              onChange={e => setField(['mappings', 'gender_concept_id', 'default'], parseInt(e.target.value))}
-              className="mt-1 w-32"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
-          </div>
         </Card>
 
         {/* Date of Birth */}
@@ -293,83 +340,101 @@ export default function Step2Person({ project, onUpdate }: Props) {
         </Card>
 
         {/* Race */}
-        <Card className="flex flex-col gap-6 p-6">
+        <Card className="flex flex-col gap-5 p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-foreground">Race</h3>
             <a href="https://athena.ohdsi.org/search-terms/terms?domain=Race&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
-          <FieldMapper
-            label="Race column"
-            sourceColumns={availCols((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
-            value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
-            onChange={handleRaceColChange}
-            hint="Source column for race. Leave empty to use the default concept ID for all rows."
-          />
+          <div className="flex gap-2">
+            <button onClick={() => switchRaceMode('column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${raceMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+            <button onClick={() => switchRaceMode('default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${raceMode === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+          </div>
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <Label>Race value → OMOP concept mapping</Label>
-              <button onClick={addRaceValue} className="text-xs text-primary hover:underline">+ Add value</button>
+          {raceMode === 'column' ? (
+            <div className="flex flex-col gap-3">
+              <FieldMapper
+                label="Race column"
+                sourceColumns={availCols((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
+                value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
+                onChange={handleRaceColChange}
+              />
+              {(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Race value → OMOP concept mapping</Label>
+                    <button onClick={addRaceValue} className="text-xs text-primary hover:underline">+ Add value</button>
+                  </div>
+                  <ValueConceptMapper
+                    label=""
+                    sourceValues={raceValues.length > 0 ? raceValues : Object.keys((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
+                    mapping={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
+                    onChange={m => setField(['mappings', 'race_concept_id', 'value_map'], m)}
+                  />
+                </div>
+              )}
             </div>
-            <ValueConceptMapper
-              label=""
-              sourceValues={raceValues.length > 0 ? raceValues : Object.keys((cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
-              mapping={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
-              onChange={m => setField(['mappings', 'race_concept_id', 'value_map'], m)}
-            />
-          </div>
-
-          <div>
-            <Label>Default race_concept_id</Label>
-            <Input
-              type="number"
-              value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
-              onChange={e => setField(['mappings', 'race_concept_id', 'default'], parseInt(e.target.value))}
-              className="mt-1 w-32"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
-          </div>
+          ) : (
+            <div>
+              <Label>Default race_concept_id</Label>
+              <Input
+                type="number"
+                value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
+                onChange={e => setField(['mappings', 'race_concept_id', 'default'], parseInt(e.target.value))}
+                className="mt-1 w-32"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
+            </div>
+          )}
         </Card>
 
         {/* Ethnicity */}
-        <Card className="flex flex-col gap-6 p-6">
+        <Card className="flex flex-col gap-5 p-6">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-foreground">Ethnicity</h3>
             <a href="https://athena.ohdsi.org/search-terms/terms?domain=Ethnicity&standardConcept=Standard&page=1&pageSize=15&query=" target="_blank" rel="noreferrer" className="text-xs text-primary hover:underline">Accepted Concepts</a>
           </div>
 
-          <FieldMapper
-            label="Ethnicity column"
-            sourceColumns={availCols((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
-            value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
-            onChange={handleEthnicityColChange}
-            hint="Source column for ethnicity. Leave empty to use the default concept ID for all rows."
-          />
+          <div className="flex gap-2">
+            <button onClick={() => switchEthnicityMode('column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${ethnicityMode === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+            <button onClick={() => switchEthnicityMode('default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${ethnicityMode === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+          </div>
 
-          <div className="flex flex-col gap-2">
-            <div className="flex items-center justify-between">
-              <Label>Ethnicity value → OMOP concept mapping</Label>
-              <button onClick={addEthnicityValue} className="text-xs text-primary hover:underline">+ Add value</button>
+          {ethnicityMode === 'column' ? (
+            <div className="flex flex-col gap-3">
+              <FieldMapper
+                label="Ethnicity column"
+                sourceColumns={availCols((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
+                value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
+                onChange={handleEthnicityColChange}
+              />
+              {(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col && (
+                <div className="flex flex-col gap-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Ethnicity value → OMOP concept mapping</Label>
+                    <button onClick={addEthnicityValue} className="text-xs text-primary hover:underline">+ Add value</button>
+                  </div>
+                  <ValueConceptMapper
+                    label=""
+                    sourceValues={ethnicityValues.length > 0 ? ethnicityValues : Object.keys((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
+                    mapping={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
+                    onChange={m => setField(['mappings', 'ethnicity_concept_id', 'value_map'], m)}
+                  />
+                </div>
+              )}
             </div>
-            <ValueConceptMapper
-              label=""
-              sourceValues={ethnicityValues.length > 0 ? ethnicityValues : Object.keys((cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
-              mapping={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
-              onChange={m => setField(['mappings', 'ethnicity_concept_id', 'value_map'], m)}
-            />
-          </div>
-
-          <div>
-            <Label>Default ethnicity_concept_id</Label>
-            <Input
-              type="number"
-              value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
-              onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
-              className="mt-1 w-32"
-            />
-            <p className="mt-1 text-xs text-muted-foreground">Used when a source value is not in the map above (0 = unknown).</p>
-          </div>
+          ) : (
+            <div>
+              <Label>Default ethnicity_concept_id</Label>
+              <Input
+                type="number"
+                value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
+                onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
+                className="mt-1 w-32"
+              />
+              <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
+            </div>
+          )}
         </Card>
 
         {/* Provider ID */}
