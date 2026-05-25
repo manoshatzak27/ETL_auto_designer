@@ -274,19 +274,6 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('county_col')}
               hint="County or sub-region (max 20 chars)."
             />
-            {!cfg.county_col && (
-              <div>
-                <Label>Default county</Label>
-                <Input
-                  type="text"
-                  value={cfg.county_source_value}
-                  onChange={e => setCfg(prev => ({ ...prev, county_source_value: e.target.value }))}
-                  placeholder="e.g. King County"
-                  className="mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1">Applied to all person rows when no county column is mapped (max 20 chars).</p>
-              </div>
-            )}
           </Card>
 
           <Card className="flex flex-col gap-5 p-6">
@@ -439,19 +426,6 @@ export default function Step5Location({ project, onUpdate }: Props) {
               onChange={set('cs_county_col')}
               hint="County or sub-region (max 20 chars)."
             />
-            {!cfg.cs_county_col && (
-              <div>
-                <Label>Default county</Label>
-                <Input
-                  type="text"
-                  value={cfg.cs_county_source_value}
-                  onChange={e => setCfg(prev => ({ ...prev, cs_county_source_value: e.target.value }))}
-                  placeholder="e.g. King County"
-                  className="mt-1"
-                />
-                <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows when no county column is mapped (max 20 chars).</p>
-              </div>
-            )}
           </Card>
 
           <Card className="flex flex-col gap-5 p-6">
