@@ -145,8 +145,8 @@ export interface LocationConfig {
 export interface CareSiteConfig {
   enabled: boolean
   care_site_name_col: string
-  place_of_service_concept_id: number | null
-  place_of_service_source_value_col: string
+  place_of_service_col: string
+  place_of_service_value_map: Record<string, number>
 }
 
 export interface ProviderConfig {
