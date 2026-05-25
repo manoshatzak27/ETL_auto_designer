@@ -128,7 +128,17 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
 
         {/* Place of Service */}
         <Card className="flex flex-col gap-5 p-6">
-          <h3 className="font-semibold text-foreground">Place of Service</h3>
+          <div className="flex items-center justify-between">
+            <h3 className="font-semibold text-foreground">Place of Service</h3>
+            <a
+              href="https://athena.ohdsi.org/search-terms/terms?domain=Visit&standardConcept=Standard&page=2&pageSize=15&query="
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-primary underline underline-offset-2 hover:opacity-80"
+            >
+              accepted concepts
+            </a>
+          </div>
           <p className="text-sm text-muted-foreground">
             Select the source column that represents the Place of Service. All distinct values from
             that column will appear below — assign an OMOP concept ID to each one.
