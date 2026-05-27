@@ -16,11 +16,13 @@ flowchart LR
   Frontend --> Backend
   Backend --> SQLite[(SQLite wizard state)]
   Backend --> OpenAI
+  Backend --> EntityLinker[EntityLinker / SapBERT+FAISS]
   Backend --> Executor[etl_executor]
   Executor --> Outputs[outputs/PROJECT_ID/*.csv]
   Outputs --> Loader[omop_loader]
   Loader --> Postgres[(Postgres OMOP v5.4)]
-  VocabBundle[Athena vocabulary] -.optional.-> Loader
+  VocabBundle[Athena vocabulary] --> Loader
+  VocabBundle --> EntityLinker
 ```
 
 ```
@@ -46,8 +48,15 @@ ETL_auto_designer/
 │   │   └── types/
 │   └── Dockerfile
 │
-├── scripts/init-omop.sh    Substitutes @cdmDatabaseSchema → $OMOP_SCHEMA and applies DDL/PKs
-├── docker-compose.yml      Postgres + omop-init + backend + frontend
+├── entitylinker/           SapBERT + FAISS concept-search service
+│   ├── entitylinker/       Python library (ConceptLinker, Reranker, config loader)
+│   ├── api/                FastAPI app exposing POST /api/conceptlink
+│   ├── config.container.yaml  data_dir + vocabularies for the container
+│   ├── dockerfile
+│   └── requirements.txt
+│
+├── scripts/init-omop.sh    Calls python -m app.services.ddl_applier bootstrap to split vocab/clinical DDL into separate schemas
+├── docker-compose.yml      Postgres + omop-init + entitylinker + backend + frontend
 └── .env.example            Stack-wide environment variables
 ```
 
@@ -65,14 +74,15 @@ docker compose up --build
 
 Services:
 
-| Service     | URL                       | Notes                                        |
-|-------------|---------------------------|----------------------------------------------|
-| Frontend    | http://localhost:5173     | Vite dev server                              |
-| Backend     | http://localhost:8000     | FastAPI + Swagger at `/docs`                 |
-| Postgres    | localhost:5432            | `psql -U omop -d omop`                       |
-| `omop-init` | one-shot                  | Applies OMOP v5.4 DDL + PKs into `${OMOP_SCHEMA}` on first start (idempotent) |
+| Service        | URL                       | Notes                                        |
+|----------------|---------------------------|----------------------------------------------|
+| Frontend       | http://localhost:5173     | Vite dev server                              |
+| Backend        | http://localhost:8000     | FastAPI + Swagger at `/docs`                 |
+| EntityLinker   | http://localhost:8001     | SapBERT + FAISS concept search. Swagger at `/docs`. Internal URL `http://entitylinker:8000/api/conceptlink`. |
+| Postgres       | localhost:5432            | `psql -U omop -d omop`                       |
+| `omop-init`    | one-shot                  | Splits the OMOP v5.4 DDL into vocabulary and clinical buckets and applies each into its own schema (`${OMOP_VOCAB_SCHEMA}` and `${OMOP_SCHEMA}`). Idempotent via per-schema marker rows. |
 
-The OMOP DDL placeholder `@cdmDatabaseSchema` is substituted with `${OMOP_SCHEMA}` (default `cdm`) before being piped into `psql`.
+The DDL splitting and application is owned by `backend/app/services/ddl_applier.py`. The `omop-init` service is a thin shell wrapper that waits for Postgres and invokes `python -m app.services.ddl_applier bootstrap`. Clinical sessions run with `search_path = <clinical>, vocab, public` so unqualified `concept` lookups resolve.
 
 ---
 
@@ -103,14 +113,15 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 |-------------------------|----------------------------------------|---------------------------------------------------------------|
 | `OPENAI_API_KEY`        | *(required for codegen / chat)*        | OpenAI API key                                                |
 | `OPENAI_MODEL`          | `gpt-4o`                               | Model used for code generation and the chat assistant         |
-| `ENTITYLINKER_URL`      | `http://localhost:8000/api/conceptlink`| Optional concept-search service                               |
+| `ENTITYLINKER_URL`      | (inside Docker: `http://entitylinker:8000/api/conceptlink`) | SapBERT+FAISS concept-search service. Started automatically by the compose stack. |
 | `DATABASE_URL`          | `sqlite:///./etl_designer.db`          | Wizard state DB (kept on SQLite for simplicity)               |
 | `POSTGRES_USER`         | `omop`                                 | OMOP Postgres user                                            |
 | `POSTGRES_PASSWORD`     | `omop`                                 | OMOP Postgres password                                        |
 | `POSTGRES_DB`           | `omop`                                 | OMOP Postgres database                                        |
 | `OMOP_DB_HOST`          | `postgres`                             | Backend uses this to reach Postgres (set to `localhost` outside Docker) |
 | `OMOP_DB_PORT`          | `5432`                                 |                                                               |
-| `OMOP_SCHEMA`           | `cdm`                                  | Target schema for the OMOP CDM tables                         |
+| `OMOP_SCHEMA`           | `cdm`                                  | Target schema for the clinical CDM tables                     |
+| `OMOP_VOCAB_SCHEMA`     | `vocab`                                | Target schema for the shared vocabulary tables                |
 | `ATHENA_BUNDLE_ROOT`    | *(empty)*                              | Allow-list root for `/load-vocabulary` (security guard)       |
 | `MAPPINGS_BUNDLE_ROOT`  | *(empty → uploads dir)*                | Allow-list root for `/load-mappings-from-dir`                 |
 
@@ -131,7 +142,7 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 | 9    | Concept mapping            | Per-column decision: map-with-AI, use defaults, or skip. Shared `ConceptSearch` picker. Gate-on-progress before next.            |
 | 10   | Stem table                 | Variable groups derived from the visit labels of Step 6. Structural FK columns hidden from the picker. Overrides have stable ids.|
 | 11   | Generate & Execute         | `Generate all` or per-table generate. Execution runs each script as its own subprocess in dependency order with per-table logs.  |
-| 12   | Load to OMOP DB            | Connect to Postgres, pick shared or project-scoped schema, optionally load Athena vocabulary, bulk-COPY all output CSVs.         |
+| 12   | Build the OMOP DB          | Two cards. **Card 1** auto-detects an Athena bundle mounted at `/vocab`, builds the `vocab` schema and bulk-loads it. **Card 2** picks shared/project-scoped clinical schema, bulk-COPYs the project's output CSVs, and optionally applies indices + FK constraints. |
 
 ---
 
@@ -148,30 +159,91 @@ fragment, row count and elapsed time are returned to the UI and surfaced on Step
 
 `backend/omop_ddl/` ships with the OHDSI Postgres DDL + primary keys vendored from
 [CommonDataModel v5.4](https://github.com/OHDSI/CommonDataModel/tree/v5.4/inst/ddl/5.4/postgresql).
-The `omop-init` compose service applies these on first start and writes a marker row so
-subsequent boots are a no-op. Indices and FK constraints are intentionally **not** applied
-by default — they can be applied manually after ETL + vocabulary load using the same
-`sed | psql` invocation shown in `backend/omop_ddl/OMOPCDM_postgresql_5.4_indices.sql`.
+The vendored DDL file intermingles vocab and clinical `CREATE TABLE` statements;
+[`backend/app/services/ddl_applier.py`](backend/app/services/ddl_applier.py) parses it at import
+time, buckets statements by table name (`VOCAB_TABLES` list), and applies each bucket into a
+separate schema:
+
+- Vocabulary tables (concept, vocabulary, …) → `${OMOP_VOCAB_SCHEMA}` (default `vocab`)
+- Clinical tables (person, visit_occurrence, …) → `${OMOP_SCHEMA}` (default `cdm`) or a
+  project-scoped schema picked in Step 12.
+
+Per-schema `__ddl_marker` rows make application idempotent. Indices and FK constraints are
+**not** applied by `omop-init`; they're triggered from Step 12 when the user ticks
+"Apply indices and FK constraints after load".
 
 ---
 
 ## Loading OMOP outputs into Postgres (Step 12)
 
-- Pick a schema mode: **shared** (`cdm`) or **project-scoped** (`cdm_<project_id>`).
-- `omop_loader.py` opens each CSV under `outputs/<project_id>/`, intersects its columns with the
-  target table's columns from `information_schema.columns`, and bulk-loads the intersection
-  with `COPY ... WITH (FORMAT csv, DELIMITER ';', NULL '', QUOTE '"')`.
-- Optional pre-load `TRUNCATE ... CASCADE`. Per-table row counts and elapsed time are streamed to the UI.
-- The UI polls `/api/projects/<id>/load-status` every 1.5s.
+Step 12 is split into two cards.
+
+**Card 1 — Vocabulary** calls `POST /api/load-vocabulary` after auto-detecting an Athena
+bundle at `/vocab` (overridable via free-text). The backend ensures the `vocab` schema and
+its DDL exist, then `vocab_loader.py` truncates and bulk-loads each `<TABLE>.csv` with
+`COPY ... WITH (FORMAT csv, DELIMITER E'\t', HEADER, QUOTE E'\b')`. Per-file progress is
+polled via `GET /api/vocab-status`.
+
+**Card 2 — ETL** calls `POST /api/projects/<id>/load-database` with the chosen
+`schema_mode`, optional `schema_name`, `truncate`, and `apply_indices` flag. The backend
+ensures the clinical schema and DDL exist (idempotent), sets `search_path = <clinical>, vocab, public`
+on the load connection, then `omop_loader.py` walks each generated CSV, intersects its
+columns with the target table's columns from `information_schema.columns`, and bulk-loads
+the intersection with `COPY ... WITH (FORMAT csv, DELIMITER ';', NULL '', QUOTE '"')`. When
+`apply_indices` is true, two synthetic table rows (`__indices__`, `__constraints__`) appear
+in the per-table progress and are filled by `ddl_applier.apply_indices` / `apply_constraints`
+after the CSV load. Per-table status is polled via `GET /api/projects/<id>/load-status`.
+
+Both polls run at 1.5 s.
 
 ---
 
-## Loading Athena vocabularies (optional)
+## Vocabulary files — single source of truth
 
-`vocab_loader.py` accepts a directory of Athena-exported tab-delimited CSVs and bulk-loads each one
-into the configured schema, truncating first for idempotency. The bundle path must lie inside
-`$ATHENA_BUNDLE_ROOT`. With the bundled Docker stack, mount your unzipped Athena bundle on
-`/vocab` inside the backend container and point Step 12 at `/vocab`.
+You only manage **one** directory on the host. Point `ATHENA_BUNDLE_PATH` (in `.env`) at the
+folder containing your unzipped Athena export, and three different components pick what they
+need from it:
+
+| Component | Files read | Mounted at | Mode |
+|---|---|---|---|
+| Step 12 / Card 1 — vocab loader | CONCEPT.csv, VOCABULARY.csv, DOMAIN.csv, CONCEPT_CLASS.csv, RELATIONSHIP.csv, CONCEPT_RELATIONSHIP.csv, CONCEPT_SYNONYM.csv, CONCEPT_ANCESTOR.csv, DRUG_STRENGTH.csv (all tab-delimited) | `/vocab` on `backend` | read-only |
+| Step 12 / Card 2 — ETL loader | (your project's generated CSVs in `outputs/<project_id>/`) | `/app/outputs` on `backend` | read-write |
+| Step 9 — EntityLinker concept search | CONCEPT.csv (tab-delimited) only | `/data` on `entitylinker` | read-write* |
+
+*EntityLinker uses the same directory to cache its FAISS index and SapBERT embeddings
+(`embeddings_*.npy`, `lookup_*.csv`, `faiss_*.index`). These files are auto-created on first
+run (a few minutes for SNOMED+LOINC; longer for full RxNorm). `.gitignore` already excludes
+them.
+
+**Concretely**: drop your unzipped Athena bundle anywhere on the host, set
+`ATHENA_BUNDLE_PATH=/your/absolute/path` in `.env`, then `docker compose up --build`.
+Card 1 of Step 12 auto-detects the bundle and shows "Detected 9 vocabulary files"; the
+EntityLinker container starts building its FAISS index on first request.
+
+If you don't want to bundle EntityLinker's caches with the same dir, mount them separately
+by editing `docker-compose.yml` — change the `entitylinker` service's
+`${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/data` to a dedicated cache volume and copy
+`CONCEPT.csv` into it.
+
+## Upgrading from a pre-vocab-schema dev DB
+
+Earlier versions stored vocabulary tables in the same schema as clinical data (`cdm`). To
+upgrade, the simplest path is to drop the Postgres volume:
+
+```powershell
+docker compose down -v   # removes pgdata
+docker compose up --build
+```
+
+`omop-init` will create both `vocab` and `cdm` cleanly. If you want to preserve any other
+schemas in the database, run instead:
+
+```powershell
+docker compose exec postgres psql -U omop -d omop -c "DROP SCHEMA cdm CASCADE; DROP SCHEMA IF EXISTS vocab CASCADE;"
+docker compose restart omop-init
+```
+
+Per-project `cdm_<id>` schemas are unaffected.
 
 ---
 
@@ -188,10 +260,12 @@ into the configured schema, truncating first for idempotency. The bundle path mu
 | POST   | `/api/projects/{id}/generate/{table}`             | Generate one table                                        |
 | POST   | `/api/projects/{id}/execute`                      | Execute the generated ETL                                 |
 | GET    | `/api/projects/{id}/execution-log`                | Last execution status                                     |
-| POST   | `/api/projects/{id}/load-database`                | Bulk-load output CSVs into Postgres                       |
-| GET    | `/api/projects/{id}/load-status`                  | Live load progress                                        |
-| POST   | `/api/load-vocabulary`                            | Load an Athena bundle into Postgres                       |
-| GET    | `/api/db-health`                                  | Postgres reachability + DDL-applied check                 |
+| POST   | `/api/projects/{id}/load-database`                | Bulk-load output CSVs into Postgres (accepts `apply_indices: bool`) |
+| GET    | `/api/projects/{id}/load-status`                  | Live ETL load progress                                    |
+| POST   | `/api/load-vocabulary`                            | Load an Athena bundle into the configured vocab schema    |
+| GET    | `/api/vocab-status`                               | Live vocabulary load progress                             |
+| GET    | `/api/vocab-bundle-info?path=/vocab`              | Auto-detect vocab CSVs at a path (path must lie inside `ATHENA_BUNDLE_ROOT`) |
+| GET    | `/api/db-health`                                  | Postgres reachability + per-schema DDL + vocab row count  |
 | POST   | `/api/projects/{id}/chat`                         | AI assistant for a specific table's generated code        |
 
 ---

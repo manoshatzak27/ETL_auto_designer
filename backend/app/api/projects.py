@@ -50,6 +50,12 @@ def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depend
         project.name = payload.name
     if payload.description is not None:
         project.description = payload.description
+    if payload.custom_vocabulary_id is not None:
+        # Normalize: strip + uppercase. Forbid empty after strip.
+        v = payload.custom_vocabulary_id.strip()
+        if not v:
+            raise HTTPException(status_code=400, detail="custom_vocabulary_id cannot be empty")
+        project.custom_vocabulary_id = v
     db.commit()
     db.refresh(project)
     return project

@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     omop_db_user: str = ""
     omop_db_password: str = ""
     omop_default_schema: str = "cdm"
+    omop_vocab_schema: str = "vocab"
 
     # Allow-listed root for vocabulary bundle paths (security guard for /load-vocabulary)
     athena_bundle_root: str = ""

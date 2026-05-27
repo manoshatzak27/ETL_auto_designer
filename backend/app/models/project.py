@@ -37,6 +37,11 @@ class Project(Base):
     # Concept mapping decisions made in Step 2 (per-variable strategy + concept selections)
     concept_decisions: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Vocabulary ID used for user-created custom concepts (id >= 2_000_000_000).
+    # Persisted on the project so the same vocabulary appears in custom_mappings.csv
+    # and is inserted into vocab.concept on Step 12 load.
+    custom_vocabulary_id: Mapped[str] = mapped_column(String(64), default="CUSTOM")
+
     # Generated concept mapping CSVs (produced from concept_decisions)
     mapping_files: Mapped[dict] = mapped_column(JSON, default=dict)
 

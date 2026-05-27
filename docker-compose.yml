@@ -1,18 +1,14 @@
-version: "3.9"
-
 # ──────────────────────────────────────────────────────────────────────────────
 # OMOP ETL Auto-Designer — full development stack.
 #
 #   docker compose up --build
 #
 # Services:
-#   postgres    Stores the OMOP CDM v5.4 data and (optionally) vocabulary.
-#   omop-init   One-shot. Applies DDL + primary keys on first run.
-#   backend     FastAPI server (port 8000), with hot reload.
-#   frontend    Vite dev server (port 5173), with HMR.
-#
-# Optional profile `vocab`:
-#   vocab-loader   Mounts ${ATHENA_BUNDLE_PATH} read-only and loads vocab CSVs.
+#   postgres       Stores the OMOP CDM v5.4 data and (optionally) vocabulary.
+#   omop-init      One-shot. Applies DDL + primary keys on first run.
+#   entitylinker   SapBERT + FAISS concept-search service used by Step 9.
+#   backend        FastAPI server (port 8000), with hot reload.
+#   frontend       Vite dev server (port 5173), with HMR.
 #
 # Wizard state (SQLite) stays inside the backend container under /app/etl_designer.db.
 # Postgres is used only for the final OMOP data load.
@@ -38,7 +34,9 @@ services:
       retries: 20
 
   omop-init:
-    image: postgres:16-alpine
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     container_name: omop-init
     restart: "no"
     depends_on:
@@ -49,11 +47,41 @@ services:
       PGUSER: ${POSTGRES_USER:-omop}
       PGPASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
       PGDATABASE: ${POSTGRES_DB:-omop}
-      OMOP_SCHEMA: ${OMOP_SCHEMA:-cdm}
+      OMOP_DB_HOST: postgres
+      OMOP_DB_PORT: 5432
+      OMOP_DB_NAME: ${POSTGRES_DB:-omop}
+      OMOP_DB_USER: ${POSTGRES_USER:-omop}
+      OMOP_DB_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      OMOP_DEFAULT_SCHEMA: ${OMOP_SCHEMA:-cdm}
+      OMOP_VOCAB_SCHEMA: ${OMOP_VOCAB_SCHEMA:-vocab}
     volumes:
-      - ./backend/omop_ddl:/ddl:ro
+      - ./backend:/app
       - ./scripts/init-omop.sh:/init-omop.sh:ro
     entrypoint: ["/bin/sh", "/init-omop.sh"]
+
+  entitylinker:
+    build:
+      context: ./entitylinker
+      dockerfile: dockerfile
+    container_name: omop-entitylinker
+    restart: unless-stopped
+    environment:
+      ENTITYLINKER_CONFIG: /app/config.yaml
+      EL_API_HOST: 0.0.0.0
+      EL_API_PORT: 8000
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - ./entitylinker/config.container.yaml:/app/config.yaml:ro
+      - ${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/data
+    ports:
+      - "${ENTITYLINKER_PORT:-8001}:8000"
+    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "8000"]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 120s
 
   backend:
     build:
@@ -66,15 +94,19 @@ services:
         condition: service_healthy
       omop-init:
         condition: service_completed_successfully
+      entitylinker:
+        condition: service_started
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      ENTITYLINKER_URL: http://entitylinker:8000/api/conceptlink
       OMOP_DB_HOST: postgres
       OMOP_DB_PORT: 5432
       OMOP_DB_NAME: ${POSTGRES_DB:-omop}
       OMOP_DB_USER: ${POSTGRES_USER:-omop}
       OMOP_DB_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
       OMOP_DEFAULT_SCHEMA: ${OMOP_SCHEMA:-cdm}
+      OMOP_VOCAB_SCHEMA: ${OMOP_VOCAB_SCHEMA:-vocab}
       ATHENA_BUNDLE_ROOT: /vocab
       DATABASE_URL: sqlite:////app/etl_designer.db
       UPLOAD_DIR: /app/uploads
@@ -99,6 +131,11 @@ services:
       - backend
     environment:
       VITE_API_TARGET: http://backend:8000
+      # Force Vite/chokidar to poll the bind-mounted filesystem.
+      # Native inotify events don't propagate from Windows host into Linux
+      # containers, so without this HMR misses host-side edits.
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "500"
     volumes:
       - ./frontend:/app
       - /app/node_modules

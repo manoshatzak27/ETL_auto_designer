@@ -17,16 +17,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from app.config import settings
-
-try:
-    import psycopg2
-    from psycopg2 import sql
-    _PSYCOPG2_AVAILABLE = True
-except ImportError:  # pragma: no cover
-    psycopg2 = None  # type: ignore[assignment]
-    sql = None  # type: ignore[assignment]
-    _PSYCOPG2_AVAILABLE = False
+from app.services.db import connect as _connect, sql
 
 
 # Athena export filename → OMOP table (lowercase) — exact filenames vary; we
@@ -83,20 +74,6 @@ def _append_log(line: str) -> None:
         _vocab_status.log = (_vocab_status.log + "\n" + line).strip()
 
 
-def _connect():
-    if not _PSYCOPG2_AVAILABLE:
-        raise RuntimeError("psycopg2 not installed")
-    if not settings.omop_db_host:
-        raise RuntimeError("OMOP_DB_HOST not configured")
-    return psycopg2.connect(
-        host=settings.omop_db_host,
-        port=settings.omop_db_port,
-        dbname=settings.omop_db_name,
-        user=settings.omop_db_user,
-        password=settings.omop_db_password,
-    )
-
-
 def _find_file(bundle_dir: Path, filename: str) -> Path | None:
     """Case-insensitive lookup so CONCEPT.csv / concept.csv both work."""
     target = filename.lower()
@@ -118,6 +95,15 @@ def load_vocabulary(bundle_path: str, schema: str) -> None:
             files=file_statuses,
         )
     )
+
+    # Ensure the vocab schema and its DDL exist before truncating tables.
+    try:
+        from app.services.ddl_applier import apply_schema_ddl
+        apply_schema_ddl(schema, "vocab")
+    except Exception as exc:  # noqa: BLE001
+        _append_log(f"[DDL] FATAL: {exc}")
+        _set_status(_vocab_status.copy(update={"overall": "error", "finished_at": time.time()}))
+        return
 
     try:
         with _connect() as conn:

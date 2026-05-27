@@ -60,10 +60,26 @@ export const generateCode = (projectId: string) =>
 export const generateTableScript = (projectId: string, table: string) =>
   api.post(`/projects/${projectId}/generate/${table}`).then(r => r.data)
 
-export const conceptSearch = (projectId: string, query: string, topK = 20) =>
+export const conceptSearch = (
+  projectId: string,
+  query: string,
+  topK = 20,
+  useReranker = false,
+) =>
   api
-    .post(`/projects/${projectId}/concept-search?query=${encodeURIComponent(query)}&top_k=${topK}`)
+    .post(
+      `/projects/${projectId}/concept-search?query=${encodeURIComponent(query)}` +
+        `&top_k=${topK}&use_reranker=${useReranker ? 'true' : 'false'}`,
+    )
     .then(r => r.data)
+
+export const getApiHealth = () =>
+  api.get<{ status: string; openai_configured: boolean }>('/health').then(r => r.data)
+
+export const updateProjectSettings = (
+  projectId: string,
+  payload: { custom_vocabulary_id?: string; name?: string; description?: string },
+) => api.patch(`/projects/${projectId}`, payload).then(r => r.data)
 
 // ---- Execution ----
 export const executeProject = (projectId: string) =>
@@ -87,11 +103,21 @@ export const clearChatHistory = (projectId: string) =>
   api.delete(`/projects/${projectId}/chat`).then(r => r.data)
 
 // ---- OMOP Postgres load ----
+export interface ClinicalSchemaInfo {
+  name: string
+  ddl_applied: boolean
+  person_rows: number
+}
+
 export interface DbHealth {
   configured: boolean
   connected: boolean
   ddl_applied: boolean
   schemas: string[]
+  vocab_schema: string
+  vocab_schema_ready: boolean
+  vocab_rows: number
+  clinical_schemas: ClinicalSchemaInfo[]
   error: string
 }
 
@@ -113,17 +139,55 @@ export interface LoadStatus {
   tables: TableLoadStatus[]
 }
 
+export interface VocabFileStatus {
+  file: string
+  table: string
+  status: string
+  rows: number
+  elapsed: number
+  error: string
+}
+
+export interface VocabLoadStatus {
+  schema: string
+  overall: string
+  started_at: number
+  finished_at: number
+  log: string
+  files: VocabFileStatus[]
+}
+
+export interface VocabBundleInfo {
+  path: string
+  exists: boolean
+  detected_files: string[]
+  total_size_bytes: number
+}
+
 export const getDbHealth = () => api.get<DbHealth>('/db-health').then(r => r.data)
 
 export const loadDatabase = (
   projectId: string,
-  payload: { schema_mode: 'shared' | 'project'; schema_name?: string; truncate: boolean },
+  payload: {
+    schema_mode: 'shared' | 'project'
+    schema_name?: string
+    truncate: boolean
+    apply_indices?: boolean
+  },
 ) => api.post(`/projects/${projectId}/load-database`, payload).then(r => r.data)
 
 export const getLoadStatus = (projectId: string) =>
   api.get<LoadStatus>(`/projects/${projectId}/load-status`).then(r => r.data)
 
-export const loadVocabulary = (payload: { bundle_path: string; schema_name?: string }) =>
+export const loadVocabulary = (payload: { bundle_path: string }) =>
   api.post('/load-vocabulary', payload).then(r => r.data)
+
+export const getVocabStatus = () =>
+  api.get<VocabLoadStatus>('/vocab-status').then(r => r.data)
+
+export const getVocabBundleInfo = (path = '/vocab') =>
+  api
+    .get<VocabBundleInfo>(`/vocab-bundle-info?path=${encodeURIComponent(path)}`)
+    .then(r => r.data)
 
 export default api

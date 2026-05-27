@@ -82,19 +82,36 @@ async def generate_all_tables(
 
 
 @router.post("/{project_id}/concept-search")
-async def concept_search(project_id: str, query: str, top_k: int = 20):
-    """Proxy concept search to the EntityLinker service."""
+async def concept_search(
+    project_id: str,
+    query: str,
+    top_k: int = 20,
+    use_reranker: bool = False,
+):
+    """Proxy concept search to the EntityLinker service.
+
+    use_reranker=True asks EntityLinker to invoke its GPT reranker; that path
+    returns a model-generated `justification` per candidate but requires an
+    OPENAI_API_KEY on the EntityLinker side and is slower.
+    """
     import httpx
     from app.config import settings
 
     if not settings.entitylinker_url:
         raise HTTPException(status_code=503, detail="EntityLinker URL not configured")
 
+    if use_reranker and not settings.openai_api_key:
+        raise HTTPException(
+            status_code=400,
+            detail="Reranker requires OPENAI_API_KEY to be configured.",
+        )
+
     try:
-        async with httpx.AsyncClient(timeout=30) as client:
+        timeout = 90 if use_reranker else 30
+        async with httpx.AsyncClient(timeout=timeout) as client:
             resp = await client.post(
                 settings.entitylinker_url,
-                json={"query": query, "top_k": top_k, "use_reranker": False},
+                json={"query": query, "top_k": top_k, "use_reranker": use_reranker},
             )
             resp.raise_for_status()
             return resp.json()

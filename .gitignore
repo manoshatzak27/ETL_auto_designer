@@ -23,6 +23,12 @@ outputs/
 # Postgres docker volume
 pgdata/
 
+# Athena vocab bundle (user-supplied) + EntityLinker FAISS / embedding caches
+vocab_bundle/
+embeddings_*.npy
+faiss_*.index
+lookup_*.csv
+
 # Frontend
 frontend/node_modules/
 frontend/dist/

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getColumnValues,
@@ -6,6 +6,9 @@ import {
   saveConceptDecisions,
   generateMappingCsvs,
   lookupConceptDomain,
+  conceptSearch,
+  getApiHealth,
+  updateProjectSettings,
 } from '../../api/client'
 import type { Project } from '../../types'
 import { getStructuralColumns } from '../../utils'
@@ -13,10 +16,9 @@ import WizardLayout from './WizardLayout'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, Search, X,
-  AlertTriangle, Tag,
+  AlertTriangle, Tag, Sparkles, Plus,
 } from 'lucide-react'
 import clsx from 'clsx'
-import axios from 'axios'
 
 interface Props {
   project: Project
@@ -31,8 +33,16 @@ interface ConceptRef {
   concept_id: number
   concept_name: string
   vocabulary_id?: string
-  domain?: string
-  domain_id?: number
+  domain?: string            // OMOP domain string (e.g., "Observation")
+  domain_id?: number         // numeric 1-5 → our 5 ETL tables (stem_table routing)
+  // Custom-concept metadata (only set when concept was created via the form)
+  is_custom?: boolean
+  concept_code?: string
+  concept_class_id?: string
+  domain_id_str?: string     // OMOP domain string, what gets inserted into vocab.concept
+  // EntityLinker result fields (only present on search results)
+  score?: number
+  justification?: string
 }
 
 interface VariableDecision {
@@ -62,6 +72,36 @@ const DOMAIN_STRING_MAP: Record<string, number> = {
   'condition': 5,
   'condition occurrence': 5,
 }
+
+// OMOP domain strings used as vocab.concept.domain_id values. The first 5
+// match our ETL routing; the rest are valid OMOP domains for custom concepts
+// that won't be routed through the stem_table (e.g., Visit, Device).
+const OMOP_DOMAIN_OPTIONS = [
+  'Observation', 'Measurement', 'Condition', 'Drug', 'Procedure',
+  'Device', 'Visit', 'Note', 'Specimen', 'Provider', 'Care Site', 'Geography',
+] as const
+
+// Common concept_class_id values per domain. Used as datalist hints; user
+// can type anything since OMOP has many vocab-specific classes.
+const COMMON_CONCEPT_CLASSES = [
+  'Clinical Finding', 'Procedure', 'Observable Entity', 'Substance',
+  'Lab Test', 'Survey', 'Question', 'Answer', 'Drug', 'Device', 'Visit',
+  'Disorder', 'Finding', 'Event', 'Custom',
+] as const
+
+// ── Shared per-page settings (avoid prop-drilling) ─────────────────────────
+
+interface Step9Settings {
+  rerankerAvailable: boolean
+  customVocabularyId: string
+}
+
+const Step9Ctx = createContext<Step9Settings>({
+  rerankerAvailable: false,
+  customVocabularyId: 'CUSTOM',
+})
+
+const useStep9Settings = () => useContext(Step9Ctx)
 
 interface ColumnInfo {
   distinct_values: string[]
@@ -151,18 +191,20 @@ function useConceptSearch(projectId: string) {
   const [loading, setLoading] = useState(false)
   const [unavailable, setUnavailable] = useState(false)
 
-  const search = async (q?: string) => {
+  const search = async (q?: string, useReranker = false) => {
     const term = q ?? query
     if (!term.trim()) return
     setLoading(true)
     setUnavailable(false)
     try {
-      const res = await axios.post(`/api/projects/${projectId}/concept-search?query=${encodeURIComponent(term)}&top_k=15`)
-      setResults((res.data.conceptlinks || []).map((c: Record<string, unknown>) => ({
-        concept_id: c.concept_id,
-        concept_name: c.concept_name,
-        vocabulary_id: c.vocabulary_id,
-        domain: c.domain,
+      const data = await conceptSearch(projectId, term, 15, useReranker)
+      setResults((data.conceptlinks || []).map((c: Record<string, unknown>) => ({
+        concept_id: c.concept_id as number,
+        concept_name: c.concept_name as string,
+        vocabulary_id: c.vocabulary_id as string | undefined,
+        domain: c.domain as string | undefined,
+        score: typeof c.score === 'number' ? c.score : undefined,
+        justification: typeof c.justification === 'string' ? c.justification : undefined,
       })))
     } catch {
       setUnavailable(true)
@@ -175,6 +217,143 @@ function useConceptSearch(projectId: string) {
   const clear = () => { setResults([]); setQuery('') }
 
   return { query, setQuery, results, loading, unavailable, search, clear }
+}
+
+// ── Custom concept form ───────────────────────────────────────────────────
+
+function CustomConceptForm({
+  defaultName,
+  defaultVocabularyId,
+  onCancel,
+  onCreate,
+}: {
+  defaultName: string
+  defaultVocabularyId: string
+  onCancel: () => void
+  onCreate: (c: ConceptRef) => void
+}) {
+  const [conceptId, setConceptId] = useState('2000000001')
+  const [conceptName, setConceptName] = useState(defaultName)
+  const [conceptCode, setConceptCode] = useState('')
+  const [domain, setDomain] = useState<string>('Observation')
+  const [conceptClass, setConceptClass] = useState('Clinical Finding')
+  const [vocabularyId, setVocabularyId] = useState(defaultVocabularyId)
+
+  const idNum = parseInt(conceptId, 10)
+  const idValid = !isNaN(idNum) && idNum >= 2_000_000_000
+  const nameValid = conceptName.trim().length > 0
+  const codeValid = conceptCode.trim().length > 0
+  const canCreate = idValid && nameValid && codeValid && vocabularyId.trim().length > 0
+
+  const submit = () => {
+    if (!canCreate) return
+    const numericDomain = DOMAIN_STRING_MAP[domain.toLowerCase()]
+    onCreate({
+      concept_id: idNum,
+      concept_name: conceptName.trim(),
+      concept_code: conceptCode.trim(),
+      vocabulary_id: vocabularyId.trim(),
+      concept_class_id: conceptClass.trim() || 'Clinical Finding',
+      domain_id_str: domain,
+      domain: domain,
+      domain_id: numericDomain,
+      is_custom: true,
+    })
+  }
+
+  return (
+    <div className="flex flex-col gap-2 pl-1 border-l-2 border-purple-400/60 bg-purple-50/40 rounded-r p-2">
+      <div className="flex items-center gap-2 text-xs font-semibold text-purple-800">
+        <Plus className="w-3.5 h-3.5" /> New custom OMOP concept
+      </div>
+
+      <div className="grid grid-cols-2 gap-1.5">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-purple-700 font-medium uppercase tracking-wide">Concept ID *</span>
+          <input
+            type="number"
+            value={conceptId}
+            onChange={e => setConceptId(e.target.value)}
+            className="border border-purple-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+            min={2_000_000_000}
+          />
+          {!idValid && conceptId !== '' && (
+            <span className="text-[10px] text-red-600">Must be ≥ 2,000,000,000</span>
+          )}
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-purple-700 font-medium uppercase tracking-wide">Concept code *</span>
+          <input
+            type="text"
+            value={conceptCode}
+            onChange={e => setConceptCode(e.target.value)}
+            placeholder="e.g. VLB-HRT-001"
+            className="border border-purple-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+          />
+        </label>
+      </div>
+
+      <label className="flex flex-col gap-0.5">
+        <span className="text-[10px] text-purple-700 font-medium uppercase tracking-wide">Concept name *</span>
+        <input
+          type="text"
+          value={conceptName}
+          onChange={e => setConceptName(e.target.value)}
+          placeholder="Human-readable name"
+          className="border border-purple-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+        />
+      </label>
+
+      <div className="grid grid-cols-3 gap-1.5">
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-purple-700 font-medium uppercase tracking-wide">Domain</span>
+          <select
+            value={domain}
+            onChange={e => setDomain(e.target.value)}
+            className="border border-purple-200 rounded px-1.5 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+          >
+            {OMOP_DOMAIN_OPTIONS.map(d => <option key={d} value={d}>{d}</option>)}
+          </select>
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-purple-700 font-medium uppercase tracking-wide">Concept class</span>
+          <input
+            type="text"
+            list="concept-classes"
+            value={conceptClass}
+            onChange={e => setConceptClass(e.target.value)}
+            className="border border-purple-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+          />
+          <datalist id="concept-classes">
+            {COMMON_CONCEPT_CLASSES.map(c => <option key={c} value={c} />)}
+          </datalist>
+        </label>
+        <label className="flex flex-col gap-0.5">
+          <span className="text-[10px] text-purple-700 font-medium uppercase tracking-wide">Vocabulary</span>
+          <input
+            type="text"
+            value={vocabularyId}
+            onChange={e => setVocabularyId(e.target.value)}
+            className="border border-purple-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-purple-400 bg-white"
+          />
+        </label>
+      </div>
+
+      <div className="flex items-center gap-2 mt-1">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="text-xs text-muted-foreground hover:text-foreground px-2 py-1"
+        >Cancel</button>
+        <button
+          type="button"
+          onClick={submit}
+          disabled={!canCreate}
+          className="ml-auto px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-40 font-medium"
+        >Create</button>
+      </div>
+    </div>
+  )
 }
 
 // ── ConceptPicker — inline search + manual ID entry ────────────────────────
@@ -194,10 +373,13 @@ function ConceptPicker({
   onSelect: (c: ConceptRef) => void
   onClear: () => void
 }) {
+  const { rerankerAvailable, customVocabularyId } = useStep9Settings()
   const cs = useConceptSearch(projectId)
   const [manualId, setManualId] = useState('')
   const [manualName, setManualName] = useState('')
   const [showSearch, setShowSearch] = useState(false)
+  const [showCustom, setShowCustom] = useState(false)
+  const [useReranker, setUseReranker] = useState(rerankerAvailable)
 
   const applyManual = () => {
     const id = parseInt(manualId)
@@ -207,16 +389,22 @@ function ConceptPicker({
   }
 
   if (value) {
-    const isCustom = value.concept_id >= 2_000_000_000
+    const isCustom = value.is_custom || value.concept_id >= 2_000_000_000
     return (
       <div className={clsx(
         'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs w-full',
         isCustom ? 'bg-purple-50 border border-purple-200 text-purple-800' : 'bg-green-50 border border-green-200 text-green-800'
       )}>
         <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+        {isCustom && (
+          <span className="bg-purple-200 text-purple-800 px-1.5 py-0 rounded text-[10px] font-bold uppercase tracking-wide">Custom</span>
+        )}
         <span className="font-semibold">{value.concept_name}</span>
         <span className="text-muted-foreground ml-1">({value.concept_id})</span>
         {value.vocabulary_id && <span className="text-muted-foreground">· {value.vocabulary_id}</span>}
+        {isCustom && value.concept_code && (
+          <span className="text-muted-foreground">· code: {value.concept_code}</span>
+        )}
         <button onClick={onClear} className="ml-auto text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
       </div>
     )
@@ -225,7 +413,7 @@ function ConceptPicker({
   return (
     <div className="flex flex-col gap-1.5 w-full">
       {/* Manual entry row */}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <input
           type="number"
           value={manualId}
@@ -240,7 +428,7 @@ function ConceptPicker({
           onChange={e => setManualName(e.target.value)}
           onKeyDown={e => e.key === 'Enter' && applyManual()}
           placeholder="Name (optional)"
-          className="border border-border rounded px-2 py-1 text-xs flex-1 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+          className="border border-border rounded px-2 py-1 text-xs flex-1 min-w-[120px] focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
         />
         <button
           onClick={applyManual}
@@ -248,55 +436,117 @@ function ConceptPicker({
           className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90"
         >Set</button>
         <button
-          onClick={() => { setShowSearch(s => !s); if (!cs.query) cs.setQuery(defaultQuery) }}
-          className={clsx('px-2 py-1 text-xs rounded border', showSearch ? 'bg-secondary/60 border-primary text-primary' : 'border-border text-muted-foreground hover:border-primary')}
-          title="Search EntityLinker"
+          onClick={() => { setShowSearch(s => !s); setShowCustom(false); if (!cs.query) cs.setQuery(defaultQuery) }}
+          className={clsx(
+            'flex items-center gap-1 px-2.5 py-1 text-xs rounded border font-medium transition-colors',
+            showSearch
+              ? 'bg-indigo-100 border-indigo-400 text-indigo-800'
+              : 'border-indigo-200 bg-white text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50',
+          )}
+          title="Semantic search via SapBERT + FAISS"
         >
-          <Search className="w-3 h-3" />
+          <Sparkles className="w-3 h-3" /> AI Search
+        </button>
+        <button
+          onClick={() => { setShowCustom(s => !s); setShowSearch(false) }}
+          className={clsx(
+            'flex items-center gap-1 px-2.5 py-1 text-xs rounded border font-medium transition-colors',
+            showCustom
+              ? 'bg-purple-100 border-purple-400 text-purple-800'
+              : 'border-purple-200 bg-white text-purple-700 hover:border-purple-400 hover:bg-purple-50',
+          )}
+          title="Create a custom OMOP concept"
+        >
+          <Plus className="w-3 h-3" /> Custom
         </button>
       </div>
 
       {/* Search panel */}
       {showSearch && (
-        <div className="flex flex-col gap-1.5 pl-1 border-l-2 border-primary/30">
-          <div className="flex gap-1.5">
+        <div className="flex flex-col gap-1.5 pl-2 border-l-2 border-indigo-400/60 bg-indigo-50/30 rounded-r py-1.5">
+          <div className="flex items-center gap-1.5 px-1">
+            <Sparkles className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
             <input
               type="text"
               value={cs.query}
               onChange={e => cs.setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && cs.search()}
+              onKeyDown={e => e.key === 'Enter' && cs.search(undefined, useReranker)}
               placeholder={`Search "${defaultQuery}"…`}
-              className="flex-1 border border-border rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+              className="flex-1 border border-indigo-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-foreground"
               autoFocus
             />
             <button
-              onClick={() => cs.search()}
-              disabled={cs.loading}
-              className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-40 hover:bg-primary/90"
+              onClick={() => cs.search(undefined, useReranker)}
+              disabled={cs.loading || !cs.query.trim()}
+              className="px-3 py-1 text-xs bg-indigo-600 text-white rounded disabled:opacity-40 hover:bg-indigo-700 font-medium flex items-center gap-1"
             >
-              {cs.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Go'}
+              {cs.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Search'}
             </button>
           </div>
+          {/* Reranker toggle */}
+          <div className="flex items-center gap-2 px-1">
+            <label className={clsx(
+              'flex items-center gap-1.5 text-xs cursor-pointer select-none',
+              !rerankerAvailable && 'opacity-50 cursor-not-allowed',
+            )}>
+              <input
+                type="checkbox"
+                checked={useReranker && rerankerAvailable}
+                disabled={!rerankerAvailable}
+                onChange={e => setUseReranker(e.target.checked)}
+                className="rounded accent-indigo-600"
+              />
+              <span className="text-indigo-900 font-medium">GPT reranker</span>
+              <span className="text-indigo-600 text-[10px]">
+                {rerankerAvailable
+                  ? useReranker ? 'slower, with justification' : 'fast cosine similarity'
+                  : 'requires OPENAI_API_KEY'}
+              </span>
+            </label>
+          </div>
           {cs.unavailable && (
-            <p className="text-xs text-amber-600 flex items-center gap-1">
-              <AlertTriangle className="w-3 h-3" /> EntityLinker not running — use manual ID entry
+            <p className="text-xs text-amber-600 flex items-center gap-1 px-1">
+              <AlertTriangle className="w-3 h-3" /> EntityLinker not running — use manual ID entry or Custom
             </p>
           )}
+          {cs.loading && useReranker && (
+            <p className="text-xs text-indigo-600 px-1 italic">Reranking with GPT — this can take 10-30 s…</p>
+          )}
           {cs.results.length > 0 && (
-            <div className="border border-border rounded max-h-36 overflow-y-auto shadow-sm">
+            <div className="border border-indigo-200 rounded bg-white max-h-72 overflow-y-auto shadow-sm">
               {cs.results.map(c => (
                 <button
                   key={c.concept_id}
                   onClick={() => { onSelect(c); setShowSearch(false); cs.clear() }}
-                  className="w-full text-left px-2.5 py-2 hover:bg-secondary/60 border-b last:border-0 border-border"
+                  className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 border-b last:border-0 border-indigo-100 flex flex-col gap-0.5"
                 >
-                  <span className="text-xs font-medium text-foreground">{c.concept_name}</span>
-                  <span className="text-xs text-muted-foreground ml-1.5">{c.concept_id} · {c.domain} · {c.vocabulary_id}</span>
+                  <div className="flex items-baseline gap-1.5 flex-wrap">
+                    <span className="text-xs font-semibold text-foreground">{c.concept_name}</span>
+                    <span className="text-[10px] text-muted-foreground font-mono">{c.concept_id}</span>
+                    {c.domain && <span className="text-[10px] text-indigo-700 bg-indigo-100 px-1 rounded">{c.domain}</span>}
+                    {c.vocabulary_id && <span className="text-[10px] text-muted-foreground">{c.vocabulary_id}</span>}
+                    {typeof c.score === 'number' && (
+                      <span className="ml-auto text-[10px] text-indigo-700 font-semibold">{(c.score * 100).toFixed(0)}%</span>
+                    )}
+                  </div>
+                  {c.justification && c.justification !== 'Cosine similarity score' && (
+                    <p className="text-[11px] text-muted-foreground italic leading-snug">↳ {c.justification}</p>
+                  )}
                 </button>
               ))}
             </div>
           )}
         </div>
+      )}
+
+      {/* Custom concept form */}
+      {showCustom && (
+        <CustomConceptForm
+          defaultName={defaultQuery}
+          defaultVocabularyId={customVocabularyId}
+          onCancel={() => setShowCustom(false)}
+          onCreate={c => { onSelect(c); setShowCustom(false) }}
+        />
       )}
     </div>
   )
@@ -761,18 +1011,35 @@ function VariableRow({
           )}
 
           {/* Value mapping table */}
-          {(decision.strategy === 'map_values' || decision.strategy === 'map_both') && info && (
+          {(decision.strategy === 'map_values' || decision.strategy === 'map_both') && (
             <div className="flex flex-col gap-1.5">
               <p className="text-xs font-semibold text-muted-foreground">
                 {decision.strategy === 'map_both' ? 'value_as_concept_id for each value' : 'Concept for each (variable, value) pair'}
               </p>
-              <ValueMappingTable
-                projectId={projectId}
-                column={column}
-                values={info.distinct_values}
-                mapped={decision.value_concepts}
-                onChange={vc => onChange({ ...decision, value_concepts: vc })}
-              />
+              {!info ? (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-semibold">Distinct values not loaded for this column.</p>
+                    <p className="mt-0.5">
+                      The backend couldn't read the source CSV. Most likely the file was deleted (e.g., after a Docker volume reset). Go back to <strong>Step 1</strong> and re-upload your source.
+                    </p>
+                  </div>
+                </div>
+              ) : info.distinct_values.length === 0 ? (
+                <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span>This column has no distinct non-null values to map.</span>
+                </div>
+              ) : (
+                <ValueMappingTable
+                  projectId={projectId}
+                  column={column}
+                  values={info.distinct_values}
+                  mapped={decision.value_concepts}
+                  onChange={vc => onChange({ ...decision, value_concepts: vc })}
+                />
+              )}
             </div>
           )}
         </div>
@@ -944,6 +1211,32 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   const [filter, setFilter] = useState<'all' | 'mapped' | 'skipped'>('all')
   const [search, setSearch] = useState('')
 
+  // AI / custom-concept settings
+  const [openaiConfigured, setOpenaiConfigured] = useState(false)
+  const [customVocab, setCustomVocab] = useState(project.custom_vocabulary_id || 'CUSTOM')
+  const [editingVocab, setEditingVocab] = useState(false)
+  const [vocabDraft, setVocabDraft] = useState(customVocab)
+
+  useEffect(() => {
+    getApiHealth()
+      .then(h => setOpenaiConfigured(!!h.openai_configured))
+      .catch(() => setOpenaiConfigured(false))
+  }, [])
+
+  const saveCustomVocab = async () => {
+    const v = vocabDraft.trim()
+    if (!v || v === customVocab) { setEditingVocab(false); return }
+    try {
+      const updated = await updateProjectSettings(project.id, { custom_vocabulary_id: v })
+      setCustomVocab(v)
+      onUpdate(updated)
+    } catch {
+      // ignore — keep editor open
+      return
+    }
+    setEditingVocab(false)
+  }
+
   const cols = project.source_columns || []
 
   const structuralCols = useMemo(
@@ -1013,6 +1306,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   })
 
   return (
+    <Step9Ctx.Provider value={{ rerankerAvailable: openaiConfigured, customVocabularyId: customVocab }}>
     <WizardLayout
       projectId={project.id}
       projectName={project.name}
@@ -1035,6 +1329,44 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
           </p>
         </div>
 
+        {/* AI + custom-vocab settings banner */}
+        <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs">
+          <div className="flex items-center gap-1.5">
+            <Sparkles className={clsx('w-3.5 h-3.5', openaiConfigured ? 'text-indigo-600' : 'text-muted-foreground')} />
+            <span className="font-semibold text-foreground">AI reranker:</span>
+            <span className={openaiConfigured ? 'text-indigo-700' : 'text-muted-foreground'}>
+              {openaiConfigured ? 'available' : 'disabled (set OPENAI_API_KEY)'}
+            </span>
+          </div>
+          <span className="text-muted-foreground">·</span>
+          <div className="flex items-center gap-1.5">
+            <Plus className="w-3.5 h-3.5 text-purple-600" />
+            <span className="font-semibold text-foreground">Custom vocabulary:</span>
+            {editingVocab ? (
+              <>
+                <input
+                  type="text"
+                  value={vocabDraft}
+                  autoFocus
+                  onChange={e => setVocabDraft(e.target.value)}
+                  onKeyDown={e => { if (e.key === 'Enter') saveCustomVocab(); if (e.key === 'Escape') { setVocabDraft(customVocab); setEditingVocab(false) } }}
+                  className="border border-purple-300 rounded px-1.5 py-0.5 text-xs w-32 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
+                />
+                <button onClick={saveCustomVocab} className="text-purple-700 font-medium hover:underline">save</button>
+                <button onClick={() => { setVocabDraft(customVocab); setEditingVocab(false) }} className="text-muted-foreground hover:text-foreground">cancel</button>
+              </>
+            ) : (
+              <>
+                <code className="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-mono">{customVocab}</code>
+                <button onClick={() => { setVocabDraft(customVocab); setEditingVocab(true) }} className="text-purple-700 hover:underline">edit</button>
+              </>
+            )}
+          </div>
+          <span className="text-muted-foreground ml-auto">
+            Default vocabulary id applied to custom concepts (id ≥ 2,000,000,000).
+          </span>
+        </div>
+
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-card border border-border rounded-lg p-3 text-center">
@@ -1050,6 +1382,20 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
             <p className="text-xs text-muted-foreground">Skipped</p>
           </div>
         </div>
+
+        {/* Source-data sanity check */}
+        {!loading && conceptCols.length > 0 && Object.keys(columnInfos).length === 0 && (
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Source CSV not available — value-mapping options won't render.</p>
+              <p className="mt-0.5">
+                The project row still references a source file that no longer exists on disk (common after a Docker volume reset).
+                Go back to <strong>Step 1: Source upload</strong> and re-upload the same CSV to restore distinct-value detection.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Excluded structural columns */}
         {structuralCols.size > 0 && (
@@ -1144,5 +1490,6 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
         </div>
       </div>
     </WizardLayout>
+    </Step9Ctx.Provider>
   )
 }

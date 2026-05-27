@@ -1,0 +1,26 @@
+[tool.poetry]
+name = "entitylinker"
+version = "0.1.0"
+description = "Maps free-text clinical phrases to standardized OMOP concepts (SNOMED CT, LOINC, …) using SapBERT, FAISS, and GPT-based reranking."
+authors = ["Ilias Kioroglou <i.kioroglou@ainigma.tech>"]
+readme = "README.md"
+packages = [{ include = "entitylinker" }]
+exclude = [
+  "entitylinker/data/**",
+]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+pandas = ">=2.3.0,<3.0.0"
+transformers = ">=4.52.4,<5.0.0"
+torch = ">=2.7.1,<3.0.0"
+faiss-cpu = ">=1.7.4,<2.0.0"
+openai = ">=1.0.0,<2.0.0"
+python-dotenv = "^1.1.1"
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.4.0,<9.0.0"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

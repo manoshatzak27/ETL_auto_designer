@@ -1,0 +1,14 @@
+data_dir: "/data"
+vocabularies:
+  - SNOMED
+  - LOINC
+  # Order must match the suffix of your prebuilt cache files in /data:
+  #   embeddings_<V1>_<V2>_..._<Vn>.npy
+  #   lookup_<V1>_<V2>_..._<Vn>.csv
+  #   faiss_<V1>_<V2>_..._<Vn>.index
+  # If you regenerate caches, you can uncomment more vocabularies below.
+  # - Cancer Modifier
+  # - OMOP Extension
+  # - OMOP Genomic
+  # - RxNorm
+  # - RxNorm Extension

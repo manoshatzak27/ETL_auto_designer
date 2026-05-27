@@ -25,6 +25,7 @@ export interface Project {
   last_execution_status: string
   output_files: string[]
   mapping_files: Record<string, string>
+  custom_vocabulary_id?: string
 }
 
 // ---- Per-table config shapes ----

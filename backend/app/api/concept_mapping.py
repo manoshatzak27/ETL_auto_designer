@@ -164,7 +164,11 @@ def generate_csvs(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="No concept decisions saved yet")
 
     output_dir = str(settings.get_upload_path() / project_id / "mappings")
-    files = generate_mapping_csvs(project.concept_decisions, output_dir)
+    files = generate_mapping_csvs(
+        project.concept_decisions,
+        output_dir,
+        custom_vocabulary_id=project.custom_vocabulary_id or "CUSTOM",
+    )
 
     if not files:
         raise HTTPException(

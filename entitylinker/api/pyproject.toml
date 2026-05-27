@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "entitylinker-api"
+version = "0.1.0"
+description = "FastAPI wrapper exposing the entitylinker core as a web service."
+authors = ["Ilias Kioroglou <i.kioroglou@ainigma.tech>"]
+readme = "README.md"
+packages = [{ include = "api" }] 
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+entitylinker = { path = "..", develop = true }
+fastapi = ">=0.115.13,<0.116.0"
+uvicorn = ">=0.34.3,<0.35.0"
+
+[tool.poetry.scripts]
+entitylinker-api = "api.application:main"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
