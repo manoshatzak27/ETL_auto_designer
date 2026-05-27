@@ -32,6 +32,7 @@ interface ConceptRef {
   concept_name: string
   vocabulary_id?: string
   domain?: string
+  domain_id?: number
 }
 
 interface VariableDecision {
@@ -301,6 +302,124 @@ function ConceptPicker({
   )
 }
 
+// ── Per-value concept row with domain auto-detection ──────────────────────
+
+function ValueConceptRow({
+  projectId,
+  val,
+  column,
+  concept,
+  onSelect,
+  onClear,
+}: {
+  projectId: string
+  val: string
+  column: string
+  concept: ConceptRef | null
+  onSelect: (c: ConceptRef) => void
+  onClear: () => void
+}) {
+  const [domainMode, setDomainMode] = useState<'auto' | 'manual'>('auto')
+  const [lookingUpDomain, setLookingUpDomain] = useState(false)
+  const [rawDomain, setRawDomain] = useState<string | null>(null)
+  const [lookupFailed, setLookupFailed] = useState(false)
+
+  useEffect(() => {
+    if (!concept) { setRawDomain(null); setLookupFailed(false); return }
+    if (domainMode !== 'auto') return
+
+    setLookupFailed(false)
+
+    if (concept.domain) {
+      setRawDomain(concept.domain)
+      const numeric = DOMAIN_STRING_MAP[concept.domain.toLowerCase()]
+      if (numeric !== undefined && concept.domain_id !== numeric) {
+        onSelect({ ...concept, domain_id: numeric })
+      }
+      return
+    }
+
+    setLookingUpDomain(true)
+    setRawDomain(null)
+    lookupConceptDomain(concept.concept_id)
+      .then(res => {
+        if (res.found && res.domain_id) {
+          setRawDomain(res.domain_id)
+          const numeric = DOMAIN_STRING_MAP[res.domain_id.toLowerCase()]
+          if (numeric !== undefined) {
+            onSelect({ ...concept, domain_id: numeric })
+          }
+        } else {
+          setRawDomain(null)
+        }
+      })
+      .catch(() => setLookupFailed(true))
+      .finally(() => setLookingUpDomain(false))
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [concept?.concept_id, domainMode])
+
+  const detectedDomainId = concept?.domain_id ?? null
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <ConceptPicker
+        projectId={projectId}
+        label={val}
+        defaultQuery={`${column} ${val}`}
+        value={concept}
+        onSelect={c => onSelect(c)}
+        onClear={onClear}
+      />
+      {concept && (
+        <div className="pl-1">
+          {domainMode === 'auto' ? (
+            <div className={clsx(
+              'flex items-center gap-2 px-2.5 py-1 rounded border text-xs',
+              detectedDomainId !== null
+                ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
+                : lookupFailed || (rawDomain && detectedDomainId === null)
+                  ? 'border-amber-200 bg-amber-50 text-amber-700'
+                  : 'border-gray-200 bg-gray-50 text-gray-400',
+            )}>
+              {lookingUpDomain ? (
+                <><Loader2 className="w-3 h-3 animate-spin flex-shrink-0" />Looking up domain…</>
+              ) : detectedDomainId !== null ? (
+                <>
+                  <span className="font-medium">{DOMAIN_OPTIONS.find(d => d.value === detectedDomainId)?.label} · {detectedDomainId}</span>
+                  <span className="ml-auto text-indigo-300 text-[10px]">auto</span>
+                  <button type="button" onClick={() => setDomainMode('manual')} className="text-indigo-400 hover:text-indigo-600 text-[10px]">change</button>
+                </>
+              ) : lookupFailed ? (
+                <>
+                  <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                  <span>Lookup failed</span>
+                  <button type="button" onClick={() => setDomainMode('manual')} className="ml-auto text-[10px] hover:underline">Set manually</button>
+                </>
+              ) : rawDomain ? (
+                <>
+                  <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                  <span>Unknown domain "{rawDomain}"</span>
+                  <button type="button" onClick={() => setDomainMode('manual')} className="ml-auto text-[10px] hover:underline">Set manually</button>
+                </>
+              ) : (
+                <span>Set a concept above to auto-detect domain</span>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5">
+              <DomainPicker
+                value={concept.domain_id ?? null}
+                onChange={v => onSelect({ ...concept, domain_id: v ?? undefined })}
+              />
+              <button type="button" onClick={() => setDomainMode('auto')} className="text-[10px] text-gray-400 hover:text-gray-600 whitespace-nowrap">auto</button>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Value mapping table ────────────────────────────────────────────────────
 
 function ValueMappingTable({
@@ -343,11 +462,11 @@ function ValueMappingTable({
               <tr key={val} className={clsx(i % 2 === 0 ? 'bg-card' : 'bg-muted', 'border-b last:border-0 border-border')}>
                 <td className="px-3 py-2 font-mono text-foreground align-top pt-3">{val}</td>
                 <td className="px-3 py-2">
-                  <ConceptPicker
+                  <ValueConceptRow
                     projectId={projectId}
-                    label={val}
-                    defaultQuery={`${column} ${val}`}
-                    value={mapped[val] ?? null}
+                    val={val}
+                    column={column}
+                    concept={mapped[val] ?? null}
                     onSelect={c => set(val, c)}
                     onClear={() => set(val, null)}
                   />
@@ -542,8 +661,8 @@ function VariableRow({
             </div>
           )}
 
-          {/* Domain picker */}
-          {decision.strategy !== 'skip' && (
+          {/* Domain picker — row-level only for map_variable / map_both; map_values uses per-value domain detection */}
+          {(decision.strategy === 'map_variable' || decision.strategy === 'map_both') && (
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
                 <p className="text-xs font-semibold text-gray-600">
