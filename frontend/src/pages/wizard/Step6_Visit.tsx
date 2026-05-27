@@ -255,12 +255,30 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 />
 
                 <FieldMapper
+                  label="visit_start_time column (optional)"
+                  sourceColumns={availCols(vd.time_col ?? '')}
+                  value={vd.time_col ?? ''}
+                  onChange={v => updateVisit(i, 'time_col', v || undefined)}
+                  required={false}
+                  hint="Separate column with the start time. If absent, visit_start_datetime defaults to midnight (00:00:00)."
+                />
+
+                <FieldMapper
                   label="visit_end_date column (optional)"
                   sourceColumns={availCols(vd.end_date_col ?? '')}
                   value={vd.end_date_col ?? ''}
                   onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
                   required={false}
                   hint="Separate end date column. Leave blank to use start date as end date (for same-day visits)."
+                />
+
+                <FieldMapper
+                  label="visit_end_time column (optional)"
+                  sourceColumns={availCols(vd.end_time_col ?? '')}
+                  value={vd.end_time_col ?? ''}
+                  onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
+                  required={false}
+                  hint="Separate column with the end time. If absent, visit_end_datetime defaults to midnight (00:00:00)."
                 />
 
                 <div>
@@ -274,6 +292,20 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
                     Format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Time format</Label>
+                  <Input
+                    type="text"
+                    value={vd.time_format ?? '%H:%M:%S'}
+                    onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
+                    placeholder="%H:%M:%S"
+                    className="mt-1 font-mono"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Format applied to the time column(s) (e.g. <code className="bg-muted px-1 rounded">%H:%M</code>, <code className="bg-muted px-1 rounded">%H:%M:%S</code>). If no time column is mapped, datetime defaults to midnight.
                   </p>
                 </div>
               </Card>
