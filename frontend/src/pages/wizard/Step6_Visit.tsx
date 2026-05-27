@@ -126,8 +126,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
         const vds = ex.visit_definitions ?? []
-        setConceptModes(vds.map((vd: VisitDefinition) => (vd.visit_concept_source_col ? 'column' : 'column')))
-        setTypeModes(vds.map((vd: VisitDefinition) => (vd.visit_type_source_col ? 'column' : 'column')))
+        setConceptModes(vds.map((vd: VisitDefinition) => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
+        setTypeModes(vds.map((vd: VisitDefinition) => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
       }
     })
     getColumnValues(project.id).then(setColumnInfos)
@@ -144,16 +144,42 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     })
   }
 
+  const updateVisitFields = (i: number, fields: Partial<VisitDefinition>) => {
+    setCfg(prev => {
+      const defs = [...prev.visit_definitions]
+      defs[i] = { ...defs[i], ...fields }
+      return { ...prev, visit_definitions: defs }
+    })
+  }
+
   const addVisit = () => {
     setCfg(prev => ({ ...prev, visit_definitions: [...prev.visit_definitions, { ...DEFAULT_VISIT }] }))
-    setConceptModes(prev => [...prev, 'column'])
-    setTypeModes(prev => [...prev, 'column'])
+    setConceptModes(prev => [...prev, 'default'])
+    setTypeModes(prev => [...prev, 'default'])
   }
 
   const removeVisit = (i: number) => {
     setCfg(prev => ({ ...prev, visit_definitions: prev.visit_definitions.filter((_, j) => j !== i) }))
     setConceptModes(prev => prev.filter((_, j) => j !== i))
     setTypeModes(prev => prev.filter((_, j) => j !== i))
+  }
+
+  const switchConceptMode = (i: number, mode: 'column' | 'default') => {
+    setMode(setConceptModes, i, mode)
+    if (mode === 'default') {
+      updateVisitFields(i, { visit_concept_mode: mode, visit_concept_source_col: undefined, visit_concept_value_map: undefined })
+    } else {
+      updateVisit(i, 'visit_concept_mode', mode)
+    }
+  }
+
+  const switchTypeMode = (i: number, mode: 'column' | 'default') => {
+    setMode(setTypeModes, i, mode)
+    if (mode === 'default') {
+      updateVisitFields(i, { visit_type_mode: mode, visit_type_source_col: undefined, visit_type_value_map: undefined })
+    } else {
+      updateVisit(i, 'visit_type_mode', mode)
+    }
   }
 
   const saveConfig = async () => {
@@ -280,8 +306,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={() => setMode(setConceptModes, i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => setMode(setConceptModes, i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+                  <button onClick={() => switchConceptMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+                  <button onClick={() => switchConceptMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
                 </div>
 
                 {getMode(conceptModes, i) === 'column' ? (
@@ -326,8 +352,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={() => setMode(setTypeModes, i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => setMode(setTypeModes, i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+                  <button onClick={() => switchTypeMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+                  <button onClick={() => switchTypeMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
                 </div>
 
                 {getMode(typeModes, i) === 'column' ? (

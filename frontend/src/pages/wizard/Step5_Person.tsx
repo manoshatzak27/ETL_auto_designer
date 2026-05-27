@@ -93,15 +93,27 @@ export default function Step2Person({ project, onUpdate }: Props) {
         }
 
         const genderCol = m.gender_concept_id?.source_col
-        if (genderCol) { setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {})); setGenderMode('column') }
+        if (existing.gender_mode) {
+          setGenderMode(existing.gender_mode)
+          if (existing.gender_mode === 'column' && genderCol)
+            setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {}))
+        } else if (genderCol) { setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {})); setGenderMode('column') }
         else if (m.gender_concept_id?.default) setGenderMode('default')
 
         const raceCol = (m.race_concept_id as RaceEthnicityMapping)?.source_col
-        if (raceCol) { setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setRaceMode('column') }
+        if (existing.race_mode) {
+          setRaceMode(existing.race_mode)
+          if (existing.race_mode === 'column' && raceCol)
+            setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+        } else if (raceCol) { setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setRaceMode('column') }
         else if ((m.race_concept_id as RaceEthnicityMapping)?.default) setRaceMode('default')
 
         const ethCol = (m.ethnicity_concept_id as RaceEthnicityMapping)?.source_col
-        if (ethCol) { setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setEthnicityMode('column') }
+        if (existing.ethnicity_mode) {
+          setEthnicityMode(existing.ethnicity_mode)
+          if (existing.ethnicity_mode === 'column' && ethCol)
+            setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+        } else if (ethCol) { setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setEthnicityMode('column') }
         else if ((m.ethnicity_concept_id as RaceEthnicityMapping)?.default) setEthnicityMode('default')
 
         setCfg({
@@ -196,7 +208,14 @@ export default function Step2Person({ project, onUpdate }: Props) {
       cfg.mappings.gender_concept_id.source_col,
       cfg.mappings.year_of_birth.source_col,
     ].filter(Boolean)
-    const updated = { ...cfg, required_source_cols: required as string[], extra_instructions: extraInstructions }
+    const updated = {
+      ...cfg,
+      required_source_cols: required as string[],
+      extra_instructions: extraInstructions,
+      gender_mode: genderMode,
+      race_mode: raceMode,
+      ethnicity_mode: ethnicityMode,
+    }
     const p = await updateTableConfig(project.id, 'person', updated)
     onUpdate(p)
   }

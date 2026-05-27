@@ -53,9 +53,11 @@ export default function Step7Provider({ project, onUpdate }: Props) {
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
-        if (ex.specialty_source_value_col) setSpecialtyMode('column')
+        if (ex.specialty_mode) setSpecialtyMode(ex.specialty_mode)
+        else if (ex.specialty_source_value_col) setSpecialtyMode('column')
         else if (ex.prefix_specialty) setSpecialtyMode('prefix')
-        if (ex.gender_source_value_col) setGenderMode('column')
+        if (ex.gender_mode) setGenderMode(ex.gender_mode)
+        else if (ex.gender_source_value_col) setGenderMode('column')
         else if (ex.gender_concept_id_default) setGenderMode('default')
       }
     })
@@ -68,7 +70,12 @@ export default function Step7Provider({ project, onUpdate }: Props) {
   const saveConfig = async () => {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { gender_concept_id: _gid, specialty_concept_id: _sid, ...cleanCfg } = cfg as ProviderConfig & { gender_concept_id?: unknown; specialty_concept_id?: unknown }
-    const p = await updateTableConfig(project.id, 'provider', { ...cleanCfg, extra_instructions: extraInstructions })
+    const p = await updateTableConfig(project.id, 'provider', {
+      ...cleanCfg,
+      extra_instructions: extraInstructions,
+      specialty_mode: specialtyMode,
+      gender_mode: genderMode,
+    })
     onUpdate(p)
   }
 

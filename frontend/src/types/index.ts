@@ -42,6 +42,10 @@ export interface PersonConfig {
     location_id?: RaceEthnicityMapping
   }
   required_source_cols: string[]
+  // UI mode persistence
+  gender_mode?: 'column' | 'default'
+  race_mode?: 'column' | 'default'
+  ethnicity_mode?: 'column' | 'default'
 }
 
 export interface FieldMapping {
@@ -85,6 +89,9 @@ export interface VisitDefinition {
   visit_type_source_col?: string
   visit_type_value_map?: Record<string, number>
   optional: boolean
+  // UI mode persistence
+  visit_concept_mode?: 'column' | 'default'
+  visit_type_mode?: 'column' | 'default'
   // inpatient fields
   admitted_from_concept_id?: number
   admitted_from_source_col?: string
@@ -142,6 +149,9 @@ export interface LocationConfig {
   // Care site country config
   cs_country_concept_id_map: Record<string, number>
   cs_country_concept_id_default: number
+  // UI mode persistence
+  country_mode?: 'column' | 'default'
+  cs_country_mode?: 'column' | 'default'
 }
 
 export interface CareSiteConfig {
@@ -165,6 +175,9 @@ export interface ProviderConfig {
   gender_concept_id_default?: number
   specialty_source_value_col: string
   gender_source_value_col: string
+  // UI mode persistence
+  specialty_mode?: 'column' | 'prefix'
+  gender_mode?: 'column' | 'default'
 }
 
 export interface StemTableOverride {

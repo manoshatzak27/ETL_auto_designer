@@ -119,15 +119,31 @@ export default function Step5Location({ project, onUpdate }: Props) {
           county_source_value: ex.county_source_value ?? '',
           cs_county_source_value: ex.cs_county_source_value ?? '',
         }
-        if (loaded.country_col) {
+        if (loaded.country_mode) {
+          setCountryMode(loaded.country_mode)
+          if (loaded.country_mode === 'column' && loaded.country_col) {
+            const savedKeys = Object.keys(loaded.country_concept_id_map)
+            setCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.country_col]?.distinct_values ?? []))
+          }
+        } else if (loaded.country_col) {
           const savedKeys = Object.keys(loaded.country_concept_id_map)
           setCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.country_col]?.distinct_values ?? []))
           setCountryMode('column')
+        } else if (loaded.country_concept_id_default || loaded.country_source_value) {
+          setCountryMode('default')
         }
-        if (loaded.cs_country_col) {
+        if (loaded.cs_country_mode) {
+          setCsCountryMode(loaded.cs_country_mode)
+          if (loaded.cs_country_mode === 'column' && loaded.cs_country_col) {
+            const savedKeys = Object.keys(loaded.cs_country_concept_id_map)
+            setCsCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.cs_country_col]?.distinct_values ?? []))
+          }
+        } else if (loaded.cs_country_col) {
           const savedKeys = Object.keys(loaded.cs_country_concept_id_map)
           setCsCountryValues(savedKeys.length > 0 ? savedKeys : (infos[loaded.cs_country_col]?.distinct_values ?? []))
           setCsCountryMode('column')
+        } else if (loaded.cs_country_concept_id_default || loaded.cs_country_source_value) {
+          setCsCountryMode('default')
         }
         setCfg(loaded)
       }
@@ -135,7 +151,12 @@ export default function Step5Location({ project, onUpdate }: Props) {
   }, [project.id])
 
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'location', { ...cfg, extra_instructions: extraInstructions })
+    const p = await updateTableConfig(project.id, 'location', {
+      ...cfg,
+      extra_instructions: extraInstructions,
+      country_mode: countryMode,
+      cs_country_mode: csCountryMode,
+    })
     onUpdate(p)
   }
 
