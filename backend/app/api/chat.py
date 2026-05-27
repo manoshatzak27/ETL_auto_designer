@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
+from app.config import settings
 from app.database import get_db
 from app.models.project import Project
 from app.services import chat_service
@@ -27,6 +28,14 @@ async def send_chat_message(
     req: ChatRequest,
     db: Session = Depends(get_db),
 ):
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OPENAI_API_KEY is not configured on the backend. "
+                "Set it in backend/.env and restart the server."
+            ),
+        )
     if req.table not in chat_service.SUPPORTED_TABLES:
         raise HTTPException(status_code=400, detail=f"Unknown table '{req.table}'")
 

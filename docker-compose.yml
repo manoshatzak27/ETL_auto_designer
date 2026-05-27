@@ -1,0 +1,113 @@
+version: "3.9"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# OMOP ETL Auto-Designer — full development stack.
+#
+#   docker compose up --build
+#
+# Services:
+#   postgres    Stores the OMOP CDM v5.4 data and (optionally) vocabulary.
+#   omop-init   One-shot. Applies DDL + primary keys on first run.
+#   backend     FastAPI server (port 8000), with hot reload.
+#   frontend    Vite dev server (port 5173), with HMR.
+#
+# Optional profile `vocab`:
+#   vocab-loader   Mounts ${ATHENA_BUNDLE_PATH} read-only and loads vocab CSVs.
+#
+# Wizard state (SQLite) stays inside the backend container under /app/etl_designer.db.
+# Postgres is used only for the final OMOP data load.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: omop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-omop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-omop}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omop} -d ${POSTGRES_DB:-omop}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  omop-init:
+    image: postgres:16-alpine
+    container_name: omop-init
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-omop}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      PGDATABASE: ${POSTGRES_DB:-omop}
+      OMOP_SCHEMA: ${OMOP_SCHEMA:-cdm}
+    volumes:
+      - ./backend/omop_ddl:/ddl:ro
+      - ./scripts/init-omop.sh:/init-omop.sh:ro
+    entrypoint: ["/bin/sh", "/init-omop.sh"]
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omop-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      omop-init:
+        condition: service_completed_successfully
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      OMOP_DB_HOST: postgres
+      OMOP_DB_PORT: 5432
+      OMOP_DB_NAME: ${POSTGRES_DB:-omop}
+      OMOP_DB_USER: ${POSTGRES_USER:-omop}
+      OMOP_DB_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      OMOP_DEFAULT_SCHEMA: ${OMOP_SCHEMA:-cdm}
+      ATHENA_BUNDLE_ROOT: /vocab
+      DATABASE_URL: sqlite:////app/etl_designer.db
+      UPLOAD_DIR: /app/uploads
+      OUTPUT_DIR: /app/outputs
+    volumes:
+      - ./backend:/app
+      - backend_state:/app/state
+      - uploads_data:/app/uploads
+      - outputs_data:/app/outputs
+      - ${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/vocab:ro
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: omop-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_TARGET: http://backend:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  pgdata:
+  backend_state:
+  uploads_data:
+  outputs_data:

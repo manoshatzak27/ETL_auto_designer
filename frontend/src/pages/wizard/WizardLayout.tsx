@@ -16,6 +16,7 @@ const STEPS = [
   { label: 'Concepts',   short: '9',  scriptKey: null as string | null },
   { label: 'Stem Table', short: '10', scriptKey: 'stem_table' },
   { label: 'Generate',   short: '11', scriptKey: null as string | null },
+  { label: 'Load DB',    short: '12', scriptKey: null as string | null },
 ]
 
 interface Props {

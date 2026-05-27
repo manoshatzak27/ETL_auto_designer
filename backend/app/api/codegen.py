@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from app.config import settings
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import GenerateCodeRequest, ProjectResponse
@@ -12,6 +13,17 @@ from app.services.code_generator import (
 router = APIRouter(prefix="/projects", tags=["codegen"])
 
 
+def _require_openai_key() -> None:
+    if not settings.openai_api_key:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "OPENAI_API_KEY is not configured on the backend. "
+                "Set it in backend/.env and restart the server."
+            ),
+        )
+
+
 @router.post("/{project_id}/generate/{table}", response_model=ProjectResponse)
 async def generate_single_table(
     project_id: str,
@@ -19,6 +31,7 @@ async def generate_single_table(
     db: Session = Depends(get_db),
 ):
     """Generate (or regenerate) the Python ETL script for a single OMOP table."""
+    _require_openai_key()
     if table not in SUPPORTED_TABLES:
         raise HTTPException(status_code=400, detail=f"Unknown table '{table}'. Supported: {SUPPORTED_TABLES}")
 
@@ -31,11 +44,6 @@ async def generate_single_table(
     scripts: dict = dict(project.generated_scripts or {})
     scripts[table] = code
     project.generated_scripts = scripts
-
-    # Keep legacy generated_code field as concatenation for backward compat
-    project.generated_code = "\n\n# " + "=" * 60 + "\n\n".join(
-        f"# === {t}.py ===\n{scripts[t]}" for t in SUPPORTED_TABLES if t in scripts
-    )
 
     project.last_execution_status = ""
     db.commit()
@@ -50,6 +58,7 @@ async def generate_all_tables(
     db: Session = Depends(get_db),
 ):
     """Generate Python ETL scripts for all configured OMOP tables at once."""
+    _require_openai_key()
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -66,9 +75,6 @@ async def generate_all_tables(
         scripts = await generate_all_table_scripts(project)
 
     project.generated_scripts = scripts
-    project.generated_code = "\n\n".join(
-        f"# === {t}.py ===\n{scripts[t]}" for t in SUPPORTED_TABLES if t in scripts
-    )
     project.last_execution_status = ""
     db.commit()
     db.refresh(project)

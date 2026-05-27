@@ -12,6 +12,7 @@ import ConceptMappingStep from './pages/wizard/Step9_ConceptMapping'
 import StemTableStep from './pages/wizard/Step10_StemTable'
 import DeathStep from './pages/wizard/Step8_Death'
 import GenerateStep from './pages/wizard/Step11_Generate'
+import LoadDBStep from './pages/wizard/Step12_LoadDB'
 import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
@@ -55,6 +56,7 @@ function ProjectWizard() {
       case '9':  return <ConceptMappingStep project={project} onUpdate={update} />
       case '10': return <StemTableStep project={project} onUpdate={update} />
       case '11': return <GenerateStep project={project} onUpdate={update} />
+      case '12': return <LoadDBStep project={project} onUpdate={update} />
       default:  return <Navigate to={`/project/${projectId}/step/1`} replace />
     }
   })()

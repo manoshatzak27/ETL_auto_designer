@@ -1,0 +1,39 @@
+# Environment / secrets
+.env
+.env.local
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+backend/venv/
+backend/.venv/
+
+# Wizard state / runtime data
+backend/uploads/
+backend/outputs/
+backend/etl_designer.db
+backend/etl_designer.db-journal
+uploads/
+outputs/
+
+# Postgres docker volume
+pgdata/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# IDE / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log

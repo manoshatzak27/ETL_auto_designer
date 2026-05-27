@@ -86,4 +86,44 @@ export const sendChatMessage = (projectId: string, message: string, table: strin
 export const clearChatHistory = (projectId: string) =>
   api.delete(`/projects/${projectId}/chat`).then(r => r.data)
 
+// ---- OMOP Postgres load ----
+export interface DbHealth {
+  configured: boolean
+  connected: boolean
+  ddl_applied: boolean
+  schemas: string[]
+  error: string
+}
+
+export interface TableLoadStatus {
+  table: string
+  status: string
+  rows: number
+  elapsed: number
+  error: string
+}
+
+export interface LoadStatus {
+  project_id: string
+  overall: string
+  schema: string
+  started_at: number
+  finished_at: number
+  log: string
+  tables: TableLoadStatus[]
+}
+
+export const getDbHealth = () => api.get<DbHealth>('/db-health').then(r => r.data)
+
+export const loadDatabase = (
+  projectId: string,
+  payload: { schema_mode: 'shared' | 'project'; schema_name?: string; truncate: boolean },
+) => api.post(`/projects/${projectId}/load-database`, payload).then(r => r.data)
+
+export const getLoadStatus = (projectId: string) =>
+  api.get<LoadStatus>(`/projects/${projectId}/load-status`).then(r => r.data)
+
+export const loadVocabulary = (payload: { bundle_path: string; schema_name?: string }) =>
+  api.post('/load-vocabulary', payload).then(r => r.data)
+
 export default api

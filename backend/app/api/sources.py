@@ -51,6 +51,10 @@ async def upload_source(
     project.etl_config = {}
     project.generated_scripts = {}
     project.mapping_files = {}
+    project.generated_code = ""
+    project.last_execution_log = ""
+    project.last_execution_status = ""
+    project.output_files = []
     db.commit()
     db.refresh(project)
     return project
@@ -105,9 +109,19 @@ def load_mappings_from_dir(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    source_dir = Path(payload.directory)
+    source_dir = Path(payload.directory).resolve()
     if not source_dir.exists() or not source_dir.is_dir():
         raise HTTPException(status_code=400, detail=f"Directory not found: {payload.directory}")
+
+    # Restrict to an allow-listed base — defaults to the project's upload dir if
+    # MAPPINGS_BUNDLE_ROOT is unset. This prevents arbitrary host-path reads.
+    allowed_root_str = getattr(settings, "mappings_bundle_root", "") or str(settings.get_upload_path())
+    allowed_root = Path(allowed_root_str).resolve()
+    if allowed_root not in source_dir.parents and source_dir != allowed_root:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Directory must be inside MAPPINGS_BUNDLE_ROOT ({allowed_root}).",
+        )
 
     # Copy each found CSV into the project's managed mappings folder
     project_mapping_dir = settings.get_upload_path() / project_id / "mappings"

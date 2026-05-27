@@ -1,171 +1,208 @@
 # OMOP ETL Auto-Designer
 
-A code-less, browser-based ETL builder that converts any flat source CSV into OMOP CDM compliant output tables. Users define all transformation logic through a 7-step wizard UI. OpenAI GPT-4o generates the transformation code automatically.
+A code-less, browser-based ETL builder that converts any flat source CSV into an
+OMOP CDM v5.4 compliant database. Users define all transformation logic through
+a 12-step wizard UI; OpenAI generates the per-table Python transformations; a
+bundled Postgres container with the full OMOP CDM v5.4 schema receives the
+loaded data.
 
 ---
 
 ## Architecture
 
+```mermaid
+flowchart LR
+  User --> Frontend
+  Frontend --> Backend
+  Backend --> SQLite[(SQLite wizard state)]
+  Backend --> OpenAI
+  Backend --> Executor[etl_executor]
+  Executor --> Outputs[outputs/PROJECT_ID/*.csv]
+  Outputs --> Loader[omop_loader]
+  Loader --> Postgres[(Postgres OMOP v5.4)]
+  VocabBundle[Athena vocabulary] -.optional.-> Loader
+```
+
 ```
 ETL_auto_designer/
-├── backend/         FastAPI Python API + SQLite database
+├── backend/                FastAPI + SQLite (wizard state)
 │   ├── app/
-│   │   ├── main.py          FastAPI app entry point
-│   │   ├── config.py        Settings (reads from .env)
-│   │   ├── database.py      SQLAlchemy + SQLite
-│   │   ├── models/          ORM models
-│   │   ├── schemas/         Pydantic request/response schemas
-│   │   ├── api/             Route handlers
-│   │   ├── services/        Business logic
-│   │   │   ├── schema_inferrer.py   Auto-detect CSV delimiter/encoding/columns
-│   │   │   ├── code_generator.py    OpenAI GPT-4o prompt builder + code gen
-│   │   │   └── etl_executor.py      Execute generated Python as subprocess
-│   │   └── prompts/         Per-table prompt templates for OpenAI
-│   ├── uploads/             Uploaded source CSVs and mapping files
-│   ├── outputs/             Generated OMOP output CSVs per project
+│   │   ├── api/            REST routes
+│   │   ├── services/       etl_executor, omop_loader, vocab_loader, code_generator
+│   │   ├── prompts/        Per-table prompt templates for OpenAI
+│   │   └── ...
+│   ├── omop_ddl/           OHDSI CDM v5.4 DDL + PKs (applied by omop-init)
+│   ├── uploads/            Uploaded source CSVs / mapping CSVs
+│   ├── outputs/            Generated OMOP CSVs per project
+│   ├── Dockerfile
 │   └── requirements.txt
 │
-└── frontend/        React + Vite + TailwindCSS wizard UI
-    └── src/
-        ├── pages/wizard/    7-step wizard pages
-        ├── components/      Shared UI components
-        ├── api/client.ts    Axios API client
-        └── types/           TypeScript type definitions
+├── frontend/               React + Vite + TailwindCSS (12-step wizard)
+│   ├── src/
+│   │   ├── pages/wizard/   Step1_Upload … Step12_LoadDB
+│   │   ├── components/     Shared UI (ConceptSearch, ErrorBanner, …)
+│   │   ├── hooks/          useTableConfig
+│   │   ├── api/client.ts   Axios client
+│   │   └── types/
+│   └── Dockerfile
+│
+├── scripts/init-omop.sh    Substitutes @cdmDatabaseSchema → $OMOP_SCHEMA and applies DDL/PKs
+├── docker-compose.yml      Postgres + omop-init + backend + frontend
+└── .env.example            Stack-wide environment variables
 ```
 
 ---
 
-## Prerequisites
-
-- Python 3.11+
-- Node.js 18+
-- An OpenAI API key (required for code generation)
-- (Optional) The `omop-docker-package` EntityLinker service running at `localhost:8000` for AI concept search
-
----
-
-## Quick Start
-
-### 1. Backend Setup
+## Quick start (Docker — recommended)
 
 ```powershell
-cd backend
-
-# Copy and edit environment variables
+# 1. Copy and edit env file (set OPENAI_API_KEY)
 copy .env.example .env
-# Edit .env and set OPENAI_API_KEY=sk-...
 
-# Install dependencies
-pip install -r requirements.txt
-
-# Start the API server
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 2. Bring the whole stack up
+docker compose up --build
 ```
 
-The API will be available at `http://localhost:8000`.
-Interactive docs: `http://localhost:8000/docs`
+Services:
 
-### 2. Frontend Setup
+| Service     | URL                       | Notes                                        |
+|-------------|---------------------------|----------------------------------------------|
+| Frontend    | http://localhost:5173     | Vite dev server                              |
+| Backend     | http://localhost:8000     | FastAPI + Swagger at `/docs`                 |
+| Postgres    | localhost:5432            | `psql -U omop -d omop`                       |
+| `omop-init` | one-shot                  | Applies OMOP v5.4 DDL + PKs into `${OMOP_SCHEMA}` on first start (idempotent) |
+
+The OMOP DDL placeholder `@cdmDatabaseSchema` is substituted with `${OMOP_SCHEMA}` (default `cdm`) before being piped into `psql`.
+
+---
+
+## Quick start (local Python / Node)
 
 ```powershell
-cd frontend
+# Backend
+cd backend
+copy .env.example .env       # set OPENAI_API_KEY
+pip install -r requirements.txt
+python -m uvicorn app.main:app --reload --port 8000
 
+# Frontend
+cd frontend
 npm install
 npm run dev
 ```
 
-The UI will be available at `http://localhost:5173`.
+The DB-load step (Step 12) is only fully functional when Postgres is reachable; you can still run Steps 1–11 without it.
 
 ---
 
-## Environment Variables (`backend/.env`)
+## Environment variables
 
-| Variable | Default | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | *(required)* | OpenAI API key for GPT-4o code generation |
-| `OPENAI_MODEL` | `gpt-4o` | OpenAI model to use |
-| `ENTITYLINKER_URL` | `http://localhost:8000/api/conceptlink` | URL of the EntityLinker concept search API from `omop-docker-package` |
-| `DATABASE_URL` | `sqlite:///./etl_designer.db` | SQLAlchemy database URL |
-| `UPLOAD_DIR` | `./uploads` | Directory for uploaded source CSVs |
-| `OUTPUT_DIR` | `./outputs` | Directory for generated OMOP output CSVs |
+Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`:
 
----
-
-## Wizard Walkthrough
-
-### Step 1 — Upload Source CSV
-Drop or browse to your flat source CSV file. The system auto-detects:
-- Delimiter (`,` `;` `\t` `|`)
-- Encoding (`UTF-8`, `windows-1252`, `latin-1`, etc.)
-- All column names and row count
-
-### Step 2 — Person Table Mapping
-- Select the patient ID column and transform (int(float), int, or str)
-- Select the gender column and map source values to OMOP concept IDs (e.g. `1.0` → `8507` Male, `2.0` → `8532` Female)
-- Select the date of birth column and set the date format
-
-### Step 3 — Visit Occurrence
-- Define one or more visit types (Onset, Follow-up, etc.)
-- For each visit: select the date column, visit_concept_id, type_concept_id
-- Optional visits are only created when the date column is non-empty
-
-### Step 4 — Observation Period
-- Set start and end date columns
-- Configure the fallback when end date is missing
-
-### Step 5 — Stem Table
-- Upload the concept mapping CSVs from `omop-docker-package`:
-  - `variable_mapping.csv`
-  - `value_mapping.csv`
-  - `variable_value_mapping.csv`
-- Classify each source column into a visit timepoint group (e.g. "onset", "followup_10y")
-- Add special overrides for specific variables (e.g. force `unit_concept_id=9580` for duration variables)
-
-### Step 6 — Death Table
-- Select the column and value that indicates a patient died
-- Choose whether death date is estimated (onset + N years) or from a direct date column
-
-### Step 7 — Generate & Execute
-- Click **Generate ETL Code** — GPT-4o produces a complete standalone Python script
-- Review the syntax-highlighted code
-- Click **Execute ETL** — the script runs against your source file
-- Download the output OMOP CSVs
+| Variable                | Default                                | Purpose                                                       |
+|-------------------------|----------------------------------------|---------------------------------------------------------------|
+| `OPENAI_API_KEY`        | *(required for codegen / chat)*        | OpenAI API key                                                |
+| `OPENAI_MODEL`          | `gpt-4o`                               | Model used for code generation and the chat assistant         |
+| `ENTITYLINKER_URL`      | `http://localhost:8000/api/conceptlink`| Optional concept-search service                               |
+| `DATABASE_URL`          | `sqlite:///./etl_designer.db`          | Wizard state DB (kept on SQLite for simplicity)               |
+| `POSTGRES_USER`         | `omop`                                 | OMOP Postgres user                                            |
+| `POSTGRES_PASSWORD`     | `omop`                                 | OMOP Postgres password                                        |
+| `POSTGRES_DB`           | `omop`                                 | OMOP Postgres database                                        |
+| `OMOP_DB_HOST`          | `postgres`                             | Backend uses this to reach Postgres (set to `localhost` outside Docker) |
+| `OMOP_DB_PORT`          | `5432`                                 |                                                               |
+| `OMOP_SCHEMA`           | `cdm`                                  | Target schema for the OMOP CDM tables                         |
+| `ATHENA_BUNDLE_ROOT`    | *(empty)*                              | Allow-list root for `/load-vocabulary` (security guard)       |
+| `MAPPINGS_BUNDLE_ROOT`  | *(empty → uploads dir)*                | Allow-list root for `/load-mappings-from-dir`                 |
 
 ---
 
-## Generated Code Behaviour
+## Wizard walkthrough
 
-The generated Python script:
-- Reads `ETL_SOURCE_PATH`, `ETL_OUTPUT_DIR`, and `ETL_MAPPING_FILES` from environment variables
-- Uses only `pandas`, `numpy`, and Python standard library (no database required)
-- Implements `VariableConceptMapper` logic: resolves concept_id, value_as_concept_id, value_as_number from the 3 mapping CSVs
-- Executes tables in dependency order: person → visit_occurrence → observation_period → stem_table → death
-- Outputs semicolon-delimited (`;`) UTF-8 CSV files, one per OMOP table
+| Step | Page                       | Purpose                                                                                                                          |
+|------|----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| 1    | Source upload              | Drop in your flat CSV — delimiter, encoding and columns are auto-detected.                                                       |
+| 2    | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings.         |
+| 3    | Care Site                  | Configure care_site name + place_of_service. Warns if Step 2 has no `cs_*` columns mapped (care_site would be empty otherwise).  |
+| 4    | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence.                  |
+| 5    | Person                     | Person ID, gender, DOB strategy (full date vs year-only), race/ethnicity. Shows the FK columns inherited from earlier steps.     |
+| 6    | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`.   |
+| 7    | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
+| 8    | Death                      | Optional. Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                  |
+| 9    | Concept mapping            | Per-column decision: map-with-AI, use defaults, or skip. Shared `ConceptSearch` picker. Gate-on-progress before next.            |
+| 10   | Stem table                 | Variable groups derived from the visit labels of Step 6. Structural FK columns hidden from the picker. Overrides have stable ids.|
+| 11   | Generate & Execute         | `Generate all` or per-table generate. Execution runs each script as its own subprocess in dependency order with per-table logs.  |
+| 12   | Load to OMOP DB            | Connect to Postgres, pick shared or project-scoped schema, optionally load Athena vocabulary, bulk-COPY all output CSVs.         |
 
 ---
 
-## Reference Repositories (read-only)
+## Execution model
 
-- `omop-docker-package` — Provides the 3 concept mapping CSV files consumed in Step 5
-- `VOLABIOS_Data_harmonization` — Reference ETL implementation; all transformation patterns in the prompt templates are derived from this codebase
+`etl_executor.execute_etl_scripts` runs **one Python subprocess per generated table**, in the dependency order
+`location → care_site → provider → person → visit_occurrence → observation_period → stem_table → death`,
+sharing `ETL_OUTPUT_DIR` so each script can read its predecessors' output. The per-table status, log
+fragment, row count and elapsed time are returned to the UI and surfaced on Step 11.
 
 ---
 
-## API Reference
+## OMOP CDM v5.4 DDL
 
-| Method | Endpoint | Description |
-|---|---|---|
-| GET | `/api/projects/` | List all projects |
-| POST | `/api/projects/` | Create project |
-| GET | `/api/projects/{id}` | Get project |
-| DELETE | `/api/projects/{id}` | Delete project |
-| POST | `/api/projects/{id}/upload-source` | Upload source CSV |
-| POST | `/api/projects/{id}/upload-mapping?mapping_type=...` | Upload concept mapping CSV |
-| GET | `/api/projects/{id}/source-preview` | Preview first N rows |
-| PATCH | `/api/projects/{id}/config` | Save a table config step |
-| GET | `/api/projects/{id}/config/{table}` | Get a table config |
-| POST | `/api/projects/{id}/generate` | Generate ETL code via OpenAI |
-| POST | `/api/projects/{id}/concept-search` | AI concept search (EntityLinker proxy) |
-| POST | `/api/projects/{id}/execute` | Execute generated ETL |
-| GET | `/api/projects/{id}/execution-log` | Get last execution log |
-| GET | `/api/projects/{id}/download/{filename}` | Download output CSV |
+`backend/omop_ddl/` ships with the OHDSI Postgres DDL + primary keys vendored from
+[CommonDataModel v5.4](https://github.com/OHDSI/CommonDataModel/tree/v5.4/inst/ddl/5.4/postgresql).
+The `omop-init` compose service applies these on first start and writes a marker row so
+subsequent boots are a no-op. Indices and FK constraints are intentionally **not** applied
+by default — they can be applied manually after ETL + vocabulary load using the same
+`sed | psql` invocation shown in `backend/omop_ddl/OMOPCDM_postgresql_5.4_indices.sql`.
+
+---
+
+## Loading OMOP outputs into Postgres (Step 12)
+
+- Pick a schema mode: **shared** (`cdm`) or **project-scoped** (`cdm_<project_id>`).
+- `omop_loader.py` opens each CSV under `outputs/<project_id>/`, intersects its columns with the
+  target table's columns from `information_schema.columns`, and bulk-loads the intersection
+  with `COPY ... WITH (FORMAT csv, DELIMITER ';', NULL '', QUOTE '"')`.
+- Optional pre-load `TRUNCATE ... CASCADE`. Per-table row counts and elapsed time are streamed to the UI.
+- The UI polls `/api/projects/<id>/load-status` every 1.5s.
+
+---
+
+## Loading Athena vocabularies (optional)
+
+`vocab_loader.py` accepts a directory of Athena-exported tab-delimited CSVs and bulk-loads each one
+into the configured schema, truncating first for idempotency. The bundle path must lie inside
+`$ATHENA_BUNDLE_ROOT`. With the bundled Docker stack, mount your unzipped Athena bundle on
+`/vocab` inside the backend container and point Step 12 at `/vocab`.
+
+---
+
+## API reference (selected)
+
+| Method | Endpoint                                          | Description                                               |
+|--------|---------------------------------------------------|-----------------------------------------------------------|
+| POST   | `/api/projects/`                                  | Create a project                                          |
+| POST   | `/api/projects/{id}/upload-source`                | Upload + auto-detect source CSV                           |
+| POST   | `/api/projects/{id}/upload-mapping`               | Upload one concept-mapping CSV                            |
+| POST   | `/api/projects/{id}/load-mappings-from-dir`       | Bulk load mapping CSVs from a directory (allow-listed)    |
+| PATCH  | `/api/projects/{id}/config`                       | Save a wizard step's config                               |
+| POST   | `/api/projects/{id}/generate`                     | Generate ETL scripts (all tables)                         |
+| POST   | `/api/projects/{id}/generate/{table}`             | Generate one table                                        |
+| POST   | `/api/projects/{id}/execute`                      | Execute the generated ETL                                 |
+| GET    | `/api/projects/{id}/execution-log`                | Last execution status                                     |
+| POST   | `/api/projects/{id}/load-database`                | Bulk-load output CSVs into Postgres                       |
+| GET    | `/api/projects/{id}/load-status`                  | Live load progress                                        |
+| POST   | `/api/load-vocabulary`                            | Load an Athena bundle into Postgres                       |
+| GET    | `/api/db-health`                                  | Postgres reachability + DDL-applied check                 |
+| POST   | `/api/projects/{id}/chat`                         | AI assistant for a specific table's generated code        |
+
+---
+
+## Smoke test
+
+Run an end-to-end check against the bundled test source:
+
+```powershell
+./scripts/smoke.ps1
+```
+
+The script creates a project, uploads `test_data/test_source.csv`, generates scripts,
+executes them, and prints the resulting output file list and per-table row counts.

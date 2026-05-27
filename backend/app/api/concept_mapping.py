@@ -89,7 +89,7 @@ def get_column_values(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if not project.source_path or not Path(project.source_path).exists():
-        raise HTTPException(status_code=400, detail="Source file not uploaded yet")
+        return {}
 
     df = pd.read_csv(
         project.source_path,
