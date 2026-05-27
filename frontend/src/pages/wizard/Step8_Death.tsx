@@ -4,6 +4,7 @@ import { updateTableConfig, getTableConfig } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, DeathConfig } from '../../types'
 import WizardLayout from './WizardLayout'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -61,11 +62,13 @@ export default function Step8Death({ project, onUpdate }: Props) {
     onUpdate(p)
   }
 
+  const { prev, next } = getAdjacentSlugs(project, 'death')
+
   const handleNext = async () => {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/9`)
+    if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
   const set = (field: keyof DeathConfig) => (v: string) =>
@@ -73,15 +76,11 @@ export default function Step8Death({ project, onUpdate }: Props) {
 
   return (
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={8}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/7`)}
+      project={project}
+      currentSlug="death"
+      onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      nextLabel="Next: Concepts →"
+      nextLabel="Next →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

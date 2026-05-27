@@ -1,6 +1,14 @@
+// Merged final step: Generate → Execute → Load Vocab → Load DB.
+//
+// Lifted from the old Step11_Generate.tsx and Step12_LoadDB.tsx into one
+// scrollable page with sticky section headers. No new API calls — every
+// control here uses the same endpoints those two pages used.
+
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
+  executeProject,
+  downloadOutput,
   getDbHealth,
   getLoadStatus,
   getVocabBundleInfo,
@@ -14,11 +22,18 @@ import {
 } from '../../api/client'
 import type { Project } from '../../types'
 import WizardLayout from './WizardLayout'
+import ScriptGenerator from '../../components/ScriptGenerator'
+import LogStream from '../../components/LogStream'
 import ErrorBanner from '../../components/ErrorBanner'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import {
-  Database, Loader2, RefreshCw, CheckCircle, AlertCircle,
-  PlayCircle, BookOpen, Server,
+  PlayCircle, Download, RefreshCw, CheckCircle, AlertCircle, AlertTriangle,
+  Database, Loader2, BookOpen, Server, Code2, Play,
 } from 'lucide-react'
+import { basename } from '../../utils'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import clsx from 'clsx'
 
 interface Props {
@@ -26,15 +41,28 @@ interface Props {
   onUpdate: (p: Project) => void
 }
 
+const TABLES = [
+  { key: 'person',             label: 'person.py',             description: 'Patient demographics' },
+  { key: 'visit_occurrence',   label: 'visit_occurrence.py',   description: 'Clinical visits / timepoints' },
+  { key: 'observation_period', label: 'observation_period.py', description: 'Patient observation windows' },
+  { key: 'location',           label: 'location.py',           description: 'Physical address / location records' },
+  { key: 'care_site',          label: 'care_site.py',          description: 'Institutional care site records' },
+  { key: 'provider',           label: 'provider.py',           description: 'Healthcare provider records' },
+  { key: 'stem_table',         label: 'stem_table.py',         description: 'Clinical measurements & observations' },
+  { key: 'death',              label: 'death.py',              description: 'Mortality records' },
+]
+
+const DEFAULT_VOCAB_PATH = '/vocab'
+
 function StatusPill({ status }: { status: string }) {
   const map: Record<string, { bg: string; text: string; label: string }> = {
-    idle:     { bg: 'bg-gray-100',    text: 'text-gray-600',  label: 'idle' },
-    pending:  { bg: 'bg-gray-100',    text: 'text-gray-600',  label: 'pending' },
-    loading:  { bg: 'bg-blue-100',    text: 'text-blue-700',  label: 'loading' },
-    running:  { bg: 'bg-blue-100',    text: 'text-blue-700',  label: 'running' },
-    success:  { bg: 'bg-green-100',   text: 'text-green-700', label: 'success' },
-    skipped:  { bg: 'bg-amber-100',   text: 'text-amber-700', label: 'skipped' },
-    error:    { bg: 'bg-red-100',     text: 'text-red-700',   label: 'error' },
+    idle:     { bg: 'bg-gray-100',  text: 'text-gray-600',  label: 'idle' },
+    pending:  { bg: 'bg-gray-100',  text: 'text-gray-600',  label: 'pending' },
+    loading:  { bg: 'bg-blue-100',  text: 'text-blue-700',  label: 'loading' },
+    running:  { bg: 'bg-blue-100',  text: 'text-blue-700',  label: 'running' },
+    success:  { bg: 'bg-green-100', text: 'text-green-700', label: 'success' },
+    skipped:  { bg: 'bg-amber-100', text: 'text-amber-700', label: 'skipped' },
+    error:    { bg: 'bg-red-100',   text: 'text-red-700',   label: 'error' },
   }
   const cfg = map[status] ?? map.idle
   return (
@@ -44,9 +72,7 @@ function StatusPill({ status }: { status: string }) {
   )
 }
 
-function HealthRow({
-  label, ok, value,
-}: { label: string; ok: boolean; value?: string }) {
+function HealthRow({ label, ok, value }: { label: string; ok: boolean; value?: string }) {
   return (
     <div className="bg-gray-50 rounded-lg p-3">
       <p className="text-xs text-gray-500 mb-1">{label}</p>
@@ -67,39 +93,61 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-const DEFAULT_VOCAB_PATH = '/vocab'
+function SectionHeader({ icon: Icon, n, title, subtitle }: { icon: React.ComponentType<{ className?: string }>; n: number; title: string; subtitle?: string }) {
+  return (
+    <div className="sticky top-0 z-10 -mx-6 px-6 py-3 bg-background/95 backdrop-blur border-b border-border">
+      <div className="flex items-center gap-2.5">
+        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-primary text-primary-foreground text-xs font-bold">{n}</span>
+        <Icon className="w-4 h-4 text-muted-foreground" />
+        <h2 className="text-base font-bold text-foreground">{title}</h2>
+      </div>
+      {subtitle && <p className="text-xs text-muted-foreground mt-1 pl-9">{subtitle}</p>}
+    </div>
+  )
+}
 
-export default function Step12LoadDB({ project, onUpdate }: Props) {
-  void onUpdate
+export default function StepFinalize({ project, onUpdate }: Props) {
   const navigate = useNavigate()
+  const { prev } = getAdjacentSlugs(project, 'finalize')
 
-  // Health
+  // ── Generate / Execute state ─────────────────────────────────────────────
+  const [executing, setExecuting] = useState(false)
+  const [execResult, setExecResult] = useState<{ status: string; log: string; output_files: string[] } | null>(null)
+  const [execError, setExecError] = useState('')
+
+  const scripts: Record<string, string> = project.generated_scripts || {}
+  const generatedCount = TABLES.filter(t => scripts[t.key]).length
+  const allGenerated   = generatedCount === TABLES.length
+  const anyGenerated   = generatedCount > 0
+  const missingTables  = TABLES.filter(t => !scripts[t.key]).map(t => t.key)
+
+  const handleExecute = async () => {
+    setExecuting(true)
+    setExecError('')
+    try {
+      const result = await executeProject(project.id)
+      setExecResult(result)
+      onUpdate({ ...project, last_execution_status: result.status, output_files: result.output_files })
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      const msg = err?.response?.data?.detail || 'Execution failed.'
+      setExecError(msg)
+      setExecResult({ status: 'error', log: msg, output_files: [] })
+    } finally {
+      setExecuting(false)
+    }
+  }
+
+  // ── DB health state ──────────────────────────────────────────────────────
   const [health, setHealth] = useState<DbHealth | null>(null)
   const [healthError, setHealthError] = useState('')
   const [refreshingHealth, setRefreshingHealth] = useState(false)
-
-  // Vocab
-  const [vocabInfo, setVocabInfo] = useState<VocabBundleInfo | null>(null)
-  const [bundlePath, setBundlePath] = useState(DEFAULT_VOCAB_PATH)
-  const [vocabError, setVocabError] = useState('')
-  const [vocabStarting, setVocabStarting] = useState(false)
-  const [vocabStatus, setVocabStatus] = useState<VocabLoadStatus | null>(null)
-
-  // ETL
-  const [schemaMode, setSchemaMode] = useState<'shared' | 'project'>('shared')
-  const [schemaName, setSchemaName] = useState<string>('')
-  const [truncate, setTruncate] = useState(true)
-  const [applyIndices, setApplyIndices] = useState(false)
-  const [loadError, setLoadError] = useState('')
-  const [starting, setStarting] = useState(false)
-  const [status, setStatus] = useState<LoadStatus | null>(null)
 
   const refreshHealth = async () => {
     setRefreshingHealth(true)
     setHealthError('')
     try {
-      const h = await getDbHealth()
-      setHealth(h)
+      setHealth(await getDbHealth())
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setHealthError(typeof msg === 'string' ? msg : 'Failed to query db-health')
@@ -108,34 +156,42 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
     }
   }
 
+  // ── Vocab state ──────────────────────────────────────────────────────────
+  const [vocabInfo, setVocabInfo] = useState<VocabBundleInfo | null>(null)
+  const [bundlePath, setBundlePath] = useState(DEFAULT_VOCAB_PATH)
+  const [vocabError, setVocabError] = useState('')
+  const [vocabStarting, setVocabStarting] = useState(false)
+  const [vocabStatus, setVocabStatus] = useState<VocabLoadStatus | null>(null)
+
   const refreshVocabInfo = async () => {
     try {
       const info = await getVocabBundleInfo(DEFAULT_VOCAB_PATH)
       setVocabInfo(info)
-      if (info.exists && info.detected_files.length > 0) {
-        setBundlePath(info.path)
-      }
+      if (info.exists && info.detected_files.length > 0) setBundlePath(info.path)
     } catch {
       setVocabInfo({ path: DEFAULT_VOCAB_PATH, exists: false, detected_files: [], total_size_bytes: 0 })
     }
   }
 
-  useEffect(() => {
-    refreshHealth()
-    refreshVocabInfo()
-  }, [])
+  // ── ETL load state ──────────────────────────────────────────────────────
+  const [schemaMode, setSchemaMode] = useState<'shared' | 'project'>('shared')
+  const [schemaName, setSchemaName] = useState('')
+  const [truncate, setTruncate] = useState(true)
+  const [applyIndices, setApplyIndices] = useState(false)
+  const [loadError, setLoadError] = useState('')
+  const [starting, setStarting] = useState(false)
+  const [status, setStatus] = useState<LoadStatus | null>(null)
 
-  // Poll vocab status
+  // ── Initial fetch + polling ──────────────────────────────────────────────
+  useEffect(() => { refreshHealth(); refreshVocabInfo() }, [])
+
   useEffect(() => {
     let timer: number | null = null
     const tick = async () => {
       try {
         const s = await getVocabStatus()
         setVocabStatus(s)
-        if (s.overall === 'success' || s.overall === 'error') {
-          // Refresh health so the vocab_rows count updates
-          refreshHealth()
-        }
+        if (s.overall === 'success' || s.overall === 'error') refreshHealth()
       } catch { /* ignore */ }
     }
     tick()
@@ -143,16 +199,13 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
     return () => { if (timer !== null) window.clearInterval(timer) }
   }, [])
 
-  // Poll ETL load status
   useEffect(() => {
     let timer: number | null = null
     const tick = async () => {
       try {
         const s = await getLoadStatus(project.id)
         setStatus(s)
-        if (s.overall === 'success' || s.overall === 'error') {
-          refreshHealth()
-        }
+        if (s.overall === 'success' || s.overall === 'error') refreshHealth()
       } catch { /* ignore */ }
     }
     tick()
@@ -163,10 +216,7 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
   const vocabHasFiles = (vocabInfo?.detected_files?.length ?? 0) > 0
   const vocabRunning = vocabStatus?.overall === 'running'
   const etlRunning = status?.overall === 'running'
-
-  const canLoadEtl =
-    project.last_execution_status === 'success' &&
-    health?.connected === true
+  const canLoadEtl = project.last_execution_status === 'success' && health?.connected === true
 
   const handleLoadVocab = async () => {
     const path = (bundlePath || DEFAULT_VOCAB_PATH).trim()
@@ -188,8 +238,8 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
       const proceed = window.confirm(
         'Vocabulary tables are empty.\n\n' +
         'FK constraints reference vocab.concept and will fail to apply against an empty ' +
-        'vocabulary. Load the vocabulary first (Card 1) or untick "Apply indices and FK ' +
-        'constraints" before proceeding.\n\nContinue anyway?',
+        'vocabulary. Load the vocabulary first or untick "Apply indices and FK constraints" ' +
+        'before proceeding.\n\nContinue anyway?',
       )
       if (!proceed) return
     }
@@ -212,27 +262,138 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
 
   return (
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={12}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/11`)}
+      project={project}
+      currentSlug="finalize"
+      onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       nextLabel=""
     >
-      <div className="flex flex-col gap-6">
+      <div className="flex flex-col gap-8">
+        {/* Intro */}
         <div>
-          <h2 className="text-xl font-semibold text-gray-900">Build the OMOP database</h2>
-          <p className="text-sm text-gray-500 mt-1">
-            Two steps to a ready OMOP CDM v5.4 database: load the vocabulary into the shared{' '}
-            <code className="bg-gray-100 px-1 rounded font-mono">vocab</code> schema, then load this
-            project's generated CSVs into the clinical schema and (optionally) apply indices + FK
-            constraints.
+          <h2 className="text-xl font-bold text-primary">Generate &amp; load to OMOP DB</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Final step. (1) Generate the Python scripts per table, (2) execute the pipeline
+            against your source CSV, (3) load the Athena vocabulary, then (4) bulk-load the
+            generated CSVs into Postgres. Each section unlocks the next.
           </p>
         </div>
 
-        {/* Health panel */}
+        {/* ── 1. Generate ────────────────────────────────────────────────── */}
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={Code2} n={1} title="Generate scripts" subtitle="One Python script per OMOP table, generated from your wizard config." />
+
+          <Card className="p-5 flex flex-col gap-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-foreground">Script Status</h3>
+              <Badge variant={allGenerated ? 'success' : 'warning'}>
+                {generatedCount} / {TABLES.length} ready
+              </Badge>
+            </div>
+
+            <div className="w-full bg-muted rounded-full h-1.5">
+              <div className="bg-success h-1.5 rounded-full transition-all" style={{ width: `${(generatedCount / TABLES.length) * 100}%` }} />
+            </div>
+
+            <div className="grid grid-cols-1 gap-1.5">
+              {TABLES.map(t => {
+                const has = !!scripts[t.key]
+                const lineCount = has ? scripts[t.key].split('\n').length : 0
+                return (
+                  <div key={t.key} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted">
+                    {has
+                      ? <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
+                      : <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
+                    }
+                    <span className="text-xs font-mono font-medium text-foreground">{t.label}</span>
+                    <span className="text-xs text-muted-foreground ml-auto">
+                      {has ? `${lineCount} lines` : 'not generated yet'}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+
+            {!allGenerated && (
+              <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
+                <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                <span>
+                  Missing: <span className="font-mono font-semibold">{missingTables.join(', ')}</span>.
+                  Regenerate below, or go back to the corresponding wizard step.
+                </span>
+              </div>
+            )}
+          </Card>
+
+          <div className="flex flex-col gap-3">
+            <h3 className="text-sm font-semibold text-foreground">Generate / regenerate per table</h3>
+            {TABLES.map(t => (
+              <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" />
+            ))}
+          </div>
+        </section>
+
+        {/* ── 2. Execute ─────────────────────────────────────────────────── */}
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={Play} n={2} title="Execute pipeline" subtitle="Runs every generated script against your source CSV; writes one OMOP CSV per table." />
+
+          {anyGenerated ? (
+            <Card className="p-5 flex flex-col gap-4">
+              <div>
+                <p className="text-xs text-muted-foreground">
+                  Order: <span className="font-mono text-foreground">person → visit_occurrence → observation_period → stem_table → death → (domain tables)</span>.
+                </p>
+              </div>
+
+              {!allGenerated && (
+                <p className="text-xs text-amber-600">
+                  Some scripts are missing — only generated tables will run.
+                </p>
+              )}
+
+              <Button onClick={handleExecute} disabled={executing} size="lg" className="w-fit">
+                {executing
+                  ? <><RefreshCw className="w-5 h-5 animate-spin" /> Running pipeline…</>
+                  : <><PlayCircle className="w-5 h-5" /> Execute ETL Pipeline</>
+                }
+              </Button>
+            </Card>
+          ) : (
+            <p className="text-xs text-muted-foreground italic">Generate at least one script above to enable execution.</p>
+          )}
+
+          {execError && !execResult && (
+            <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive flex items-start gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+              {execError}
+            </div>
+          )}
+
+          {execResult && <LogStream log={execResult.log} status={execResult.status} />}
+
+          {execResult?.output_files && execResult.output_files.length > 0 && (
+            <Card className="p-5 flex flex-col gap-3">
+              <h3 className="font-semibold text-foreground">Output OMOP Files</h3>
+              <div className="grid grid-cols-2 gap-2">
+                {execResult.output_files.map(f => (
+                  <div key={f} className="flex items-center justify-between p-3 bg-muted rounded-lg border border-border">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="w-3.5 h-3.5 text-success" />
+                      <span className="text-sm font-mono text-foreground">{basename(f)}</span>
+                    </div>
+                    <button
+                      onClick={() => downloadOutput(project.id, basename(f))}
+                      className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium"
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
+        </section>
+
+        {/* ── DB health (shared by sections 3 & 4) ─────────────────────── */}
         <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -249,7 +410,6 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
             </button>
           </div>
           <ErrorBanner message={healthError} />
-
           {health && (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
               <HealthRow label="Connected" ok={health.connected} />
@@ -257,9 +417,9 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
                 label={`Vocab schema (${health.vocab_schema || 'vocab'})`}
                 ok={health.vocab_schema_ready && health.vocab_rows > 0}
                 value={
-                  !health.vocab_schema_ready ? 'No DDL' :
-                  health.vocab_rows === 0 ? 'Empty' :
-                  `${health.vocab_rows.toLocaleString()} concepts`
+                  !health.vocab_schema_ready ? 'No DDL'
+                    : health.vocab_rows === 0 ? 'Empty'
+                    : `${health.vocab_rows.toLocaleString()} concepts`
                 }
               />
               <HealthRow
@@ -267,63 +427,23 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
                 ok={health.clinical_schemas.length > 0}
                 value={`${health.clinical_schemas.length} schema${health.clinical_schemas.length === 1 ? '' : 's'}`}
               />
-              <HealthRow
-                label="Default clinical DDL"
-                ok={health.ddl_applied}
-              />
+              <HealthRow label="Default clinical DDL" ok={health.ddl_applied} />
             </div>
           )}
           {health?.error && (
             <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">{health.error}</p>
           )}
-          {health && health.clinical_schemas.length > 0 && (
-            <p className="text-xs text-gray-500">
-              Clinical schemas:{' '}
-              {health.clinical_schemas.map((cs, i) => (
-                <span key={cs.name}>
-                  {i > 0 && ', '}
-                  <span className="font-mono">{cs.name}</span>
-                  {' '}
-                  <span className="text-gray-400">({cs.person_rows.toLocaleString()} persons)</span>
-                </span>
-              ))}
-            </p>
-          )}
-          {!health?.configured && (
-            <p className="text-xs text-gray-500">
-              Bring up the stack with <code className="bg-gray-100 px-1 rounded">docker compose up</code>{' '}
-              from the repo root. The backend connects to the bundled Postgres container automatically.
-            </p>
-          )}
         </div>
 
-        {/* Two cards side-by-side on lg screens */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* ── 3. Load vocabulary ─────────────────────────────────────────── */}
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={BookOpen} n={3} title="Load vocabulary" subtitle={`Bulk-load Athena CSVs into the shared "${health?.vocab_schema || 'vocab'}" schema. Re-running truncates and reloads.`} />
 
-          {/* ── Card 1: Vocabulary ─────────────────────────────────────────── */}
-          <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <BookOpen className="w-4 h-4 text-gray-500" />
-                <h3 className="font-medium text-gray-800">1. Vocabulary setup</h3>
-              </div>
-              {vocabStatus?.overall === 'success' && (
-                <span className="flex items-center gap-1 text-xs text-green-700">
-                  <CheckCircle className="w-3.5 h-3.5" /> Loaded
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-gray-500">
-              Builds the <code className="bg-gray-100 px-1 rounded font-mono">vocab</code> schema
-              and bulk-loads an Athena vocabulary bundle into it. Shared across all projects;
-              re-running truncates and reloads.
-            </p>
-
+          <Card className="p-5 flex flex-col gap-4">
             {vocabInfo && vocabHasFiles ? (
               <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3 text-sm">
                 <p className="font-medium text-emerald-900">
-                  Detected {vocabInfo.detected_files.length} vocabulary file
-                  {vocabInfo.detected_files.length === 1 ? '' : 's'}
+                  Detected {vocabInfo.detected_files.length} vocabulary file{vocabInfo.detected_files.length === 1 ? '' : 's'}
                   {' '}({formatBytes(vocabInfo.total_size_bytes)})
                 </p>
                 <p className="text-xs text-emerald-700 mt-1">
@@ -350,12 +470,7 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
                   placeholder={DEFAULT_VOCAB_PATH}
                   className="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
-                <button
-                  onClick={refreshVocabInfo}
-                  className="text-xs text-blue-600 hover:underline w-fit"
-                >
-                  Re-check path
-                </button>
+                <button onClick={refreshVocabInfo} className="text-xs text-blue-600 hover:underline w-fit">Re-check path</button>
               </div>
             )}
 
@@ -373,7 +488,6 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
 
             <ErrorBanner message={vocabError} />
 
-            {/* Per-file progress */}
             {vocabStatus && vocabStatus.files.length > 0 && (
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
@@ -402,30 +516,17 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
             {vocabStatus?.log && (
               <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-3 max-h-48 overflow-y-auto whitespace-pre-wrap">{vocabStatus.log}</pre>
             )}
-          </div>
+          </Card>
+        </section>
 
-          {/* ── Card 2: ETL ───────────────────────────────────────────────── */}
-          <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-gray-500" />
-                <h3 className="font-medium text-gray-800">2. Load ETL outputs</h3>
-              </div>
-              {status?.overall === 'success' && (
-                <span className="flex items-center gap-1 text-xs text-green-700">
-                  <CheckCircle className="w-3.5 h-3.5" /> Loaded
-                </span>
-              )}
-            </div>
-            <p className="text-xs text-gray-500">
-              Builds the clinical schema if needed, loads this project's generated CSVs, and
-              optionally applies indices + FK constraints for a query-ready database.
-            </p>
+        {/* ── 4. Load DB ─────────────────────────────────────────────────── */}
+        <section className="flex flex-col gap-4">
+          <SectionHeader icon={Database} n={4} title="Load to OMOP DB" subtitle="Loads this project's generated CSVs into the clinical schema. Optionally applies indices + FK constraints for a query-ready database." />
 
+          <Card className="p-5 flex flex-col gap-4">
             {health && health.vocab_rows === 0 && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                Vocabulary not loaded yet. The clinical load will succeed, but concept lookups will
-                return NULL and FK constraints will fail to apply.
+                Vocabulary not loaded yet. The clinical load will succeed, but concept lookups will return NULL and FK constraints will fail to apply.
               </p>
             )}
 
@@ -444,9 +545,7 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
                   />
                   Shared schema
                 </span>
-                <span className="text-xs text-gray-500">
-                  Default <code className="bg-gray-100 px-1 rounded">cdm</code>.
-                </span>
+                <span className="text-xs text-gray-500">Default <code className="bg-gray-100 px-1 rounded">cdm</code>.</span>
               </label>
 
               <label className={clsx(
@@ -481,22 +580,12 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
             </div>
 
             <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={truncate}
-                onChange={e => setTruncate(e.target.checked)}
-                className="rounded text-blue-600"
-              />
+              <input type="checkbox" checked={truncate} onChange={e => setTruncate(e.target.checked)} className="rounded text-blue-600" />
               Truncate target tables before loading (CASCADE)
             </label>
 
             <label className="flex items-center gap-2 text-sm text-gray-700">
-              <input
-                type="checkbox"
-                checked={applyIndices}
-                onChange={e => setApplyIndices(e.target.checked)}
-                className="rounded text-blue-600"
-              />
+              <input type="checkbox" checked={applyIndices} onChange={e => setApplyIndices(e.target.checked)} className="rounded text-blue-600" />
               Apply indices and FK constraints after load (recommended for analytics)
             </label>
 
@@ -506,7 +595,7 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
               className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 disabled:opacity-50 w-fit"
               title={!canLoadEtl
                 ? (project.last_execution_status !== 'success'
-                  ? 'Run a successful ETL on Step 11 first'
+                  ? 'Execute the pipeline successfully above first'
                   : 'Postgres is not reachable')
                 : ''}
             >
@@ -520,11 +609,10 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
 
             {project.last_execution_status !== 'success' && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                Run a successful ETL on Step 11 before loading into the database.
+                Execute the pipeline successfully (section 2) before loading into the database.
               </p>
             )}
 
-            {/* Per-table progress */}
             {status && status.tables.length > 0 && (
               <div className="border border-gray-200 rounded-lg overflow-hidden">
                 <table className="w-full text-xs">
@@ -553,18 +641,8 @@ export default function Step12LoadDB({ project, onUpdate }: Props) {
             {status?.log && (
               <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-3 max-h-48 overflow-y-auto whitespace-pre-wrap">{status.log}</pre>
             )}
-          </div>
-        </div>
-
-        {/* Inspection hint */}
-        <div className="bg-blue-50 border border-blue-200 rounded-xl p-4 text-sm text-blue-800">
-          <p className="font-medium">Inspecting results</p>
-          <p className="mt-1 text-blue-700">
-            From your host (after <code className="bg-blue-100 px-1 rounded">docker compose up</code>):
-          </p>
-          <pre className="mt-2 bg-blue-900 text-blue-50 text-xs rounded px-3 py-2 overflow-x-auto">{`psql -h localhost -p 5432 -U omop -d omop -c "SELECT count(*) FROM vocab.concept;"
-psql -h localhost -p 5432 -U omop -d omop -c "SELECT count(*) FROM cdm.person;"`}</pre>
-        </div>
+          </Card>
+        </section>
       </div>
     </WizardLayout>
   )

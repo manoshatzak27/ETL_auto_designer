@@ -19,7 +19,7 @@ export interface Project {
   source_encoding: string
   source_columns: string[]
   source_row_count: number
-  etl_config: Record<string, unknown>
+  etl_config: Record<string, { enabled?: boolean } & Record<string, unknown>>
   generated_code: string
   generated_scripts: Record<string, string>
   last_execution_status: string

@@ -4,6 +4,7 @@ import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../ap
 import type { Project, StemTableConfig, StemTableOverride, VisitOccurrenceConfig } from '../../types'
 import { getStructuralColumns } from '../../utils'
 import WizardLayout from './WizardLayout'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Plus, Trash2, CheckCircle, AlertCircle } from 'lucide-react'
@@ -156,26 +157,24 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     onUpdate(p)
   }
 
+  const { prev, next } = getAdjacentSlugs(project, 'stem-table')
+
   const handleNext = async () => {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/11`)
+    if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
   const totalAssigned = Object.values(cfg.variable_groups).reduce((s, g) => s + g.length, 0)
 
   return (
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={10}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/9`)}
+      project={project}
+      currentSlug="stem-table"
+      onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      nextLabel="Next: Generate Code →"
+      nextLabel="Next: Generate &amp; Load →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

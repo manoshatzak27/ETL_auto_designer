@@ -4,6 +4,7 @@ import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/cl
 import { getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, VisitOccurrenceConfig, VisitDefinition } from '../../types'
 import WizardLayout from './WizardLayout'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
@@ -161,24 +162,22 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     onUpdate(p)
   }
 
+  const { prev, next } = getAdjacentSlugs(project, 'visit')
+
   const handleNext = async () => {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/7`)
+    if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
   return (
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={6}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/5`)}
+      project={project}
+      currentSlug="visit"
+      onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      nextLabel="Next: Observation Period →"
+      nextLabel="Next →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

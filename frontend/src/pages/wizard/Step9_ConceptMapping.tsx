@@ -13,6 +13,7 @@ import {
 import type { Project } from '../../types'
 import { getStructuralColumns } from '../../utils'
 import WizardLayout from './WizardLayout'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, Search, X,
@@ -1271,6 +1272,8 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
     setSelectedCols(prev => checked ? [...prev, col] : prev.filter(c => c !== col))
   }
 
+  const { prev: prevSlug, next: nextSlug } = getAdjacentSlugs(project, 'concepts')
+
   const handleNext = async () => {
     setSaving(true)
     setGenError('')
@@ -1279,7 +1282,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
       setGenerating(true)
       const updated = await generateMappingCsvs(project.id)
       onUpdate(updated)
-      navigate(`/project/${project.id}/step/10`)
+      if (nextSlug) navigate(`/project/${project.id}/step/${nextSlug}`)
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } }
       setGenError(err?.response?.data?.detail || 'Failed to generate mapping CSVs.')
@@ -1308,13 +1311,9 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   return (
     <Step9Ctx.Provider value={{ rerankerAvailable: openaiConfigured, customVocabularyId: customVocab }}>
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={9}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/8`)}
+      project={project}
+      currentSlug="concepts"
+      onBack={prevSlug ? () => navigate(`/project/${project.id}/step/${prevSlug}`) : undefined}
       onNext={handleNext}
       nextLabel={generating ? 'Generating CSVs…' : saving ? 'Saving…' : 'Next: Stem Table →'}
       nextDisabled={saving || generating}

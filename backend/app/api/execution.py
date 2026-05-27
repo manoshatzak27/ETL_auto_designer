@@ -21,8 +21,21 @@ async def execute_project(project_id: str, db: Session = Depends(get_db)):
     output_dir = settings.get_output_path() / project_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    # Respect per-table enabled flag from the Source-step picker. Optional
+    # tables that the user un-checked are excluded from execution even if a
+    # stale generated_scripts entry exists from before they disabled them.
+    # Domain-routed tables (measurement/observation/drug_exposure/procedure/
+    # condition_occurrence) have no etl_config entry; they're always allowed.
+    config: dict = project.etl_config or {}
+    filtered_scripts = {
+        table: code
+        for table, code in (project.generated_scripts or {}).items()
+        if table not in config
+        or config[table].get("enabled", True) is not False
+    }
+
     log, status, output_files = await execute_etl_scripts(
-        project.generated_scripts,
+        filtered_scripts,
         source_path=project.source_path,
         output_dir=str(output_dir),
         project_id=project_id,

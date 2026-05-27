@@ -4,6 +4,7 @@ import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/cl
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, CareSiteConfig } from '../../types'
 import WizardLayout from './WizardLayout'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
@@ -60,11 +61,13 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
     onUpdate(p)
   }
 
+  const { prev, next } = getAdjacentSlugs(project, 'care-site')
+
   const handleNext = async () => {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/4`)
+    if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
   const handlePosColChange = (col: string) => {
@@ -74,15 +77,11 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
 
   return (
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={3}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/2`)}
+      project={project}
+      currentSlug="care-site"
+      onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      nextLabel="Next: Provider →"
+      nextLabel="Next →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">
