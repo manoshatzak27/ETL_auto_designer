@@ -107,6 +107,7 @@ export interface ObservationPeriodConfig {
   end_date_col: string
   end_date_fallback: 'start_date' | 'today'
   period_type_concept_id: number
+  date_format?: string
 }
 
 export interface LocationConfig {
