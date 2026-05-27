@@ -131,26 +131,11 @@ def _build_table_prompt(project, table: str) -> str:
             "Guard: include `if __name__ == '__main__': main()`",
             "",
         ]
-        # Inject person_id type so the generated script reads it correctly from stem_table.csv
-        person_id_cfg: dict = (project.etl_config or {}).get("person", {}).get("mappings", {}).get("person_id", {})
-        if person_id_cfg.get("auto_increment"):
-            pid_note = "person_id in stem_table.csv is a sequential integer (auto-incremented). Read it as int."
-            pid_cast = "int(row['person_id'])"
-        else:
-            transform = person_id_cfg.get("transform", "int_float")
-            if transform == "str":
-                pid_note = "person_id in stem_table.csv is a string (user chose str transform). Read it as str — do NOT cast to int."
-                pid_cast = "str(row['person_id'])"
-            elif transform == "int":
-                pid_note = "person_id in stem_table.csv is an integer (user chose int transform). Read it as int."
-                pid_cast = "int(row['person_id'])"
-            else:  # int_float (default)
-                pid_note = "person_id in stem_table.csv was stored via int(float(...)) (user chose int_float transform). Read it as int."
-                pid_cast = "int(float(row['person_id']))"
+        # person_id in stem_table.csv is always a sequential integer (auto-incremented)
         lines += [
             "## PERSON ID TYPE",
-            pid_note,
-            f"Use this exact cast when reading person_id: `{pid_cast}`",
+            "person_id in stem_table.csv is always a sequential integer (auto-incremented). Read it as int.",
+            "Use this exact cast when reading person_id: `int(row['person_id'])`",
             "Wrap the cast in try/except and skip the row if it fails.",
             "",
         ]
@@ -260,30 +245,14 @@ def _build_table_prompt(project, table: str) -> str:
     # ── Person ID mode / transform note ──────────────────────────────────
     if table == "person":
         person_id_cfg = config.get("mappings", {}).get("person_id", {})
-        if person_id_cfg.get("auto_increment"):
-            lines += [
-                "## PERSON ID — AUTO-INCREMENT MODE",
-                "The user has enabled auto-increment for person_id.",
-                "IMPORTANT: Do NOT read person_id from any source column.",
-                "Assign sequential integers starting from 1 for each output row (e.g. use enumerate).",
-                "Set person_source_value to the string representation of that sequential integer.",
-                "",
-            ]
-        else:
-            _transform_map = {
-                "int_float": "int(float(value))",
-                "int": "int(value)",
-                "str": "str(value)",
-            }
-            transform = person_id_cfg.get("transform", "int_float")
-            transform_expr = _transform_map.get(transform, "int(float(value))")
-            lines += [
-                "## PERSON ID — TRANSFORM",
-                f"The user has selected person_id transform: `{transform}`.",
-                f"Cast the source person_id column using exactly: `{transform_expr}`",
-                "Do NOT use a different cast expression — respect the user's choice.",
-                "",
-            ]
+        pid_source_col = person_id_cfg.get("source_col", "")
+        lines += [
+            "## PERSON ID — ALWAYS AUTO-INCREMENT",
+            "person_id must always be a sequential integer starting from 1 (auto-increment).",
+            "NEVER set person_id from the source column — it must be a generated integer.",
+            f"person_source_value must be set to the original patient identifier from source column {repr(pid_source_col) if pid_source_col else '(none configured — use empty string)'}.",
+            "",
+        ]
 
         dob_cfg = config.get("mappings", {}).get("year_of_birth", {})
         date_format = dob_cfg.get("date_format", "%Y-%m-%d")
@@ -974,39 +943,22 @@ def _generate_person_script(project) -> str:
 
     # ── per-row code blocks ───────────────────────────────────────────────
 
-    if auto_increment:
-        counter_init = "    person_id_counter = 1\n"
+    # person_id is always a sequential auto-incrementing integer per OMOP CDM.
+    # person_source_value holds the original patient identifier from the source.
+    counter_init = "    person_id_counter = 1\n"
+    counter_inc = "            person_id_counter += 1\n"
+    if pid_col:
+        pid_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_id = person_id_counter\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
         pid_lines = (
             "            person_id = person_id_counter\n"
-            "            person_source_value = str(person_id)\n"
-        )
-        counter_inc = "            person_id_counter += 1\n"
-    elif pid_transform == "str":
-        counter_init = counter_inc = ""
-        pid_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_id = str(_pid_raw)\n"
-            "            person_source_value = person_id\n"
-        )
-    elif pid_transform == "int":
-        counter_init = counter_inc = ""
-        pid_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_id = int(_pid_raw)\n"
-            "            person_source_value = str(person_id)\n"
-        )
-    else:  # int_float
-        counter_init = counter_inc = ""
-        pid_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_id = int(float(_pid_raw))\n"
-            "            person_source_value = str(person_id)\n"
+            "            person_source_value = ''\n"
         )
 
     if dob_col:
@@ -1230,13 +1182,9 @@ def _generate_visit_occurrence_script(project) -> str:
     visit_defs = visit_cfg.get("visit_definitions", [])
     vd_repr = repr(visit_defs)
 
-    if auto_increment:
-        psv_setup = "    _psv_counter = 1\n"
-        psv_lines = (
-            "            person_source_value = str(_psv_counter)\n"
-            "            _psv_counter += 1\n"
-        )
-    elif pid_transform == "str":
+    # person_source_value in visit_occurrence must match what person.csv stores —
+    # which is always str(_pid_raw) with no type casting.
+    if pid_col:
         psv_setup = ""
         psv_lines = (
             f"            _pid_raw = row.get({repr(pid_col)})\n"
@@ -1244,21 +1192,11 @@ def _generate_visit_occurrence_script(project) -> str:
             "                continue\n"
             "            person_source_value = str(_pid_raw)\n"
         )
-    elif pid_transform == "int":
-        psv_setup = ""
+    else:
+        psv_setup = "    _psv_counter = 1\n"
         psv_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_source_value = str(int(_pid_raw))\n"
-        )
-    else:  # int_float
-        psv_setup = ""
-        psv_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_source_value = str(int(float(_pid_raw)))\n"
+            "            person_source_value = str(_psv_counter)\n"
+            "            _psv_counter += 1\n"
         )
 
     return (
