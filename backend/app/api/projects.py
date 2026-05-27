@@ -1,9 +1,11 @@
 import re
+import shutil
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectCreate, ProjectUpdate, ProjectResponse, ProjectSummary
+from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["projects"])
 
@@ -62,3 +64,7 @@ def delete_project(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Project not found")
     db.delete(project)
     db.commit()
+    for base_path in (settings.get_upload_path(), settings.get_output_path()):
+        project_dir = base_path / project_id
+        if project_dir.exists():
+            shutil.rmtree(project_dir)
