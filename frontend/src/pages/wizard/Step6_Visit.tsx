@@ -246,7 +246,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     className="mt-1 font-mono"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">
-                    Python strptime format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
+                    Format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
                   </p>
                 </div>
               </Card>
