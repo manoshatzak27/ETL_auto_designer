@@ -178,6 +178,7 @@ export interface StemTableOverride {
 export interface StemTableConfig {
   enabled: boolean
   variable_groups: Record<string, string[]>
+  visit_labels?: string[]
   concept_mapping_csvs: {
     variable_mapping?: string
     value_mapping?: string
