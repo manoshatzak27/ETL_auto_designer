@@ -841,7 +841,7 @@ def _generate_person_script(project) -> str:
     else:
         pid_lines = (
             "            person_id = person_id_counter\n"
-            "            person_source_value = ''\n"
+            "            person_source_value = str(_src_idx)\n"
         )
 
     if dob_col:
@@ -1003,7 +1003,7 @@ def _generate_person_script(project) -> str:
         + counter_init
         + "\n"
         "    rows = []\n"
-        "    for _, row in df.iterrows():\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
         "        try:\n"
         + pid_lines
         + dob_lines
@@ -1076,10 +1076,9 @@ def _generate_visit_occurrence_script(project) -> str:
             "            person_source_value = str(_pid_raw)\n"
         )
     else:
-        psv_setup = "    _psv_counter = 1\n"
+        psv_setup = ""
         psv_lines = (
-            "            person_source_value = str(_psv_counter)\n"
-            "            _psv_counter += 1\n"
+            "            person_source_value = str(_src_idx)\n"
         )
 
     return (
@@ -1113,7 +1112,7 @@ def _generate_visit_occurrence_script(project) -> str:
         + "    visit_id_counter = 1\n"
         "    rows = []\n"
         "\n"
-        "    for _, row in df.iterrows():\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
         "        try:\n"
         + psv_lines
         + "            person_id = person_lookup.get(person_source_value)\n"
@@ -1255,10 +1254,9 @@ def _generate_observation_period_script(project) -> str:
             "            person_source_value = str(_pid_raw)\n"
         )
     else:
-        psv_setup = "    _psv_counter = 1\n"
+        psv_setup = ""
         psv_lines = (
-            "            person_source_value = str(_psv_counter)\n"
-            "            _psv_counter += 1\n"
+            "            person_source_value = str(_src_idx)\n"
         )
 
     if end_col:
@@ -1314,7 +1312,7 @@ def _generate_observation_period_script(project) -> str:
         + "\n"
         "    person_periods: dict = {}\n"
         "\n"
-        "    for _, row in df.iterrows():\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
         "        try:\n"
         + psv_lines
         + "            person_id = person_lookup.get(person_source_value)\n"
