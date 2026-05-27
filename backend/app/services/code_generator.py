@@ -44,11 +44,8 @@ _DOMAIN_TABLES: dict[str, int] = {
 
 # Tables that have a VOLABIOS reference script available
 _REFERENCE_FILES: dict[str, str] = {
-    "person": "person.py",
-    "observation_period": "observation_period.py",
     "stem_table": "stem_table.py",
     "death": "death.py",
-    # visit_occurrence has no reference script — uses prompt-only approach
 }
 
 
@@ -56,6 +53,31 @@ def _load_text(path: Path) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     return ""
+
+
+def _sync_stem_variable_groups(stem_cfg: dict, visit_cfg: dict) -> dict:
+    """Return a copy of stem_cfg with variable_groups synced to current visit labels.
+
+    Groups whose names matched old visit labels (tracked in visit_labels) but no longer
+    appear in the current visit config are dropped. Manually-added groups are preserved.
+    New visit labels get an empty group if not already present.
+    """
+    current_labels: list[str] = [
+        vd["label"]
+        for vd in visit_cfg.get("visit_definitions", [])
+        if vd.get("label")
+    ]
+    saved_visit_labels: list[str] = stem_cfg.get("visit_labels", [])
+    old_groups: dict = stem_cfg.get("variable_groups", {})
+
+    synced: dict = {}
+    for key, val in old_groups.items():
+        if key not in saved_visit_labels:
+            synced[key] = val
+    for label in current_labels:
+        synced[label] = old_groups.get(label, [])
+
+    return {**stem_cfg, "variable_groups": synced, "visit_labels": current_labels}
 
 
 def _reference_script(table: str) -> str:
@@ -114,7 +136,7 @@ def _build_table_prompt(project, table: str) -> str:
     _CONCEPT_MAPPING_TABLES = {"stem_table", "death"}
 
     # ── Standalone adapter instructions ──────────────────────────────────
-    _NEEDS_PERSON_LOOKUP = {"visit_occurrence", "observation_period", "stem_table", "death"}
+    _NEEDS_PERSON_LOOKUP = {"stem_table", "death"}
     _NEEDS_VISIT_LOOKUP = {"stem_table", "death"}
 
     if table in _DOMAIN_TABLES:
@@ -139,9 +161,11 @@ def _build_table_prompt(project, table: str) -> str:
             "Wrap the cast in try/except and skip the row if it fails.",
             "",
         ]
-        # Inject stem_table config as context
+        # Inject stem_table config as context (synced against current visit labels)
         stem_cfg: dict = (project.etl_config or {}).get("stem_table", {})
         if stem_cfg:
+            visit_cfg: dict = (project.etl_config or {}).get("visit_occurrence", {})
+            stem_cfg = _sync_stem_variable_groups(stem_cfg, visit_cfg)
             lines += [
                 "## STEM TABLE CONFIG (context only — do not re-implement stem table logic)",
                 "```json",
@@ -182,9 +206,16 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
         if table in _NEEDS_PERSON_LOOKUP:
-            adaptation_lines.append(
+            person_cfg = (project.etl_config or {}).get("person", {})
+            pid_col = (person_cfg.get("mappings") or {}).get("person_id", {}).get("source_col", "")
+            lookup_hint = (
                 "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
+                f" When iterating source rows, use `str(row.get({repr(pid_col)}))` as the lookup key"
+                f" (the source column `{pid_col}` is the person identifier specified in the person step)."
+                if pid_col
+                else "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
             )
+            adaptation_lines.append(lookup_hint)
         if table in _NEEDS_VISIT_LOOKUP:
             source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
             adaptation_lines += [
@@ -202,20 +233,6 @@ def _build_table_prompt(project, table: str) -> str:
         ]
         lines += adaptation_lines
 
-    # ── visit_occurrence: visit_source_value auto-compute rule ───────────
-    if table == "visit_occurrence":
-        source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
-        lines += [
-            "## VISIT_SOURCE_VALUE — AUTO-COMPUTED",
-            f"VISIT_SOURCE_VALUE_FILENAME_STEM = '{source_stem}'",
-            "visit_source_value must be built at runtime as:",
-            f"  f\"{{person_source_value}}-{source_stem}-{{visit_label_normalized}}\"",
-            "where visit_label_normalized = visit label from config, lowercased, spaces → underscores.",
-            "Do NOT read visit_source_value from the config's source_value field — ignore it.",
-            "record_source_value must equal visit_source_value for every row.",
-            "",
-        ]
-
     # ── Source dataset ────────────────────────────────────────────────────
     lines += [
         "## SOURCE DATASET",
@@ -228,11 +245,10 @@ def _build_table_prompt(project, table: str) -> str:
     ]
 
     # ── Table-specific config ─────────────────────────────────────────────
-    # Strip legacy scalar fields that were replaced by per-value maps
     config_for_prompt = dict(config)
-    if table == "provider":
-        config_for_prompt.pop("gender_concept_id", None)
-        config_for_prompt.pop("specialty_concept_id", None)
+    if table == "stem_table":
+        visit_cfg_for_sync: dict = (project.etl_config or {}).get("visit_occurrence", {})
+        config_for_prompt = _sync_stem_variable_groups(config_for_prompt, visit_cfg_for_sync)
 
     lines += [
         f"## USER CONFIGURATION FOR {table.upper()}",
@@ -241,28 +257,6 @@ def _build_table_prompt(project, table: str) -> str:
         "```",
         "",
     ]
-
-    # ── Person ID mode / transform note ──────────────────────────────────
-    if table == "person":
-        person_id_cfg = config.get("mappings", {}).get("person_id", {})
-        pid_source_col = person_id_cfg.get("source_col", "")
-        lines += [
-            "## PERSON ID — ALWAYS AUTO-INCREMENT",
-            "person_id must always be a sequential integer starting from 1 (auto-increment).",
-            "NEVER set person_id from the source column — it must be a generated integer.",
-            f"person_source_value must be set to the original patient identifier from source column {repr(pid_source_col) if pid_source_col else '(none configured — use empty string)'}.",
-            "",
-        ]
-
-        dob_cfg = config.get("mappings", {}).get("year_of_birth", {})
-        date_format = dob_cfg.get("date_format", "%Y-%m-%d")
-        lines += [
-            "## DATE OF BIRTH — FORMAT",
-            f"The user has configured date_format: `{date_format}`",
-            f"Parse the date of birth column using exactly: `datetime.strptime(value, '{date_format}')`",
-            "Do NOT use a different format string — respect the user's choice.",
-            "",
-        ]
 
     # ── Concept decisions summary (relevant to this table) ───────────────
     if concept_decisions:
@@ -284,117 +278,6 @@ def _build_table_prompt(project, table: str) -> str:
             hint,
             "",
         ]
-
-    # ── Provider prefix specialty ─────────────────────────────────────────
-    if table == "provider":
-        prov_cfg_ps: dict = (project.etl_config or {}).get("provider", {})
-        prefix_specialty = prov_cfg_ps.get("prefix_specialty", "")
-        prefix_specialty_concept_id = prov_cfg_ps.get("prefix_specialty_concept_id")
-        if prefix_specialty or prefix_specialty_concept_id:
-            lines += ["## PREFIX SPECIALTY — STATIC DEFAULT"]
-            if prefix_specialty:
-                lines.append(
-                    f"When specialty_source_value cannot be derived from a source column "
-                    f"(column not configured or value is blank/null), use the static string "
-                    f"'{prefix_specialty}' as specialty_source_value."
-                )
-            if prefix_specialty_concept_id:
-                lines.append(
-                    f"When specialty_concept_id cannot be resolved from the per-value map, "
-                    f"fall back to the static concept ID {prefix_specialty_concept_id}."
-                )
-            lines += ["", ""]
-
-    # ── Provider composite source value ──────────────────────────────────
-    if table == "provider":
-        prov_cfg: dict = (project.etl_config or {}).get("provider", {})
-        prov_name_col = prov_cfg.get("provider_name_col", "")
-        if prov_name_col:
-            lines += [
-                "## PROVIDER_SOURCE_VALUE — AUTO-COMPUTED",
-                "Build provider_source_value as: str(care_site_id) + ' | ' + str(row['" + prov_name_col + "'])",
-                "where care_site_id is the resolved OMOP care_site_id (use the string 'None' if not found).",
-                "IMPORTANT: cast every value to str() before joining.",
-                "Truncate to 50 chars. Use this composite value as the deduplication key.",
-                "",
-            ]
-        care_site_config: dict = (project.etl_config or {}).get("care_site", {})
-        if care_site_config:
-            lines += [
-                "## CARE SITE CONFIG (for care_site_id lookup)",
-                "Use care_site_name_col from this config to match against care_site_name in ETL_OUTPUT_DIR/care_site.csv.",
-                "Build dict: {str(row['care_site_name']): int(row['care_site_id'])} and look up each provider row.",
-                "If no match, file absent, or care_site_name_col not configured, set care_site_id to None.",
-                "```json",
-                json.dumps(care_site_config, indent=2),
-                "```",
-                "",
-            ]
-
-    # ── Care site composite source value ─────────────────────────────────
-    if table == "care_site":
-        cs_cfg: dict = (project.etl_config or {}).get("care_site", {})
-        loc_cfg: dict = (project.etl_config or {}).get("location", {})
-        name_col = cs_cfg.get("care_site_name_col", "")
-        cs_addr_cols = [
-            col for key in ("cs_address_1_col", "cs_address_2_col", "cs_city_col",
-                            "cs_state_col", "cs_zip_col", "cs_county_col")
-            if (col := loc_cfg.get(key, ""))
-        ]
-        cs_country = loc_cfg.get("cs_country_source_value", "")
-        if name_col:
-            lines += [
-                "## CARE_SITE_SOURCE_VALUE — COMPOSITE KEY",
-                "Build care_site_source_value as: str(location_id) + ' | ' + str(row['" + name_col + "'])",
-                "where location_id is the OMOP location_id looked up from ETL_OUTPUT_DIR/location.csv",
-                "using the cs_location_source_value for that row (computed from the cs_* address columns).",
-                "  IMPORTANT: cast every column value to str() before joining — columns like zip may be integers.",
-                f"  Address columns used to compute cs_location_source_value: {cs_addr_cols}" + (f" + static country '{cs_country}'" if cs_country else ""),
-                "Use this composite value as the deduplication key (max 50 chars).",
-                "",
-            ]
-
-    # ── Location config (injected into care_site and person for location_id lookup) ──
-    if table in ("care_site", "person"):
-        location_config: dict = (project.etl_config or {}).get("location", {})
-        if location_config:
-            lines += [
-                "## LOCATION CONFIG (for location_id lookup)",
-                "Use the address columns below to compute location_source_value per row",
-                "and look up location_id from ETL_OUTPUT_DIR/location.csv.",
-                "IMPORTANT: cast every column value to str() before joining — columns like zip may be integers.",
-                "```json",
-                json.dumps(location_config, indent=2),
-                "```",
-                "",
-            ]
-
-    if table == "person":
-        care_site_config: dict = (project.etl_config or {}).get("care_site", {})
-        if care_site_config:
-            lines += [
-                "## CARE SITE CONFIG (for care_site_id lookup)",
-                "Load ETL_OUTPUT_DIR/care_site.csv and build a dict {care_site_source_value: care_site_id}.",
-                "care_site_source_value in that file has the format: '<location_id> | <care_site_name>'",
-                "To look up care_site_id for a person row: compute cs_location_source_value from the cs_* address",
-                "columns, resolve location_id from location.csv, then reconstruct the key as",
-                "  str(location_id) + ' | ' + str(row[care_site_name_col])",
-                "```json",
-                json.dumps(care_site_config, indent=2),
-                "```",
-                "",
-            ]
-
-        provider_config: dict = (project.etl_config or {}).get("provider", {})
-        if provider_config:
-            lines += [
-                "## PROVIDER CONFIG (for provider_id lookup)",
-                "Use the column below to look up provider_id from ETL_OUTPUT_DIR/provider.csv.",
-                "```json",
-                json.dumps(provider_config, indent=2),
-                "```",
-                "",
-            ]
 
     # ── Extra user instructions ───────────────────────────────────────────
     if extra:
@@ -1474,11 +1357,6 @@ def _generate_observation_period_script(project) -> str:
         "if __name__ == '__main__':\n"
         "    main()\n"
     )
-
-
-_DETERMINISTIC_TABLES = {
-    "location", "care_site", "provider", "person", "visit_occurrence", "observation_period"
-}
 
 
 async def _apply_extra_instructions(code: str, instructions: str, table: str) -> str:
