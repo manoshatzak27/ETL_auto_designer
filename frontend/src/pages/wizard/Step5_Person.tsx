@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
+import { updateTableConfig, getTableConfig, getColumnValues, detectColumnType } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, PersonConfig, RaceEthnicityMapping } from '../../types'
 import WizardLayout from './WizardLayout'
@@ -52,6 +52,25 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
   const [raceMode, setRaceMode] = useState<'column' | 'default'>('column')
   const [ethnicityMode, setEthnicityMode] = useState<'column' | 'default'>('column')
+  const [detectedTransform, setDetectedTransform] = useState<string | null>(null)
+
+  const pidCol = cfg.mappings.person_id.source_col
+  useEffect(() => {
+    if (!pidCol || cfg.mappings.person_id.auto_increment) {
+      setDetectedTransform(null)
+      return
+    }
+    detectColumnType(project.id, pidCol).then(res => {
+      setDetectedTransform(res.transform)
+      setCfg(prev => ({
+        ...prev,
+        mappings: {
+          ...prev.mappings,
+          person_id: { ...prev.mappings.person_id, transform: res.transform },
+        },
+      }))
+    }).catch(() => setDetectedTransform(null))
+  }, [pidCol, project.id, cfg.mappings.person_id.auto_increment])
 
   useEffect(() => {
     Promise.all([
@@ -199,6 +218,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
       hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/4`)}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next: Visit Occurrence →"
       saving={saving}
     >
@@ -238,10 +258,15 @@ export default function Step2Person({ project, onUpdate }: Props) {
               />
 
               <div>
-                <Label>Patient ID transform</Label>
+                <div className="flex items-center gap-2 mb-1">
+                  <Label>Patient ID transform</Label>
+                  {detectedTransform && (
+                    <span className="text-xs text-green-600 dark:text-green-400 font-medium">(auto-detected)</span>
+                  )}
+                </div>
                 <Select
                   value={cfg.mappings.person_id.transform}
-                  onChange={e => setField(['mappings', 'person_id', 'transform'], e.target.value)}
+                  onChange={e => { setDetectedTransform(null); setField(['mappings', 'person_id', 'transform'], e.target.value) }}
                   className="mt-1"
                 >
                   <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>

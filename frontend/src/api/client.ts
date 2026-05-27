@@ -46,6 +46,9 @@ export const lookupConceptDomain = (conceptId: number) =>
 export const getSourcePreview = (projectId: string, rows = 5) =>
   api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
 
+export const detectColumnType = (projectId: string, column: string) =>
+  api.get(`/projects/${projectId}/detect-column-type?column=${encodeURIComponent(column)}`).then(r => r.data as { column: string; transform: string })
+
 // ---- ETL Config ----
 export const updateTableConfig = (projectId: string, table: string, config: unknown) =>
   api.patch(`/projects/${projectId}/config`, { table, config }).then(r => r.data)

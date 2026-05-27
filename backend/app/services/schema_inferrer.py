@@ -62,3 +62,37 @@ def infer_schema(path: str) -> dict:
         "columns": list(df.columns),
         "row_count": max(row_count, 0),
     }
+
+
+def detect_pid_transform(path: str, delimiter: str, encoding: str, column: str) -> str:
+    """
+    Sample the given column and return the appropriate person_id transform:
+      "int"       — values like "1", "2" (pure integers)
+      "int_float" — values like "1.0", "2.0" (floats that represent integers)
+      "str"       — alphanumeric or otherwise non-numeric identifiers
+    """
+    try:
+        df = pd.read_csv(path, sep=delimiter, encoding=encoding, nrows=50, dtype=str, usecols=[column])
+    except Exception:
+        return "int_float"
+
+    values = [v for v in df[column].dropna().tolist() if v and v.strip().lower() != "nan"]
+    if not values:
+        return "int_float"
+
+    has_float_format = False
+    for v in values:
+        v = v.strip()
+        try:
+            int(v)
+            continue  # pure integer string
+        except ValueError:
+            pass
+        try:
+            int(float(v))
+            has_float_format = True  # looks like "1.0"
+            continue
+        except ValueError:
+            return "str"  # can't parse as number at all
+
+    return "int_float" if has_float_format else "int"
