@@ -1346,18 +1346,193 @@ def _generate_visit_occurrence_script(project) -> str:
     )
 
 
+def _generate_observation_period_script(project) -> str:
+    """Deterministic template-based generator for the OMOP observation_period script."""
+    obs = (project.etl_config or {}).get("observation_period", {})
+    person_cfg = (project.etl_config or {}).get("person", {})
+
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+
+    start_col = obs.get("start_date_col", "")
+    end_col = obs.get("end_date_col", "")
+    fallback = obs.get("end_date_fallback", "start_date")
+    type_concept_id = int(obs.get("period_type_concept_id") or 32879)
+    date_fmt = obs.get("date_format") or "%Y-%m-%d"
+
+    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_col = pid_cfg.get("source_col", "")
+
+    if pid_col:
+        psv_setup = ""
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
+        psv_setup = "    _psv_counter = 1\n"
+        psv_lines = (
+            "            person_source_value = str(_psv_counter)\n"
+            "            _psv_counter += 1\n"
+        )
+
+    if end_col:
+        end_date_lines = (
+            f"                _end_raw = str(row.get({repr(end_col)}, '')).strip()\n"
+            "                if _end_raw and _end_raw != 'nan':\n"
+            f"                    obs_end_date = datetime.strptime(_end_raw, {repr(date_fmt)}).date()\n"
+            "                else:\n"
+            + ("                    obs_end_date = obs_start_date\n" if fallback == "start_date"
+               else "                    obs_end_date = date.today()\n")
+        )
+    else:
+        end_date_lines = (
+            "                obs_end_date = obs_start_date\n" if fallback == "start_date"
+            else "                obs_end_date = date.today()\n"
+        )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "from datetime import datetime, date, timedelta\n"
+        "\n"
+        "\n"
+        "def _merge_periods(periods):\n"
+        "    if not periods:\n"
+        "        return []\n"
+        "    periods = sorted(periods, key=lambda x: x[0])\n"
+        "    merged = [list(periods[0])]\n"
+        "    for start, end in periods[1:]:\n"
+        "        if start <= merged[-1][1] + timedelta(days=1):\n"
+        "            merged[-1][1] = max(merged[-1][1], end)\n"
+        "        else:\n"
+        "            merged.append([start, end])\n"
+        "    return merged\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        + psv_setup
+        + "\n"
+        "    person_periods: dict = {}\n"
+        "\n"
+        "    for _, row in df.iterrows():\n"
+        "        try:\n"
+        + psv_lines
+        + "            person_id = person_lookup.get(person_source_value)\n"
+        "            if person_id is None:\n"
+        "                continue\n"
+        "\n"
+        f"            _start_raw = str(row.get({repr(start_col)}, '')).strip()\n"
+        "            if not _start_raw or _start_raw == 'nan':\n"
+        "                continue\n"
+        f"            obs_start_date = datetime.strptime(_start_raw, {repr(date_fmt)}).date()\n"
+        "\n"
+        "            try:\n"
+        + end_date_lines
+        + "            except Exception:\n"
+        "                obs_end_date = obs_start_date\n"
+        "\n"
+        "            person_periods.setdefault(person_id, []).append((obs_start_date, obs_end_date))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: skipping row — {e}')\n"
+        "\n"
+        "    rows = []\n"
+        "    obs_id = 1\n"
+        "    for person_id, periods in person_periods.items():\n"
+        "        for start, end in _merge_periods(periods):\n"
+        "            rows.append({\n"
+        "                'observation_period_id': obs_id,\n"
+        "                'person_id': person_id,\n"
+        "                'observation_period_start_date': start,\n"
+        "                'observation_period_end_date': end,\n"
+        f"                'period_type_concept_id': {type_concept_id},\n"
+        "            })\n"
+        "            obs_id += 1\n"
+        "\n"
+        "    df_out = pd.DataFrame(rows)\n"
+        "    output_file = os.path.join(output_dir, 'observation_period.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing observation_period.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
+_DETERMINISTIC_TABLES = {
+    "location", "care_site", "provider", "person", "visit_occurrence", "observation_period"
+}
+
+
+async def _apply_extra_instructions(code: str, instructions: str, table: str) -> str:
+    """Patch a deterministically generated script with user-supplied instructions via AI."""
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert Python ETL engineer. "
+                    "Apply the user's modifications to the given script exactly as requested. "
+                    "Return ONLY the complete modified Python script — no markdown fences, no explanations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Apply these modifications to the OMOP {table} script:\n\n"
+                    f"{instructions}\n\n"
+                    f"CURRENT SCRIPT:\n{code}"
+                ),
+            },
+        ],
+        temperature=0.1,
+        max_tokens=8192,
+    )
+    content = response.choices[0].message.content or ""
+    return _strip_fences(content)
+
+
 async def generate_table_script(project, table: str) -> str:
     """Generate the Python ETL script for a single OMOP table."""
+    code: str | None = None
+
     if table == "location":
-        return _generate_location_script(project)
-    if table == "care_site":
-        return _generate_care_site_script(project)
-    if table == "provider":
-        return _generate_provider_script(project)
-    if table == "person":
-        return _generate_person_script(project)
-    if table == "visit_occurrence":
-        return _generate_visit_occurrence_script(project)
+        code = _generate_location_script(project)
+    elif table == "care_site":
+        code = _generate_care_site_script(project)
+    elif table == "provider":
+        code = _generate_provider_script(project)
+    elif table == "person":
+        code = _generate_person_script(project)
+    elif table == "visit_occurrence":
+        code = _generate_visit_occurrence_script(project)
+    elif table == "observation_period":
+        code = _generate_observation_period_script(project)
+
+    if code is not None:
+        extra = (project.etl_config or {}).get(table, {}).get("extra_instructions", "").strip()
+        if extra:
+            code = await _apply_extra_instructions(code, extra, table)
+        return code
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 

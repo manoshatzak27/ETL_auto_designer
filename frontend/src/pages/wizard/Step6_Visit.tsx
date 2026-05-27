@@ -496,6 +496,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
           tableName="visit_occurrence"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -503,6 +504,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
           table="visit_occurrence"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

@@ -442,6 +442,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           tableName="person"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -449,6 +450,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           table="person"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

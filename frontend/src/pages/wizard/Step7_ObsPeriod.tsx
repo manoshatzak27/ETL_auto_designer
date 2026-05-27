@@ -153,6 +153,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
           tableName="observation_period"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -160,6 +161,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
           table="observation_period"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

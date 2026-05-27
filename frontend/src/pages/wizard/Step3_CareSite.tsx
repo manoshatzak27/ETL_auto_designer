@@ -167,6 +167,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
           tableName="care_site"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -174,6 +175,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
           table="care_site"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

@@ -314,6 +314,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           tableName="provider"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -321,6 +322,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           table="provider"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

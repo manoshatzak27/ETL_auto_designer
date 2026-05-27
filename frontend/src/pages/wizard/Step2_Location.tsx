@@ -527,6 +527,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
           tableName="location"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -534,6 +535,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
           table="location"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>
