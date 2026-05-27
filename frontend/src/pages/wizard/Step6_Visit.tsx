@@ -235,6 +235,20 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   required={false}
                   hint="Separate end date column. Leave blank to use start date as end date (for same-day visits)."
                 />
+
+                <div>
+                  <Label>Date format</Label>
+                  <Input
+                    type="text"
+                    value={vd.date_format ?? '%Y-%m-%d'}
+                    onChange={e => updateVisit(i, 'date_format', e.target.value || '%Y-%m-%d')}
+                    placeholder="%Y-%m-%d"
+                    className="mt-1 font-mono"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Python strptime format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
+                  </p>
+                </div>
               </Card>
 
               {/* ── Group 2: Visit source value (auto-computed) ───────────── */}

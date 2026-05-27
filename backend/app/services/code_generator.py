@@ -1213,6 +1213,201 @@ def _generate_person_script(project) -> str:
     )
 
 
+def _generate_visit_occurrence_script(project) -> str:
+    """Deterministic template-based generator for the OMOP visit_occurrence script."""
+    visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
+    person_cfg = (project.etl_config or {}).get("person", {})
+
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+    source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
+
+    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    auto_increment = pid_cfg.get("auto_increment", False)
+    pid_col = pid_cfg.get("source_col", "")
+    pid_transform = pid_cfg.get("transform", "int_float")
+
+    visit_defs = visit_cfg.get("visit_definitions", [])
+    vd_repr = repr(visit_defs)
+
+    if auto_increment:
+        psv_setup = "    _psv_counter = 1\n"
+        psv_lines = (
+            "            person_source_value = str(_psv_counter)\n"
+            "            _psv_counter += 1\n"
+        )
+    elif pid_transform == "str":
+        psv_setup = ""
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    elif pid_transform == "int":
+        psv_setup = ""
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(int(_pid_raw))\n"
+        )
+    else:  # int_float
+        psv_setup = ""
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(int(float(_pid_raw)))\n"
+        )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "from datetime import datetime, date\n"
+        "\n"
+        "INPATIENT_CONCEPT_IDS = {9201, 262, 42898160}\n"
+        "\n"
+        f"VISIT_DEFS = {vd_repr}\n"
+        "\n"
+        f"SOURCE_STEM = {repr(source_stem)}\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        + psv_setup
+        + "    visit_id_counter = 1\n"
+        "    rows = []\n"
+        "\n"
+        "    for _, row in df.iterrows():\n"
+        "        try:\n"
+        + psv_lines
+        + "            person_id = person_lookup.get(person_source_value)\n"
+        "            if person_id is None:\n"
+        "                continue\n"
+        "\n"
+        "            for vd in VISIT_DEFS:\n"
+        "                try:\n"
+        "                    date_val = row.get(vd['date_col'])\n"
+        "                    _date_str = str(date_val).strip() if pd.notnull(date_val) else ''\n"
+        "                    if vd.get('optional') and (not _date_str or _date_str == 'nan'):\n"
+        "                        continue\n"
+        "                    if not _date_str or _date_str == 'nan':\n"
+        "                        continue\n"
+        "                    _date_fmt = vd.get('date_format') or '%Y-%m-%d'\n"
+        "                    visit_start_date = datetime.strptime(_date_str, _date_fmt).date()\n"
+        "                    visit_start_datetime = datetime.combine(visit_start_date, datetime.min.time())\n"
+        "\n"
+        "                    end_col = vd.get('end_date_col') or ''\n"
+        "                    if end_col:\n"
+        "                        _ev = row.get(end_col)\n"
+        "                        _ev_str = str(_ev).strip() if pd.notnull(_ev) else ''\n"
+        "                        if _ev_str and _ev_str != 'nan':\n"
+        "                            try:\n"
+        "                                visit_end_date = datetime.strptime(_ev_str, _date_fmt).date()\n"
+        "                            except Exception:\n"
+        "                                visit_end_date = visit_start_date\n"
+        "                        else:\n"
+        "                            visit_end_date = visit_start_date\n"
+        "                    elif vd.get('visit_concept_id') in INPATIENT_CONCEPT_IDS:\n"
+        "                        visit_end_date = date.today()\n"
+        "                    else:\n"
+        "                        visit_end_date = visit_start_date\n"
+        "                    visit_end_datetime = datetime.combine(visit_end_date, datetime.min.time())\n"
+        "\n"
+        "                    vcsc = vd.get('visit_concept_source_col') or ''\n"
+        "                    if vcsc:\n"
+        "                        _vcv = (str(row.get(vcsc, '')).strip() or None) if pd.notnull(row.get(vcsc)) else None\n"
+        "                        visit_concept_id = (vd.get('visit_concept_value_map') or {}).get(_vcv, vd['visit_concept_id']) if _vcv else vd['visit_concept_id']\n"
+        "                    else:\n"
+        "                        visit_concept_id = vd['visit_concept_id']\n"
+        "\n"
+        "                    vtsc = vd.get('visit_type_source_col') or ''\n"
+        "                    if vtsc:\n"
+        "                        _vtv = (str(row.get(vtsc, '')).strip() or None) if pd.notnull(row.get(vtsc)) else None\n"
+        "                        visit_type_concept_id = (vd.get('visit_type_value_map') or {}).get(_vtv, vd['type_concept_id']) if _vtv else vd['type_concept_id']\n"
+        "                    else:\n"
+        "                        visit_type_concept_id = vd['type_concept_id']\n"
+        "\n"
+        "                    label_norm = vd['label'].lower().replace(' ', '_')\n"
+        "                    visit_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
+        "\n"
+        "                    afc_col = vd.get('admitted_from_source_col') or ''\n"
+        "                    if afc_col:\n"
+        "                        _afv = (str(row.get(afc_col, '')).strip() or None) if pd.notnull(row.get(afc_col)) else None\n"
+        "                        admitted_from_source_value = _afv\n"
+        "                        admitted_from_concept_id = (vd.get('admitted_from_value_map') or {}).get(_afv, vd.get('admitted_from_concept_id') or 0) if _afv else (vd.get('admitted_from_concept_id') or 0)\n"
+        "                    else:\n"
+        "                        admitted_from_source_value = vd.get('admitted_from_source_value')\n"
+        "                        admitted_from_concept_id = vd.get('admitted_from_concept_id') or 0\n"
+        "\n"
+        "                    dtc_col = vd.get('discharged_to_source_col') or ''\n"
+        "                    if dtc_col:\n"
+        "                        _dtv = (str(row.get(dtc_col, '')).strip() or None) if pd.notnull(row.get(dtc_col)) else None\n"
+        "                        discharged_to_source_value = _dtv\n"
+        "                        discharged_to_concept_id = (vd.get('discharged_to_value_map') or {}).get(_dtv, vd.get('discharged_to_concept_id') or 0) if _dtv else (vd.get('discharged_to_concept_id') or 0)\n"
+        "                    else:\n"
+        "                        discharged_to_source_value = vd.get('discharged_to_source_value')\n"
+        "                        discharged_to_concept_id = vd.get('discharged_to_concept_id') or 0\n"
+        "\n"
+        "                    rows.append({\n"
+        "                        'visit_occurrence_id': visit_id_counter,\n"
+        "                        'person_id': person_id,\n"
+        "                        'visit_concept_id': visit_concept_id,\n"
+        "                        'visit_start_date': visit_start_date,\n"
+        "                        'visit_start_datetime': visit_start_datetime,\n"
+        "                        'visit_end_date': visit_end_date,\n"
+        "                        'visit_end_datetime': visit_end_datetime,\n"
+        "                        'visit_type_concept_id': visit_type_concept_id,\n"
+        "                        'provider_id': None,\n"
+        "                        'care_site_id': None,\n"
+        "                        'visit_source_value': visit_source_value,\n"
+        "                        'visit_source_concept_id': 0,\n"
+        "                        'admitted_from_concept_id': admitted_from_concept_id,\n"
+        "                        'admitted_from_source_value': admitted_from_source_value,\n"
+        "                        'discharged_to_concept_id': discharged_to_concept_id,\n"
+        "                        'discharged_to_source_value': discharged_to_source_value,\n"
+        "                        'preceding_visit_occurrence_id': None,\n"
+        "                        'record_source_value': visit_source_value,\n"
+        "                    })\n"
+        "                    visit_id_counter += 1\n"
+        "                except Exception as e:\n"
+        "                    print(f'WARNING: skipping visit for {person_source_value} — {e}')\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: skipping row — {e}')\n"
+        "\n"
+        "    df_out = pd.DataFrame(rows)\n"
+        "\n"
+        "    if not df_out.empty:\n"
+        "        df_out = df_out.sort_values(['person_id', 'visit_start_date']).reset_index(drop=True)\n"
+        "        for _pid, grp in df_out.groupby('person_id', sort=False):\n"
+        "            idx_list = grp.index.tolist()\n"
+        "            for k in range(1, len(idx_list)):\n"
+        "                df_out.at[idx_list[k], 'preceding_visit_occurrence_id'] = df_out.at[idx_list[k - 1], 'visit_occurrence_id']\n"
+        "\n"
+        "    output_file = os.path.join(output_dir, 'visit_occurrence.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing visit_occurrence.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
 async def generate_table_script(project, table: str) -> str:
     """Generate the Python ETL script for a single OMOP table."""
     if table == "location":
@@ -1223,6 +1418,8 @@ async def generate_table_script(project, table: str) -> str:
         return _generate_provider_script(project)
     if table == "person":
         return _generate_person_script(project)
+    if table == "visit_occurrence":
+        return _generate_visit_occurrence_script(project)
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 

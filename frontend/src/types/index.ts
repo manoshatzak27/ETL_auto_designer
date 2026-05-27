@@ -75,6 +75,7 @@ export interface VisitDefinition {
   label: string
   date_col: string
   end_date_col?: string
+  date_format?: string
   // visit_concept_id: fixed concept or default when column mapping is used
   visit_concept_id: number
   visit_concept_source_col?: string
