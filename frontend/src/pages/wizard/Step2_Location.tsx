@@ -206,6 +206,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
       hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/1`)}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next: Care Site →"
       saving={saving}
     >

@@ -184,6 +184,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/9`)}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next: Generate Code →"
       saving={saving}
     >

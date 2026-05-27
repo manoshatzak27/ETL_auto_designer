@@ -68,6 +68,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
       hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/6`)}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next: Death →"
       saving={saving}
     >

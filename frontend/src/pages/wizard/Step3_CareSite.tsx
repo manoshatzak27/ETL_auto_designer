@@ -82,6 +82,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
       hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
       onBack={() => navigate(`/project/${project.id}/step/2`)}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next: Provider →"
       saving={saving}
     >
