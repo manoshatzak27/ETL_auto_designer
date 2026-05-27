@@ -197,7 +197,7 @@ export default function Dashboard() {
                     )}
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Clock className="size-3" />
-                      {new Date(p.updated_at).toLocaleDateString()}
+                      {new Date(p.updated_at + 'Z').toLocaleDateString()} {new Date(p.updated_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
                   </div>
                 </div>
