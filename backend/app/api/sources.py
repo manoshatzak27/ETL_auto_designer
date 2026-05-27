@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectResponse
-from app.services.schema_inferrer import infer_schema
+from app.services.schema_inferrer import infer_schema, detect_pid_transform
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["sources"])
@@ -137,6 +137,25 @@ def load_mappings_from_dir(
     db.commit()
     db.refresh(project)
     return project
+
+
+@router.get("/{project_id}/detect-column-type")
+def detect_column_type(project_id: str, column: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not project.source_path or not Path(project.source_path).exists():
+        raise HTTPException(status_code=404, detail="Source file not uploaded")
+    if column not in (project.source_columns or []):
+        raise HTTPException(status_code=400, detail=f"Column '{column}' not found in source file")
+
+    transform = detect_pid_transform(
+        project.source_path,
+        project.source_delimiter or ",",
+        project.source_encoding or "utf-8",
+        column,
+    )
+    return {"column": column, "transform": transform}
 
 
 @router.get("/{project_id}/source-preview")
