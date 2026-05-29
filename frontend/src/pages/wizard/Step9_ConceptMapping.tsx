@@ -17,9 +17,11 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, Search, X,
-  AlertTriangle, Tag, Sparkles, Plus,
+  AlertTriangle, Tag, Sparkles, Plus, Scale,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
+import DomainWarning from '../../components/DomainWarning'
 
 interface Props {
   project: Project
@@ -46,11 +48,17 @@ interface ConceptRef {
   justification?: string
 }
 
+interface UnitMapping {
+  unit_col: string | null
+  unit_concepts: Record<string, number>  // unit_source_value → unit_concept_id
+}
+
 interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
   value_concepts: Record<string, ConceptRef>
   domain_id: number | null
+  unit_mapping?: UnitMapping
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -734,6 +742,139 @@ function ValueMappingTable({
   )
 }
 
+// ── Unit mapping panel (shown when domain = Measurement or Observation) ──────
+
+const EMPTY_UNIT_MAPPING: UnitMapping = { unit_col: null, unit_concepts: {} }
+
+function UnitMappingSection({
+  columns,
+  columnInfos,
+  unitMapping,
+  onChange,
+}: {
+  columns: string[]
+  columnInfos: Record<string, ColumnInfo>
+  unitMapping: UnitMapping
+  onChange: (u: UnitMapping) => void
+}) {
+  const conceptIds = useMemo(
+    () => Object.values(unitMapping.unit_concepts).filter(id => id > 0),
+    [unitMapping.unit_concepts],
+  )
+  const unitViolations = useDomainValidation(conceptIds, 'Unit')
+
+  const unitValues: string[] = unitMapping.unit_col
+    ? (columnInfos[unitMapping.unit_col]?.distinct_values ?? [])
+    : []
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-sky-200 bg-sky-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Scale className="w-4 h-4 text-sky-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-sky-800">Unit</p>
+        <span className="ml-auto text-[10px] text-sky-500">
+          fills <code className="bg-sky-100 px-1 rounded">unit_concept_id</code> &amp;{' '}
+          <code className="bg-sky-100 px-1 rounded">unit_source_value</code>
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-1">
+        <label className="text-[10px] font-medium uppercase tracking-wide text-sky-700">
+          Unit column
+        </label>
+        <select
+          value={unitMapping.unit_col ?? ''}
+          onChange={e => {
+            const col = e.target.value || null
+            onChange({ unit_col: col, unit_concepts: {} })
+          }}
+          className="border border-sky-200 rounded px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-sky-400"
+        >
+          <option value="">— select a column —</option>
+          {columns.map(col => (
+            <option key={col} value={col}>{col}</option>
+          ))}
+        </select>
+      </div>
+
+      {unitMapping.unit_col && (
+        unitValues.length === 0 ? (
+          <p className="text-xs text-amber-700 flex items-center gap-1">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
+            No values loaded for column "{unitMapping.unit_col}".
+          </p>
+        ) : (
+          <div className="flex flex-col gap-2">
+            <div className="border border-sky-200 rounded-lg overflow-hidden">
+              <table className="w-full text-xs">
+                <thead className="bg-sky-100 border-b border-sky-200">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-medium text-sky-700 w-1/2">
+                      unit_source_value
+                    </th>
+                    <th className="text-left px-3 py-2 font-medium text-sky-700">
+                      unit_concept_id
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {unitValues.map((val, i) => {
+                    const cid = unitMapping.unit_concepts[val]
+                    const hasViolation = cid !== undefined && unitViolations.has(cid)
+                    return (
+                      <tr
+                        key={val}
+                        className={clsx(
+                          'border-b last:border-0 border-sky-100',
+                          hasViolation
+                            ? 'bg-amber-50'
+                            : i % 2 === 0 ? 'bg-white' : 'bg-sky-50/30',
+                        )}
+                      >
+                        <td className="px-3 py-2 font-mono text-foreground">{val}</td>
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            value={cid ?? ''}
+                            onChange={e => {
+                              const raw = e.target.value
+                              const next = { ...unitMapping.unit_concepts }
+                              if (!raw) {
+                                delete next[val]
+                              } else {
+                                const n = parseInt(raw, 10)
+                                if (!isNaN(n)) next[val] = n
+                              }
+                              onChange({ ...unitMapping, unit_concepts: next })
+                            }}
+                            className={clsx(
+                              'border rounded px-2 py-0.5 text-xs w-36 bg-white focus:outline-none focus:ring-1',
+                              hasViolation
+                                ? 'border-amber-300 focus:ring-amber-400'
+                                : 'border-sky-200 focus:ring-sky-400',
+                            )}
+                            placeholder="Concept ID…"
+                          />
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+
+            <DomainWarning violations={unitViolations} expectedDomain="Unit" />
+
+            <p className="text-xs text-sky-600">
+              {Object.keys(unitMapping.unit_concepts).length}/{unitValues.length} units mapped
+            </p>
+          </div>
+        )
+      )}
+    </div>
+  )
+}
+
 // ── Single variable expandable row ─────────────────────────────────────────
 
 function VariableRow({
@@ -745,6 +886,8 @@ function VariableRow({
   onCheck,
   onChange,
   batchMode,
+  allColumns,
+  allColumnInfos,
 }: {
   column: string
   info: ColumnInfo | null
@@ -754,6 +897,8 @@ function VariableRow({
   onCheck: (c: boolean) => void
   onChange: (d: VariableDecision) => void
   batchMode: boolean
+  allColumns: string[]
+  allColumnInfos: Record<string, ColumnInfo>
 }) {
   const [open, setOpen] = useState(false)
   const [domainMode, setDomainMode] = useState<'auto' | 'manual'>(() =>
@@ -966,6 +1111,16 @@ function VariableRow({
                 />
               )}
             </div>
+          )}
+
+          {/* Unit mapping — visible for Measurement (1) and Observation (2) */}
+          {(decision.domain_id === 1 || decision.domain_id === 2) && decision.strategy !== 'skip' && (
+            <UnitMappingSection
+              columns={allColumns}
+              columnInfos={allColumnInfos}
+              unitMapping={decision.unit_mapping ?? EMPTY_UNIT_MAPPING}
+              onChange={u => onChange({ ...decision, unit_mapping: u })}
+            />
           )}
 
           {/* Strategy selector */}
@@ -1476,6 +1631,8 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
                 onCheck={c => toggleSelect(col, c)}
                 onChange={d => setDecision(col, d)}
                 batchMode={batchMode}
+                allColumns={project.source_columns ?? []}
+                allColumnInfos={columnInfos}
               />
             ))}
             {filteredCols.length === 0 && (

@@ -80,6 +80,7 @@ def generate_mapping_csvs(
     value_rows: list[dict] = []
     var_value_rows: list[dict] = []
     custom_rows: list[dict] = []
+    unit_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
         strategy = decision.get("strategy", "skip")
@@ -112,6 +113,20 @@ def generate_mapping_csvs(
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
                         custom_rows.append(_custom_row(vc, custom_vocabulary_id))
 
+        # --- unit_mapping.csv  (measurement/observation unit_source_value → unit_concept_id) ---
+        unit_mapping = decision.get("unit_mapping") or {}
+        unit_col: str | None = unit_mapping.get("unit_col")
+        unit_concepts: dict = unit_mapping.get("unit_concepts") or {}
+        if unit_col and unit_concepts:
+            for unit_val, unit_cid in unit_concepts.items():
+                if unit_cid:
+                    unit_rows.append({
+                        "variable_source_code": variable,
+                        "unit_col": unit_col,
+                        "unit_source_value": unit_val,
+                        "unit_concept_id": int(unit_cid),
+                    })
+
     files: dict[str, str] = {}
 
     if variable_rows:
@@ -139,6 +154,12 @@ def generate_mapping_csvs(
         p = str(output_path / "custom_mappings.csv")
         df.to_csv(p, index=False, encoding="utf-8")
         files["custom_mappings"] = p
+
+    if unit_rows:
+        df = pd.DataFrame(unit_rows).sort_values(["variable_source_code", "unit_source_value"])
+        p = str(output_path / "unit_mapping.csv")
+        df.to_csv(p, index=False, encoding="utf-8")
+        files["unit_mapping"] = p
 
     return files
 
