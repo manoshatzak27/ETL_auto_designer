@@ -10,7 +10,9 @@ Key OMOP rules:
 
 Field rules:
 1. observation_period_id: sequential integer, unique across all records.
-2. person_id: looked up from the person.csv output (person_source_value → person_id).
+2. person_id: looked up from ETL_OUTPUT_DIR/person.csv via the dict
+   {str(row['person_source_value']): int(row['person_id'])}.
+   Use the SOURCE person_source_value (matching what person.py wrote), not raw source IDs.
 3. observation_period_start_date: from start_date_col (parsed using project date format).
    If no explicit enrollment/start concept exists in the source, infer as the earliest available
    clinical event date for the person.

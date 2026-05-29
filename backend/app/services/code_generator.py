@@ -1470,10 +1470,15 @@ async def generate_all_table_scripts(project) -> dict[str, str]:
     import asyncio
 
     config: dict = project.etl_config or {}
-    tables = [t for t in SUPPORTED_TABLES if t in config]
+    # Respect the per-table enabled flag set by the Source-step picker.
+    # Default to True when the key is absent so older projects keep working.
+    tables = [
+        t for t in SUPPORTED_TABLES
+        if t in config and config[t].get("enabled", True) is not False
+    ]
 
-    # Always include domain tables when stem_table is configured (they depend on it)
-    if "stem_table" in config:
+    # Always include domain tables when stem_table is enabled (they depend on it)
+    if "stem_table" in config and config["stem_table"].get("enabled", True) is not False:
         for dt in _DOMAIN_TABLES:
             if dt not in tables:
                 tables.append(dt)

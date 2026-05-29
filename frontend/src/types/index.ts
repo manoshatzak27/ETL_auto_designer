@@ -19,12 +19,13 @@ export interface Project {
   source_encoding: string
   source_columns: string[]
   source_row_count: number
-  etl_config: Record<string, unknown>
+  etl_config: Record<string, { enabled?: boolean } & Record<string, unknown>>
   generated_code: string
   generated_scripts: Record<string, string>
   last_execution_status: string
   output_files: string[]
   mapping_files: Record<string, string>
+  custom_vocabulary_id?: string
 }
 
 // ---- Per-table config shapes ----

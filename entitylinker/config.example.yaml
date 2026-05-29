@@ -1,0 +1,14 @@
+# config.yaml
+# Folder that contains OMOP files (tab-delimited):
+#   - CONCEPT.csv  (required)
+# Caches (created on first run):
+#   - embeddings_<VOCABS>.npy
+#   - lookup_<VOCABS>.csv
+#   - faiss_<VOCABS>.index
+
+data_dir: "./entitylinker/data"
+
+# OMOP vocabulary IDs to include
+vocabularies:
+  - SNOMED
+  - LOINC

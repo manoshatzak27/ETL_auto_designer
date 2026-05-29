@@ -11,6 +11,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    custom_vocabulary_id: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -30,6 +31,7 @@ class ProjectResponse(BaseModel):
     last_execution_status: str
     output_files: list[str] = []
     mapping_files: dict[str, Any] = {}
+    custom_vocabulary_id: str = "CUSTOM"
 
     model_config = {"from_attributes": True}
 

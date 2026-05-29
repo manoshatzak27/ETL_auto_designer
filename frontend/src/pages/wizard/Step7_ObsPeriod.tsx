@@ -4,6 +4,7 @@ import { updateTableConfig, getTableConfig } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, ObservationPeriodConfig } from '../../types'
 import WizardLayout from './WizardLayout'
+import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -51,25 +52,23 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
     onUpdate(p)
   }
 
+  const { prev, next } = getAdjacentSlugs(project, 'obs-period')
+
   const handleNext = async () => {
     setSaving(true)
     await saveConfig()
     setSaving(false)
-    navigate(`/project/${project.id}/step/8`)
+    if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
   return (
     <WizardLayout
-      projectId={project.id}
-      projectName={project.name}
-      currentStep={7}
-      generatedScripts={project.generated_scripts}
-      sourceUploaded={!!project.source_filename}
-      hasMappingFiles={Object.keys(project.mapping_files || {}).length > 0}
-      onBack={() => navigate(`/project/${project.id}/step/6`)}
+      project={project}
+      currentSlug="obs-period"
+      onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
       onBeforeStepChange={saveConfig}
-      nextLabel="Next: Death →"
+      nextLabel="Next →"
       saving={saving}
     >
       <div className="flex flex-col gap-6">

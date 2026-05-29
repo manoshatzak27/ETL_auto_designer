@@ -89,7 +89,7 @@ def get_column_values(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if not project.source_path or not Path(project.source_path).exists():
-        raise HTTPException(status_code=400, detail="Source file not uploaded yet")
+        return {}
 
     df = pd.read_csv(
         project.source_path,
@@ -164,7 +164,11 @@ def generate_csvs(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="No concept decisions saved yet")
 
     output_dir = str(settings.get_upload_path() / project_id / "mappings")
-    files = generate_mapping_csvs(project.concept_decisions, output_dir)
+    files = generate_mapping_csvs(
+        project.concept_decisions,
+        output_dir,
+        custom_vocabulary_id=project.custom_vocabulary_id or "CUSTOM",
+    )
 
     if not files:
         raise HTTPException(

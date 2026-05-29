@@ -11,10 +11,27 @@ import ObsPeriodStep from './pages/wizard/Step7_ObsPeriod'
 import ConceptMappingStep from './pages/wizard/Step9_ConceptMapping'
 import StemTableStep from './pages/wizard/Step10_StemTable'
 import DeathStep from './pages/wizard/Step8_Death'
-import GenerateStep from './pages/wizard/Step11_Generate'
+import StepFinalize from './pages/wizard/StepFinalize'
 import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
+import { LEGACY_NUMERIC_SLUGS, type WizardSlug } from './wizard/steps'
+
+// Map slugs → step components. Adding a new step? Register here and in
+// frontend/src/wizard/steps.ts (the ALL_STEPS registry).
+const STEP_COMPONENTS: Record<WizardSlug, React.ComponentType<{ project: Project; onUpdate: (p: Project) => void }>> = {
+  source:       Step1Upload,
+  location:     LocationStep,
+  'care-site':  CareSiteStep,
+  provider:     ProviderStep,
+  person:       PersonStep,
+  visit:        VisitStep,
+  'obs-period': ObsPeriodStep,
+  death:        DeathStep,
+  concepts:     ConceptMappingStep,
+  'stem-table': StemTableStep,
+  finalize:     StepFinalize,
+}
 
 function ProjectWizard() {
   const { projectId, step } = useParams<{ projectId: string; step: string }>()
@@ -40,28 +57,21 @@ function ProjectWizard() {
     return <Navigate to="/" replace />
   }
 
-  const update = (p: Project) => setProject(p)
+  // Legacy numeric URLs (/step/1 … /step/12) redirect to their slug equivalent.
+  if (step && step in LEGACY_NUMERIC_SLUGS) {
+    return <Navigate to={`/project/${projectId}/step/${LEGACY_NUMERIC_SLUGS[step]}`} replace />
+  }
 
-  const stepEl = (() => {
-    switch (step) {
-      case '1':  return <Step1Upload project={project} onUpdate={update} />
-      case '2':  return <LocationStep project={project} onUpdate={update} />
-      case '3':  return <CareSiteStep project={project} onUpdate={update} />
-      case '4':  return <ProviderStep project={project} onUpdate={update} />
-      case '5':  return <PersonStep project={project} onUpdate={update} />
-      case '6':  return <VisitStep project={project} onUpdate={update} />
-      case '7':  return <ObsPeriodStep project={project} onUpdate={update} />
-      case '8':  return <DeathStep project={project} onUpdate={update} />
-      case '9':  return <ConceptMappingStep project={project} onUpdate={update} />
-      case '10': return <StemTableStep project={project} onUpdate={update} />
-      case '11': return <GenerateStep project={project} onUpdate={update} />
-      default:  return <Navigate to={`/project/${projectId}/step/1`} replace />
-    }
-  })()
+  const Comp = step ? STEP_COMPONENTS[step as WizardSlug] : undefined
+  if (!Comp) {
+    return <Navigate to={`/project/${projectId}/step/source`} replace />
+  }
+
+  const update = (p: Project) => setProject(p)
 
   return (
     <>
-      {stepEl}
+      <Comp project={project} onUpdate={update} />
       <ChatPanel project={project} onUpdate={update} />
     </>
   )

@@ -1,0 +1,37 @@
+FROM python:3.11-slim
+
+# Environment variables
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+# Minimal OS dependencies for compiling wheels if needed
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential ca-certificates curl && \
+    rm -rf /var/lib/apt/lists/*
+
+
+# 1) Root dependencies
+COPY pyproject.toml README.md ./
+COPY entitylinker ./entitylinker
+RUN pip install -e .
+
+# 2) API dependencies
+COPY api ./api
+WORKDIR /app/api
+RUN pip install -e .
+
+# 3) Copy source code
+WORKDIR /app
+
+# Default config path (user-specific config.yaml can be mounted here)
+ENV ENTITYLINKER_CONFIG=/app/config.yaml
+
+# The API will listen on port 8000
+EXPOSE 8000
+
+# Entrypoint
+ENTRYPOINT ["entitylinker-api"]
+CMD []

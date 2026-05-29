@@ -5,9 +5,14 @@ and custom_mappings.csv from the user's concept decisions.
 Decision structure per variable:
 {
   "strategy": "map_variable" | "map_values" | "map_both" | "skip",
-  "variable_concept": {"concept_id": int, "concept_name": str} | null,
+  "variable_concept": {"concept_id": int, "concept_name": str,
+                       # optional fields, present when concept was created via
+                       # the "Create custom concept" form:
+                       "concept_code": str, "domain_id_str": str,
+                       "vocabulary_id": str, "concept_class_id": str,
+                       "is_custom": True} | null,
   "value_concepts": {
-      "<source_value>": {"concept_id": int, "concept_name": str}
+      "<source_value>": {... same shape ...}
   }
 }
 
@@ -26,6 +31,7 @@ import pandas as pd
 VALID_START = "1970-01-01"
 VALID_END = "2099-12-31"
 CUSTOM_CONCEPT_THRESHOLD = 2_000_000_000
+DEFAULT_CUSTOM_VOCABULARY = "CUSTOM"
 
 
 def _base_row(variable: str, concept: dict, domain_id: int | None = None) -> dict:
@@ -55,9 +61,16 @@ def _value_row(variable: str, value: str, concept: dict, domain_id: int | None =
     }
 
 
-def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str, str]:
+def generate_mapping_csvs(
+    concept_decisions: dict,
+    output_dir: str,
+    custom_vocabulary_id: str = DEFAULT_CUSTOM_VOCABULARY,
+) -> dict[str, str]:
     """
     Generates the 4 mapping CSVs from concept_decisions dict.
+    `custom_vocabulary_id` is the project-level vocab id that custom concepts
+    (id >= 2_000_000_000) are tagged with when the concept dict doesn't carry
+    one of its own.
     Returns a dict mapping key → absolute file path for each CSV produced.
     """
     output_path = Path(output_dir)
@@ -81,7 +94,7 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
         if strategy in ("map_variable", "map_both") and var_concept.get("concept_id"):
             variable_rows.append(_base_row(variable, var_concept, domain_id=domain_id))
             if var_concept["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
-                custom_rows.append(_custom_row(var_concept))
+                custom_rows.append(_custom_row(var_concept, custom_vocabulary_id))
 
         # --- variable_value_mapping.csv  (categorical: variable+value = concept) ---
         if strategy == "map_values":
@@ -89,7 +102,7 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
                 if vc.get("concept_id"):
                     var_value_rows.append(_value_row(variable, val, vc, domain_id=domain_id))
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
-                        custom_rows.append(_custom_row(vc))
+                        custom_rows.append(_custom_row(vc, custom_vocabulary_id))
 
         # --- value_mapping.csv  (value_as_concept_id alongside variable concept) ---
         if strategy == "map_both":
@@ -97,7 +110,7 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
                 if vc.get("concept_id"):
                     value_rows.append(_value_row(variable, val, vc, domain_id=domain_id))
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
-                        custom_rows.append(_custom_row(vc))
+                        custom_rows.append(_custom_row(vc, custom_vocabulary_id))
 
     files: dict[str, str] = {}
 
@@ -130,15 +143,18 @@ def generate_mapping_csvs(concept_decisions: dict, output_dir: str) -> dict[str,
     return files
 
 
-def _custom_row(concept: dict) -> dict:
+def _custom_row(concept: dict, custom_vocabulary_id: str = DEFAULT_CUSTOM_VOCABULARY) -> dict:
+    # Custom concepts created via the form carry `domain_id_str` (e.g. "Observation"),
+    # plus optional concept_code / concept_class_id. Anything missing falls back to
+    # sensible defaults so a bare manual-ID entry still produces a valid row.
     return {
         "concept_id": concept["concept_id"],
         "concept_name": concept.get("concept_name", ""),
-        "domain_id": concept.get("domain_id", "Observation"),
-        "vocabulary_id": concept.get("vocabulary_id", "VOLABIOS"),
-        "concept_class_id": concept.get("concept_class_id", "Clinical Finding"),
+        "domain_id": concept.get("domain_id_str") or "Observation",
+        "vocabulary_id": concept.get("vocabulary_id") or custom_vocabulary_id,
+        "concept_class_id": concept.get("concept_class_id") or "Clinical Finding",
         "standard_concept": "S",
-        "concept_code": concept.get("concept_code", str(concept["concept_id"])),
+        "concept_code": concept.get("concept_code") or str(concept["concept_id"]),
         "valid_start_date": VALID_START,
         "valid_end_date": VALID_END,
         "invalid_reason": "",
