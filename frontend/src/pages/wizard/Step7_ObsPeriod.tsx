@@ -6,12 +6,14 @@ import type { Project, ObservationPeriodConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
+import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface Props {
   project: Project
@@ -33,6 +35,10 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  const periodTypeViolations = useDomainValidation(
+    cfg.period_type_concept_id > 0 ? [cfg.period_type_concept_id] : [],
+    'Type Concept',
+  )
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period'), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
   const availCols = (currentValue: string) =>
@@ -146,6 +152,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
             >
               Accepted Concepts (Athena)
             </a>
+            <DomainWarning violations={periodTypeViolations} expectedDomain="Type Concept" />
           </div>
         </Card>
 

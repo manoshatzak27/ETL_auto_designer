@@ -7,11 +7,13 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -99,6 +101,16 @@ export default function Step5Location({ project, onUpdate }: Props) {
   const [csCountryValues, setCsCountryValues] = useState<string[]>([])
   const [countryMode, setCountryMode] = useState<'column' | 'default'>('column')
   const [csCountryMode, setCsCountryMode] = useState<'column' | 'default'>('column')
+
+  const personCountryIds = countryMode === 'column'
+    ? Object.values(cfg.country_concept_id_map)
+    : cfg.country_concept_id_default > 0 ? [cfg.country_concept_id_default] : []
+  const personCountryViolations = useDomainValidation(personCountryIds, 'Geography')
+
+  const csCountryIds = csCountryMode === 'column'
+    ? Object.values(cfg.cs_country_concept_id_map)
+    : cfg.cs_country_concept_id_default > 0 ? [cfg.cs_country_concept_id_default] : []
+  const csCountryViolations = useDomainValidation(csCountryIds, 'Geography')
 
   useEffect(() => {
     Promise.all([
@@ -363,6 +375,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
                 </div>
               </div>
             )}
+            <DomainWarning violations={personCountryViolations} expectedDomain="Geography" />
           </Card>
 
           <Card className="flex flex-col gap-3 p-6">
@@ -515,6 +528,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
                 </div>
               </div>
             )}
+            <DomainWarning violations={csCountryViolations} expectedDomain="Geography" />
           </Card>
 
           <Card className="flex flex-col gap-3 p-6">

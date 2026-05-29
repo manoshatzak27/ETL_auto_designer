@@ -7,9 +7,11 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -37,6 +39,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
   const [extraInstructions, setExtraInstructions] = useState('')
+  const posViolations = useDomainValidation(Object.values(cfg.place_of_service_value_map ?? {}), 'Visit')
 
   useEffect(() => {
     Promise.all([
@@ -161,6 +164,7 @@ export default function Step6CareSite({ project, onUpdate }: Props) {
               hint="Assign an OMOP concept ID to each distinct place-of-service value."
             />
           )}
+          <DomainWarning violations={posViolations} expectedDomain="Visit" />
         </Card>
 
         <ExtraInstructions

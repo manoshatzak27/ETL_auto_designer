@@ -7,12 +7,14 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -54,6 +56,26 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [raceMode, setRaceMode] = useState<'column' | 'default'>('column')
   const [ethnicityMode, setEthnicityMode] = useState<'column' | 'default'>('column')
   const [detectedTransform, setDetectedTransform] = useState<string | null>(null)
+
+  const genderDefaultId = cfg.mappings.gender_concept_id.default ?? 0
+  const genderConceptIds = genderMode === 'column'
+    ? Object.values(cfg.mappings.gender_concept_id.value_map)
+    : genderDefaultId > 0 ? [genderDefaultId] : []
+  const genderViolations = useDomainValidation(genderConceptIds, 'Gender')
+
+  const raceMap = cfg.mappings.race_concept_id as RaceEthnicityMapping
+  const raceDefaultId = raceMap?.default ?? 0
+  const raceConceptIds = raceMode === 'column'
+    ? Object.values(raceMap?.value_map ?? {})
+    : raceDefaultId > 0 ? [raceDefaultId] : []
+  const raceViolations = useDomainValidation(raceConceptIds, 'Race')
+
+  const ethMap = cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping
+  const ethDefaultId = ethMap?.default ?? 0
+  const ethConceptIds = ethnicityMode === 'column'
+    ? Object.values(ethMap?.value_map ?? {})
+    : ethDefaultId > 0 ? [ethDefaultId] : []
+  const ethViolations = useDomainValidation(ethConceptIds, 'Ethnicity')
 
   const pidCol = cfg.mappings.person_id.source_col
   useEffect(() => {
@@ -346,6 +368,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
               <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
             </div>
           )}
+          <DomainWarning violations={genderViolations} expectedDomain="Gender" />
         </Card>
 
         {/* Date of Birth */}
@@ -429,6 +452,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
               <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
             </div>
           )}
+          <DomainWarning violations={raceViolations} expectedDomain="Race" />
         </Card>
 
         {/* Ethnicity */}
@@ -478,6 +502,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
               <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
             </div>
           )}
+          <DomainWarning violations={ethViolations} expectedDomain="Ethnicity" />
         </Card>
 
         {/* Provider ID */}

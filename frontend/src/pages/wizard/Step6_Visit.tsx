@@ -7,6 +7,7 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Plus, Trash2, ExternalLink } from 'lucide-react'
@@ -14,6 +15,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface Props {
   project: Project
@@ -121,6 +123,16 @@ export default function Step3Visit({ project, onUpdate }: Props) {
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || !crossUsed.has(c))
 
+  const allVisitConceptIds = cfg.visit_definitions.flatMap((vd, i) =>
+    getMode(conceptModes, i) === 'column' ? Object.values(vd.visit_concept_value_map ?? {}) : [],
+  )
+  const visitConceptViolations = useDomainValidation(allVisitConceptIds, 'Visit')
+
+  const allTypeConceptIds = cfg.visit_definitions.flatMap((vd, i) =>
+    getMode(typeModes, i) === 'column' ? Object.values(vd.visit_type_value_map ?? {}) : [],
+  )
+  const typeConceptViolations = useDomainValidation(allTypeConceptIds, 'Type Concept')
+
   useEffect(() => {
     getTableConfig(project.id, 'visit_occurrence').then((ex: VisitOccurrenceConfig & { extra_instructions?: string }) => {
       if (ex && Object.keys(ex).length > 0) {
@@ -217,7 +229,18 @@ export default function Step3Visit({ project, onUpdate }: Props) {
         </div>
 
         <div className="flex flex-col gap-6">
-          {cfg.visit_definitions.map((vd, i) => (
+          {cfg.visit_definitions.map((vd, i) => {
+            const vdVisitIds = getMode(conceptModes, i) === 'column'
+              ? Object.values(vd.visit_concept_value_map ?? {}) : []
+            const vdVisitViolations = new Map(
+              [...visitConceptViolations.entries()].filter(([id]) => vdVisitIds.includes(id)),
+            )
+            const vdTypeIds = getMode(typeModes, i) === 'column'
+              ? Object.values(vd.visit_type_value_map ?? {}) : []
+            const vdTypeViolations = new Map(
+              [...typeConceptViolations.entries()].filter(([id]) => vdTypeIds.includes(id)),
+            )
+            return (
             <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
               {/* Visit header */}
               <div className="flex items-center justify-between">
@@ -373,6 +396,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     </Select>
                   </div>
                 )}
+                <DomainWarning violations={vdVisitViolations} expectedDomain="Visit" />
               </Card>
 
               {/* ── Group 4: visit_type_concept_id ────────────────────────── */}
@@ -419,6 +443,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                     </Select>
                   </div>
                 )}
+                <DomainWarning violations={vdTypeViolations} expectedDomain="Type Concept" />
               </Card>
 
               {/* Inpatient fields */}
@@ -540,7 +565,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 Optional (skip if date column is empty)
               </label>
             </div>
-          ))}
+            )
+          })}
         </div>
 
         <button

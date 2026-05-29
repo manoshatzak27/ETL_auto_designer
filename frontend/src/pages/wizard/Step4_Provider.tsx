@@ -7,11 +7,13 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
+import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface Props {
   project: Project
@@ -44,6 +46,18 @@ export default function Step7Provider({ project, onUpdate }: Props) {
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [specialtyMode, setSpecialtyMode] = useState<'column' | 'prefix'>('column')
   const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
+
+  const specialtyIds = specialtyMode === 'column'
+    ? Object.values(cfg.specialty_concept_value_map ?? {})
+    : cfg.prefix_specialty_concept_id ? [cfg.prefix_specialty_concept_id] : []
+  const specialtyViolations = useDomainValidation(specialtyIds, 'Provider')
+
+  const genderDefaultId = cfg.gender_concept_id_default ?? 0
+  const genderIds = genderMode === 'column'
+    ? Object.values(cfg.gender_concept_value_map ?? {})
+    : genderDefaultId > 0 ? [genderDefaultId] : []
+  const genderViolations = useDomainValidation(genderIds, 'Gender')
+
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'provider'), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
   const availCols = (currentValue: string) =>
@@ -258,6 +272,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
               </div>
             </div>
           )}
+          <DomainWarning violations={specialtyViolations} expectedDomain="Provider" />
         </Card>
 
         <Card className="flex flex-col gap-5 p-6">
@@ -315,6 +330,7 @@ export default function Step7Provider({ project, onUpdate }: Props) {
               <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
             </div>
           )}
+          <DomainWarning violations={genderViolations} expectedDomain="Gender" />
         </Card>
 
         <ExtraInstructions
