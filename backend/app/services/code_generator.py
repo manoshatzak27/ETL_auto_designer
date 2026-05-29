@@ -1,20 +1,13 @@
 """
 Per-table ETL script generator.
 
-Each OMOP table is generated independently via a dedicated OpenAI call.
-The call includes:
-  1. A shared system prompt (OMOP expert instructions)
-  2. The full VOLABIOS reference script for that table (so the AI sees the exact style/structure)
-  3. The user's structured ETL configuration for that table
-  4. Optional free-text extra instructions from the user
+All OMOP tables are generated deterministically. If the user supplies
+extra_instructions for a table, a separate AI call patches the generated script.
 """
 import json
 from pathlib import Path
 from openai import AsyncOpenAI
 from app.config import settings
-
-PROMPTS_DIR = Path(__file__).parent.parent / "prompts"
-REFS_DIR = PROMPTS_DIR / "references"
 
 # Tables we support, in dependency order
 SUPPORTED_TABLES = [
@@ -42,18 +35,6 @@ _DOMAIN_TABLES: dict[str, int] = {
     "condition_occurrence": 5,
 }
 
-# Tables that have a VOLABIOS reference script available
-_REFERENCE_FILES: dict[str, str] = {
-    "stem_table": "stem_table.py",
-    "death": "death.py",
-}
-
-
-def _load_text(path: Path) -> str:
-    if path.exists():
-        return path.read_text(encoding="utf-8")
-    return ""
-
 
 def _sync_stem_variable_groups(stem_cfg: dict, visit_cfg: dict) -> dict:
     """Return a copy of stem_cfg with variable_groups synced to current visit labels.
@@ -78,222 +59,6 @@ def _sync_stem_variable_groups(stem_cfg: dict, visit_cfg: dict) -> dict:
         synced[label] = old_groups.get(label, [])
 
     return {**stem_cfg, "variable_groups": synced, "visit_labels": current_labels}
-
-
-def _reference_script(table: str) -> str:
-    filename = _REFERENCE_FILES.get(table)
-    if not filename:
-        return ""
-    return _load_text(REFS_DIR / filename)
-
-
-def _table_prompt_hint(table: str) -> str:
-    return _load_text(PROMPTS_DIR / f"{table}.txt")
-
-
-def _system_prompt() -> str:
-    base = _load_text(PROMPTS_DIR / "system_prompt.txt")
-    if base:
-        return base
-    return (
-        "You are an expert OMOP CDM v5.4 ETL engineer. "
-        "Generate clean, production-ready standalone Python ETL scripts using only pandas, numpy, and the standard library."
-    )
-
-
-def _build_table_prompt(project, table: str) -> str:
-    config: dict = (project.etl_config or {}).get(table, {})
-    extra: str = config.get("extra_instructions", "").strip()
-    concept_decisions: dict = project.concept_decisions or {}
-    reference = _reference_script(table)
-    hint = _table_prompt_hint(table)
-
-    lines: list[str] = []
-
-    # ── Reference implementation ──────────────────────────────────────────
-    if reference:
-        lines += [
-            "## REFERENCE IMPLEMENTATION (VOLABIOS/PRIAS ETL)",
-            "Study this script carefully. Your output MUST follow the same:",
-            "- Module structure and import style",
-            "- Variable naming conventions",
-            "- Per-row loop pattern with explicit try/except per row",
-            "- Logging setup (logging.basicConfig + module-level logger)",
-            "- Inline comments style (non-obvious logic only)",
-            "",
-            "```python",
-            reference,
-            "```",
-            "",
-        ]
-    else:
-        lines += [
-            "## TABLE DESCRIPTION",
-            hint or f"Generate an OMOP {table} transformation.",
-            "",
-        ]
-
-    _CONCEPT_MAPPING_TABLES = {"stem_table", "death"}
-
-    # ── Standalone adapter instructions ──────────────────────────────────
-    _NEEDS_PERSON_LOOKUP = {"stem_table", "death"}
-    _NEEDS_VISIT_LOOKUP = {"stem_table", "death"}
-
-    if table in _DOMAIN_TABLES:
-        # Domain routing tables read from stem_table.csv — no source file, no wrapper
-        domain_id_val = _DOMAIN_TABLES[table]
-        lines += [
-            "## DOMAIN ROUTING RULES",
-            f"This script populates the OMOP {table.upper()} table from the staging stem_table.",
-            f"Input:   ETL_OUTPUT_DIR/stem_table.csv (semicolon-delimited, UTF-8)",
-            f"Filter:  only rows where domain_id == {domain_id_val}",
-            f"Output:  ETL_OUTPUT_DIR/{table}.csv (semicolon-delimited, UTF-8)",
-            "Env var: ETL_OUTPUT_DIR → directory containing stem_table.csv and where output is written",
-            "Print progress: e.g. 'Writing {table}.csv ... done (N records)'".format(table=table),
-            "Guard: include `if __name__ == '__main__': main()`",
-            "",
-        ]
-        # person_id in stem_table.csv is always a sequential integer (auto-incremented)
-        lines += [
-            "## PERSON ID TYPE",
-            "person_id in stem_table.csv is always a sequential integer (auto-incremented). Read it as int.",
-            "Use this exact cast when reading person_id: `int(row['person_id'])`",
-            "Wrap the cast in try/except and skip the row if it fails.",
-            "",
-        ]
-        # Inject stem_table config as context (synced against current visit labels)
-        stem_cfg: dict = (project.etl_config or {}).get("stem_table", {})
-        if stem_cfg:
-            visit_cfg: dict = (project.etl_config or {}).get("visit_occurrence", {})
-            stem_cfg = _sync_stem_variable_groups(stem_cfg, visit_cfg)
-            lines += [
-                "## STEM TABLE CONFIG (context only — do not re-implement stem table logic)",
-                "```json",
-                json.dumps(stem_cfg, indent=2),
-                "```",
-                "",
-            ]
-    else:
-        env_vars = [
-            "  - ETL_SOURCE_PATH   → FULL path to the source CSV file (use directly as the file path)"
-            "  - ETL_OUTPUT_DIR    → output directory for OMOP CSVs",
-        ]
-        if table in _CONCEPT_MAPPING_TABLES:
-            env_vars += [
-                "  - ETL_MAPPING_variable_mapping        → direct file path to variable_mapping.csv (may be empty/absent)",
-                "  - ETL_MAPPING_value_mapping            → direct file path to value_mapping.csv (may be empty/absent)",
-                "  - ETL_MAPPING_variable_value_mapping  → direct file path to variable_value_mapping.csv (may be empty/absent)",
-                "    All mapping CSVs use comma delimiter and UTF-8 encoding.",
-                "    If a path env var is empty or the file does not exist, treat that mapping as an empty dict.",
-                "    CSV column names (exact):",
-                "      variable_mapping.csv:       variable_source_code, target_concept_id, domain_id",
-                "      value_mapping.csv:          variable_source_code, value_source_code, target_concept_id",
-                "      variable_value_mapping.csv: variable_source_code, value_source_code, target_concept_id, domain_id",
-                "    Example load pattern:",
-                "      def _load_csv(path):",
-                "          if not path: return pd.DataFrame()",
-                "          try: return pd.read_csv(path, sep=',', encoding='utf-8')",
-                "          except FileNotFoundError: return pd.DataFrame()",
-                "      vm = _load_csv(os.environ.get('ETL_MAPPING_variable_mapping',''))",
-                "      var_map = {r['variable_source_code'].lower(): r['target_concept_id'] for _,r in vm.iterrows()} if not vm.empty else {}",
-            ]
-
-        adaptation_lines = [
-            "## ADAPTATION RULES",
-            "The reference uses a `wrapper` object. Your script must NOT use it.",
-            "Instead, read data from files using these environment variables:",
-            *env_vars,
-            "",
-        ]
-        if table in _NEEDS_PERSON_LOOKUP:
-            person_cfg = (project.etl_config or {}).get("person", {})
-            pid_col = (person_cfg.get("mappings") or {}).get("person_id", {}).get("source_col", "")
-            lookup_hint = (
-                "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
-                f" When iterating source rows, use `str(row.get({repr(pid_col)}))` as the lookup key"
-                f" (the source column `{pid_col}` is the person identifier specified in the person step)."
-                if pid_col
-                else "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
-            )
-            adaptation_lines.append(lookup_hint)
-        if table in _NEEDS_VISIT_LOOKUP:
-            source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
-            adaptation_lines += [
-                "Visit occurrence ID lookup: load ETL_OUTPUT_DIR/visit_occurrence.csv (semicolon-delimited)",
-                "  and build a dict keyed by visit_source_value: {row['visit_source_value']: row['visit_occurrence_id']}.",
-                f"The visit_source_value key format is: '{{person_source_value}}-{source_stem}-{{visit_label_normalized}}'",
-                "  where visit_label_normalized = visit label lowercased with spaces replaced by underscores.",
-            ]
-        adaptation_lines += [
-            "",
-            "Output: write semicolon-delimited (;) UTF-8 CSV to ETL_OUTPUT_DIR/{table}.csv".format(table=table),
-            "Print progress: e.g. 'Writing {table}.csv ... done (N records)'".format(table=table),
-            "Guard: include `if __name__ == '__main__': main()`",
-            "",
-        ]
-        lines += adaptation_lines
-
-    # ── Source dataset ────────────────────────────────────────────────────
-    lines += [
-        "## SOURCE DATASET",
-        f"  Filename  : {project.source_filename}",
-        f"  Delimiter : {repr(project.source_delimiter or ',')}",
-        f"  Encoding  : {project.source_encoding or 'utf-8'}",
-        f"  Columns   : {project.source_columns}",
-        f"  Row count : {project.source_row_count}",
-        "",
-    ]
-
-    # ── Table-specific config ─────────────────────────────────────────────
-    config_for_prompt = dict(config)
-    if table == "stem_table":
-        visit_cfg_for_sync: dict = (project.etl_config or {}).get("visit_occurrence", {})
-        config_for_prompt = _sync_stem_variable_groups(config_for_prompt, visit_cfg_for_sync)
-
-    lines += [
-        f"## USER CONFIGURATION FOR {table.upper()}",
-        "```json",
-        json.dumps(config_for_prompt, indent=2),
-        "```",
-        "",
-    ]
-
-    # ── Concept decisions summary (relevant to this table) ───────────────
-    if concept_decisions:
-        lines += [
-            "## CONCEPT MAPPING DECISIONS (from UI)",
-            "These are the user's per-variable mapping decisions. Use them to understand",
-            "which variables are clinical (map_variable / map_values / map_both) vs",
-            "administrative (skip), and what concept IDs have been pre-assigned.",
-            "```json",
-            json.dumps(concept_decisions, indent=2),
-            "```",
-            "",
-        ]
-
-    # ── Hint (if reference was shown, this is additional guidance) ───────
-    if reference and hint:
-        lines += [
-            "## ADDITIONAL OMOP FIELD GUIDANCE",
-            hint,
-            "",
-        ]
-
-    # ── Extra user instructions ───────────────────────────────────────────
-    if extra:
-        lines += [
-            "## EXTRA INSTRUCTIONS FROM USER",
-            extra,
-            "",
-        ]
-
-    lines += [
-        "## OUTPUT",
-        "Output ONLY the Python script. No markdown fences. No explanations outside the code.",
-        "The script must be completely runnable as: python script.py",
-    ]
-
-    return "\n".join(lines)
 
 
 def _xtr(var: str, col: str, indent: int = 8) -> str:
@@ -1393,48 +1158,6 @@ def _generate_observation_period_script(project) -> str:
     )
 
 
-def _infer_stem_overrides(project) -> list[dict]:
-    """Deterministically derive SPECIAL_OVERRIDES entries from Step 9 decisions.
-
-    The runtime stem_table.py already consumes unit_mapping.csv for per-row
-    unit lookups. This function covers the edge case where Step 9 captured
-    a unit_mapping with a SINGLE concept_id and NO unit_col (a fixed unit
-    for every row of that variable) — in which case unit_mapping.csv has
-    nothing to look up on, and the unit must be hardcoded as an override.
-
-    Rules (v1):
-      - Skip variables with strategy == 'skip' or no decision.
-      - For Measurement/Observation variables (domain_id in {1, 2}) whose
-        unit_mapping carries exactly one unit concept_id and no unit_col,
-        emit { variable, field: 'unit_concept_id', value: <concept_id> }.
-      - No legacy hardcoded overrides; every entry traces back to data.
-
-    The extensible hook for future inferred-override rules.
-    """
-    decisions: dict = project.concept_decisions or {}
-    inferred: list[dict] = []
-    for variable, d in decisions.items():
-        if not isinstance(d, dict):
-            continue
-        if d.get("strategy") == "skip":
-            continue
-        if d.get("domain_id") not in (1, 2):
-            continue
-        um = d.get("unit_mapping") or {}
-        if um.get("unit_col"):
-            continue  # handled at runtime via unit_mapping.csv
-        unit_concepts = um.get("unit_concepts") or {}
-        ids = [v for v in unit_concepts.values() if isinstance(v, int) and v > 0]
-        if len(ids) != 1:
-            continue
-        inferred.append({
-            "variable": variable,
-            "field": "unit_concept_id",
-            "value": ids[0],
-        })
-    return inferred
-
-
 def _generate_stem_table_script(project) -> str:
     """Deterministic template-based generator for the OMOP stem_table script.
 
@@ -2000,34 +1723,17 @@ async def generate_table_script(project, table: str) -> str:
         code = _generate_visit_occurrence_script(project)
     elif table == "observation_period":
         code = _generate_observation_period_script(project)
+    elif table == "death":
+        code = _generate_death_script(project)
     elif table == "stem_table":
         code = _generate_stem_table_script(project)
     elif table in _DOMAIN_TABLES:
         code = _generate_domain_script(table)
 
-    if code is not None:
-        extra = (project.etl_config or {}).get(table, {}).get("extra_instructions", "").strip()
-        if extra:
-            code = await _apply_extra_instructions(code, extra, table)
-        return code
-
-    client = AsyncOpenAI(api_key=settings.openai_api_key)
-
-    system = _system_prompt()
-    user = _build_table_prompt(project, table)
-
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        temperature=0.15,
-        max_tokens=8192,
-    )
-
-    content = response.choices[0].message.content or ""
-    return _strip_fences(content)
+    extra = (project.etl_config or {}).get(table, {}).get("extra_instructions", "").strip()
+    if extra:
+        code = await _apply_extra_instructions(code, extra, table)
+    return code
 
 
 async def generate_all_table_scripts(project) -> dict[str, str]:
