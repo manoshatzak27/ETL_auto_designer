@@ -39,6 +39,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [domainExtraInstructions, setDomainExtraInstructions] = useState<Record<string, string>>({})
   const [visitLabels, setVisitLabels] = useState<string[]>([])
 
   // Check which mapping CSVs were generated in Step 2
@@ -50,7 +51,8 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       getTableConfig(project.id, 'stem_table'),
       getTableConfig(project.id, 'visit_occurrence'),
       getConceptDecisions(project.id),
-    ]).then(([ex, visitCfg, decisions]: [StemTableConfig & { extra_instructions?: string }, VisitOccurrenceConfig, Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>]) => {
+      ...DOMAIN_TABLES.map(({ table }) => getTableConfig(project.id, table).catch(() => ({}))),
+    ]).then(([ex, visitCfg, decisions, ...domainCfgs]: [StemTableConfig & { extra_instructions?: string }, VisitOccurrenceConfig, Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>, ...Record<string, unknown>[]]) => {
       const labels: string[] = (visitCfg?.visit_definitions ?? [])
         .map((vd: { label: string }) => vd.label)
         .filter(Boolean)
@@ -78,6 +80,12 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       }
 
       setRawDecisions(decisions)
+
+      const extraMap: Record<string, string> = {}
+      DOMAIN_TABLES.forEach(({ table }, i) => {
+        extraMap[table] = (domainCfgs[i] as { extra_instructions?: string })?.extra_instructions || ''
+      })
+      setDomainExtraInstructions(extraMap)
     })
   }, [project.id])
 
@@ -164,6 +172,11 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     }
     const p = await updateTableConfig(project.id, 'stem_table', updatedCfg)
     onUpdate(p)
+  }
+
+  const saveDomainTableConfig = async (table: string) => {
+    await saveConfig()
+    await updateTableConfig(project.id, table, { extra_instructions: domainExtraInstructions[table] || '' })
   }
 
   const { prev, next } = getAdjacentSlugs(project, 'stem-table')
@@ -338,6 +351,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
           tableName="stem_table"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -367,11 +381,17 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
                     <span className="text-xs text-gray-400">{cols.length} variable{cols.length !== 1 ? 's' : ''}</span>
                   )}
                 </div>
+                <ExtraInstructions
+                  tableName={label}
+                  value={domainExtraInstructions[table] || ''}
+                  onChange={v => setDomainExtraInstructions(prev => ({ ...prev, [table]: v }))}
+                  deterministic
+                />
                 <ScriptGenerator
                   project={project}
                   table={table}
                   onUpdate={onUpdate}
-                  beforeGenerate={saveConfig}
+                  beforeGenerate={() => saveDomainTableConfig(table)}
                 />
               </div>
             )

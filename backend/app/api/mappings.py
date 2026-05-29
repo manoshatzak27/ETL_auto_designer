@@ -7,7 +7,11 @@ from app.schemas.project import ETLConfigUpdate, ProjectResponse
 
 router = APIRouter(prefix="/projects", tags=["mappings"])
 
-VALID_TABLES = {"person", "visit_occurrence", "observation_period", "location", "care_site", "provider", "stem_table", "death"}
+VALID_TABLES = {
+    "person", "visit_occurrence", "observation_period", "location", "care_site", "provider",
+    "stem_table", "death",
+    "measurement", "observation", "drug_exposure", "procedure_occurrence", "condition_occurrence",
+}
 
 
 @router.patch("/{project_id}/config", response_model=ProjectResponse)
