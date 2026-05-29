@@ -12,6 +12,7 @@ interface Props {
   children: ReactNode
   onNext?: () => void
   onBack?: () => void
+  onBeforeStepChange?: () => Promise<void>
   nextLabel?: string
   nextDisabled?: boolean
   saving?: boolean
@@ -23,6 +24,7 @@ export default function WizardLayout({
   children,
   onNext,
   onBack,
+  onBeforeStepChange,
   nextLabel = 'Next',
   nextDisabled,
   saving,
@@ -61,7 +63,10 @@ export default function WizardLayout({
             return (
               <button
                 key={step.slug}
-                onClick={() => navigate(`/project/${project.id}/step/${step.slug}`)}
+                onClick={async () => {
+                  await onBeforeStepChange?.()
+                  navigate(`/project/${project.id}/step/${step.slug}`)
+                }}
                 className={clsx(
                   'flex flex-1 min-w-0 items-center justify-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium shadow-sm transition-all',
                   active && 'border-primary bg-primary text-primary-foreground shadow-md',

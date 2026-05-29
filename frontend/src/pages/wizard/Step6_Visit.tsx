@@ -127,8 +127,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
         const vds = ex.visit_definitions ?? []
-        setConceptModes(vds.map((vd: VisitDefinition) => (vd.visit_concept_source_col ? 'column' : 'column')))
-        setTypeModes(vds.map((vd: VisitDefinition) => (vd.visit_type_source_col ? 'column' : 'column')))
+        setConceptModes(vds.map((vd: VisitDefinition) => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
+        setTypeModes(vds.map((vd: VisitDefinition) => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
       }
     })
     getColumnValues(project.id).then(setColumnInfos)
@@ -145,16 +145,42 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     })
   }
 
+  const updateVisitFields = (i: number, fields: Partial<VisitDefinition>) => {
+    setCfg(prev => {
+      const defs = [...prev.visit_definitions]
+      defs[i] = { ...defs[i], ...fields }
+      return { ...prev, visit_definitions: defs }
+    })
+  }
+
   const addVisit = () => {
     setCfg(prev => ({ ...prev, visit_definitions: [...prev.visit_definitions, { ...DEFAULT_VISIT }] }))
-    setConceptModes(prev => [...prev, 'column'])
-    setTypeModes(prev => [...prev, 'column'])
+    setConceptModes(prev => [...prev, 'default'])
+    setTypeModes(prev => [...prev, 'default'])
   }
 
   const removeVisit = (i: number) => {
     setCfg(prev => ({ ...prev, visit_definitions: prev.visit_definitions.filter((_, j) => j !== i) }))
     setConceptModes(prev => prev.filter((_, j) => j !== i))
     setTypeModes(prev => prev.filter((_, j) => j !== i))
+  }
+
+  const switchConceptMode = (i: number, mode: 'column' | 'default') => {
+    setMode(setConceptModes, i, mode)
+    if (mode === 'default') {
+      updateVisitFields(i, { visit_concept_mode: mode, visit_concept_source_col: undefined, visit_concept_value_map: undefined })
+    } else {
+      updateVisit(i, 'visit_concept_mode', mode)
+    }
+  }
+
+  const switchTypeMode = (i: number, mode: 'column' | 'default') => {
+    setMode(setTypeModes, i, mode)
+    if (mode === 'default') {
+      updateVisitFields(i, { visit_type_mode: mode, visit_type_source_col: undefined, visit_type_value_map: undefined })
+    } else {
+      updateVisit(i, 'visit_type_mode', mode)
+    }
   }
 
   const saveConfig = async () => {
@@ -177,6 +203,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
       currentSlug="visit"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next →"
       saving={saving}
     >
@@ -227,6 +254,15 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 />
 
                 <FieldMapper
+                  label="visit_start_time column (optional)"
+                  sourceColumns={availCols(vd.time_col ?? '')}
+                  value={vd.time_col ?? ''}
+                  onChange={v => updateVisit(i, 'time_col', v || undefined)}
+                  required={false}
+                  hint="Separate column with the start time. If absent, visit_start_datetime defaults to midnight (00:00:00)."
+                />
+
+                <FieldMapper
                   label="visit_end_date column (optional)"
                   sourceColumns={availCols(vd.end_date_col ?? '')}
                   value={vd.end_date_col ?? ''}
@@ -234,6 +270,43 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   required={false}
                   hint="Separate end date column. Leave blank to use start date as end date (for same-day visits)."
                 />
+
+                <FieldMapper
+                  label="visit_end_time column (optional)"
+                  sourceColumns={availCols(vd.end_time_col ?? '')}
+                  value={vd.end_time_col ?? ''}
+                  onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
+                  required={false}
+                  hint="Separate column with the end time. If absent, visit_end_datetime defaults to midnight (00:00:00)."
+                />
+
+                <div>
+                  <Label>Date format</Label>
+                  <Input
+                    type="text"
+                    value={vd.date_format ?? '%Y-%m-%d'}
+                    onChange={e => updateVisit(i, 'date_format', e.target.value || '%Y-%m-%d')}
+                    placeholder="%Y-%m-%d"
+                    className="mt-1 font-mono"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
+                  </p>
+                </div>
+
+                <div>
+                  <Label>Time format</Label>
+                  <Input
+                    type="text"
+                    value={vd.time_format ?? '%H:%M:%S'}
+                    onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
+                    placeholder="%H:%M:%S"
+                    className="mt-1 font-mono"
+                  />
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Format applied to the time column(s) (e.g. <code className="bg-muted px-1 rounded">%H:%M</code>, <code className="bg-muted px-1 rounded">%H:%M:%S</code>). If no time column is mapped, datetime defaults to midnight.
+                  </p>
+                </div>
               </Card>
 
               {/* ── Group 2: Visit source value (auto-computed) ───────────── */}
@@ -264,8 +337,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={() => setMode(setConceptModes, i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => setMode(setConceptModes, i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+                  <button onClick={() => switchConceptMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+                  <button onClick={() => switchConceptMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
                 </div>
 
                 {getMode(conceptModes, i) === 'column' ? (
@@ -310,8 +383,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                 </div>
 
                 <div className="flex gap-2">
-                  <button onClick={() => setMode(setTypeModes, i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => setMode(setTypeModes, i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+                  <button onClick={() => switchTypeMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+                  <button onClick={() => switchTypeMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
                 </div>
 
                 {getMode(typeModes, i) === 'column' ? (
@@ -481,6 +554,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
           tableName="visit_occurrence"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -488,6 +562,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
           table="visit_occurrence"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

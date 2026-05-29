@@ -80,6 +80,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
       currentSlug="death"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next →"
       saving={saving}
     >

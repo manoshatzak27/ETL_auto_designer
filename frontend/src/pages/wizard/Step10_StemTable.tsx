@@ -39,6 +39,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [newGroupName, setNewGroupName] = useState('')
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [visitLabels, setVisitLabels] = useState<string[]>([])
 
   // Check which mapping CSVs were generated in Step 2
   const mappingFiles = project.mapping_files || {}
@@ -50,22 +51,29 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       getTableConfig(project.id, 'visit_occurrence'),
       getConceptDecisions(project.id),
     ]).then(([ex, visitCfg, decisions]: [StemTableConfig & { extra_instructions?: string }, VisitOccurrenceConfig, Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown> }>]) => {
-      const visitLabels: string[] = (visitCfg?.visit_definitions ?? [])
+      const labels: string[] = (visitCfg?.visit_definitions ?? [])
         .map((vd: { label: string }) => vd.label)
         .filter(Boolean)
 
+      setVisitLabels(labels)
+
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
-        // Sync variable_groups: add keys for new visit labels, preserve existing assignments
-        const syncedGroups = { ...ex.variable_groups }
-        for (const label of visitLabels) {
-          if (!(label in syncedGroups)) syncedGroups[label] = []
+        const savedVisitLabels: string[] = ex.visit_labels ?? []
+        const syncedGroups: Record<string, string[]> = {}
+        // Keep manually-added groups (not derived from visit labels at save time)
+        for (const [key, val] of Object.entries(ex.variable_groups)) {
+          if (!savedVisitLabels.includes(key)) syncedGroups[key] = val
+        }
+        // Add current visit labels, carrying over any existing assignments
+        for (const label of labels) {
+          syncedGroups[label] = ex.variable_groups[label] ?? []
         }
         setCfg({ ...ex, variable_groups: syncedGroups })
-      } else if (visitLabels.length > 0) {
+      } else if (labels.length > 0) {
         // No saved stem_table config yet — seed groups from visit labels
         const groups: Record<string, string[]> = {}
-        for (const label of visitLabels) groups[label] = []
+        for (const label of labels) groups[label] = []
         setCfg(prev => ({ ...prev, variable_groups: groups }))
       }
 
@@ -146,6 +154,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const saveConfig = async () => {
     const updatedCfg = {
       ...cfg,
+      visit_labels: visitLabels,
       concept_mapping_csvs: {
         variable_mapping: mappingFiles.variable_mapping || '',
         value_mapping: mappingFiles.value_mapping || '',
@@ -174,6 +183,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       currentSlug="stem-table"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next: Generate &amp; Load →"
       saving={saving}
     >

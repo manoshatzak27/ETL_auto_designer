@@ -22,9 +22,11 @@ interface Props {
   beforeGenerate?: () => Promise<void>
   /** Extra classes for the generate/regenerate button (e.g. a fixed width for uniform rows) */
   buttonClassName?: string
+  /** When true, hides AI-specific labels (table is generated deterministically) */
+  deterministic?: boolean
 }
 
-export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName }: Props) {
+export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName, deterministic = false }: Props) {
   const scripts: Record<string, string> = project.generated_scripts || {}
   const script = scripts[table] || null
 
@@ -98,9 +100,9 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
             <p className="text-sm font-semibold text-foreground font-mono">{table}.py</p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {generating
-                ? 'GPT-4o is writing the transformation script…'
+                ? (deterministic ? 'Building script from template…' : 'GPT-4o is writing the transformation script…')
                 : script
-                  ? `Generated · ${lineCount} lines · based on VOLABIOS reference`
+                  ? (deterministic ? `Generated · ${lineCount} lines` : `Generated · ${lineCount} lines · based on VOLABIOS reference`)
                   : 'Click Generate to create the Python ETL script for this table'
               }
             </p>

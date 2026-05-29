@@ -44,11 +44,8 @@ _DOMAIN_TABLES: dict[str, int] = {
 
 # Tables that have a VOLABIOS reference script available
 _REFERENCE_FILES: dict[str, str] = {
-    "person": "person.py",
-    "observation_period": "observation_period.py",
     "stem_table": "stem_table.py",
     "death": "death.py",
-    # visit_occurrence has no reference script — uses prompt-only approach
 }
 
 
@@ -56,6 +53,31 @@ def _load_text(path: Path) -> str:
     if path.exists():
         return path.read_text(encoding="utf-8")
     return ""
+
+
+def _sync_stem_variable_groups(stem_cfg: dict, visit_cfg: dict) -> dict:
+    """Return a copy of stem_cfg with variable_groups synced to current visit labels.
+
+    Groups whose names matched old visit labels (tracked in visit_labels) but no longer
+    appear in the current visit config are dropped. Manually-added groups are preserved.
+    New visit labels get an empty group if not already present.
+    """
+    current_labels: list[str] = [
+        vd["label"]
+        for vd in visit_cfg.get("visit_definitions", [])
+        if vd.get("label")
+    ]
+    saved_visit_labels: list[str] = stem_cfg.get("visit_labels", [])
+    old_groups: dict = stem_cfg.get("variable_groups", {})
+
+    synced: dict = {}
+    for key, val in old_groups.items():
+        if key not in saved_visit_labels:
+            synced[key] = val
+    for label in current_labels:
+        synced[label] = old_groups.get(label, [])
+
+    return {**stem_cfg, "variable_groups": synced, "visit_labels": current_labels}
 
 
 def _reference_script(table: str) -> str:
@@ -114,7 +136,7 @@ def _build_table_prompt(project, table: str) -> str:
     _CONCEPT_MAPPING_TABLES = {"stem_table", "death"}
 
     # ── Standalone adapter instructions ──────────────────────────────────
-    _NEEDS_PERSON_LOOKUP = {"visit_occurrence", "observation_period", "stem_table", "death"}
+    _NEEDS_PERSON_LOOKUP = {"stem_table", "death"}
     _NEEDS_VISIT_LOOKUP = {"stem_table", "death"}
 
     if table in _DOMAIN_TABLES:
@@ -131,32 +153,19 @@ def _build_table_prompt(project, table: str) -> str:
             "Guard: include `if __name__ == '__main__': main()`",
             "",
         ]
-        # Inject person_id type so the generated script reads it correctly from stem_table.csv
-        person_id_cfg: dict = (project.etl_config or {}).get("person", {}).get("mappings", {}).get("person_id", {})
-        if person_id_cfg.get("auto_increment"):
-            pid_note = "person_id in stem_table.csv is a sequential integer (auto-incremented). Read it as int."
-            pid_cast = "int(row['person_id'])"
-        else:
-            transform = person_id_cfg.get("transform", "int_float")
-            if transform == "str":
-                pid_note = "person_id in stem_table.csv is a string (user chose str transform). Read it as str — do NOT cast to int."
-                pid_cast = "str(row['person_id'])"
-            elif transform == "int":
-                pid_note = "person_id in stem_table.csv is an integer (user chose int transform). Read it as int."
-                pid_cast = "int(row['person_id'])"
-            else:  # int_float (default)
-                pid_note = "person_id in stem_table.csv was stored via int(float(...)) (user chose int_float transform). Read it as int."
-                pid_cast = "int(float(row['person_id']))"
+        # person_id in stem_table.csv is always a sequential integer (auto-incremented)
         lines += [
             "## PERSON ID TYPE",
-            pid_note,
-            f"Use this exact cast when reading person_id: `{pid_cast}`",
+            "person_id in stem_table.csv is always a sequential integer (auto-incremented). Read it as int.",
+            "Use this exact cast when reading person_id: `int(row['person_id'])`",
             "Wrap the cast in try/except and skip the row if it fails.",
             "",
         ]
-        # Inject stem_table config as context
+        # Inject stem_table config as context (synced against current visit labels)
         stem_cfg: dict = (project.etl_config or {}).get("stem_table", {})
         if stem_cfg:
+            visit_cfg: dict = (project.etl_config or {}).get("visit_occurrence", {})
+            stem_cfg = _sync_stem_variable_groups(stem_cfg, visit_cfg)
             lines += [
                 "## STEM TABLE CONFIG (context only — do not re-implement stem table logic)",
                 "```json",
@@ -197,9 +206,16 @@ def _build_table_prompt(project, table: str) -> str:
             "",
         ]
         if table in _NEEDS_PERSON_LOOKUP:
-            adaptation_lines.append(
+            person_cfg = (project.etl_config or {}).get("person", {})
+            pid_col = (person_cfg.get("mappings") or {}).get("person_id", {}).get("source_col", "")
+            lookup_hint = (
                 "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
+                f" When iterating source rows, use `str(row.get({repr(pid_col)}))` as the lookup key"
+                f" (the source column `{pid_col}` is the person identifier specified in the person step)."
+                if pid_col
+                else "Person ID lookup: load ETL_OUTPUT_DIR/person.csv and build a dict {person_source_value: person_id}."
             )
+            adaptation_lines.append(lookup_hint)
         if table in _NEEDS_VISIT_LOOKUP:
             source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
             adaptation_lines += [
@@ -217,20 +233,6 @@ def _build_table_prompt(project, table: str) -> str:
         ]
         lines += adaptation_lines
 
-    # ── visit_occurrence: visit_source_value auto-compute rule ───────────
-    if table == "visit_occurrence":
-        source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
-        lines += [
-            "## VISIT_SOURCE_VALUE — AUTO-COMPUTED",
-            f"VISIT_SOURCE_VALUE_FILENAME_STEM = '{source_stem}'",
-            "visit_source_value must be built at runtime as:",
-            f"  f\"{{person_source_value}}-{source_stem}-{{visit_label_normalized}}\"",
-            "where visit_label_normalized = visit label from config, lowercased, spaces → underscores.",
-            "Do NOT read visit_source_value from the config's source_value field — ignore it.",
-            "record_source_value must equal visit_source_value for every row.",
-            "",
-        ]
-
     # ── Source dataset ────────────────────────────────────────────────────
     lines += [
         "## SOURCE DATASET",
@@ -243,11 +245,10 @@ def _build_table_prompt(project, table: str) -> str:
     ]
 
     # ── Table-specific config ─────────────────────────────────────────────
-    # Strip legacy scalar fields that were replaced by per-value maps
     config_for_prompt = dict(config)
-    if table == "provider":
-        config_for_prompt.pop("gender_concept_id", None)
-        config_for_prompt.pop("specialty_concept_id", None)
+    if table == "stem_table":
+        visit_cfg_for_sync: dict = (project.etl_config or {}).get("visit_occurrence", {})
+        config_for_prompt = _sync_stem_variable_groups(config_for_prompt, visit_cfg_for_sync)
 
     lines += [
         f"## USER CONFIGURATION FOR {table.upper()}",
@@ -256,44 +257,6 @@ def _build_table_prompt(project, table: str) -> str:
         "```",
         "",
     ]
-
-    # ── Person ID mode / transform note ──────────────────────────────────
-    if table == "person":
-        person_id_cfg = config.get("mappings", {}).get("person_id", {})
-        if person_id_cfg.get("auto_increment"):
-            lines += [
-                "## PERSON ID — AUTO-INCREMENT MODE",
-                "The user has enabled auto-increment for person_id.",
-                "IMPORTANT: Do NOT read person_id from any source column.",
-                "Assign sequential integers starting from 1 for each output row (e.g. use enumerate).",
-                "Set person_source_value to the string representation of that sequential integer.",
-                "",
-            ]
-        else:
-            _transform_map = {
-                "int_float": "int(float(value))",
-                "int": "int(value)",
-                "str": "str(value)",
-            }
-            transform = person_id_cfg.get("transform", "int_float")
-            transform_expr = _transform_map.get(transform, "int(float(value))")
-            lines += [
-                "## PERSON ID — TRANSFORM",
-                f"The user has selected person_id transform: `{transform}`.",
-                f"Cast the source person_id column using exactly: `{transform_expr}`",
-                "Do NOT use a different cast expression — respect the user's choice.",
-                "",
-            ]
-
-        dob_cfg = config.get("mappings", {}).get("year_of_birth", {})
-        date_format = dob_cfg.get("date_format", "%Y-%m-%d")
-        lines += [
-            "## DATE OF BIRTH — FORMAT",
-            f"The user has configured date_format: `{date_format}`",
-            f"Parse the date of birth column using exactly: `datetime.strptime(value, '{date_format}')`",
-            "Do NOT use a different format string — respect the user's choice.",
-            "",
-        ]
 
     # ── Concept decisions summary (relevant to this table) ───────────────
     if concept_decisions:
@@ -315,117 +278,6 @@ def _build_table_prompt(project, table: str) -> str:
             hint,
             "",
         ]
-
-    # ── Provider prefix specialty ─────────────────────────────────────────
-    if table == "provider":
-        prov_cfg_ps: dict = (project.etl_config or {}).get("provider", {})
-        prefix_specialty = prov_cfg_ps.get("prefix_specialty", "")
-        prefix_specialty_concept_id = prov_cfg_ps.get("prefix_specialty_concept_id")
-        if prefix_specialty or prefix_specialty_concept_id:
-            lines += ["## PREFIX SPECIALTY — STATIC DEFAULT"]
-            if prefix_specialty:
-                lines.append(
-                    f"When specialty_source_value cannot be derived from a source column "
-                    f"(column not configured or value is blank/null), use the static string "
-                    f"'{prefix_specialty}' as specialty_source_value."
-                )
-            if prefix_specialty_concept_id:
-                lines.append(
-                    f"When specialty_concept_id cannot be resolved from the per-value map, "
-                    f"fall back to the static concept ID {prefix_specialty_concept_id}."
-                )
-            lines += ["", ""]
-
-    # ── Provider composite source value ──────────────────────────────────
-    if table == "provider":
-        prov_cfg: dict = (project.etl_config or {}).get("provider", {})
-        prov_name_col = prov_cfg.get("provider_name_col", "")
-        if prov_name_col:
-            lines += [
-                "## PROVIDER_SOURCE_VALUE — AUTO-COMPUTED",
-                "Build provider_source_value as: str(care_site_id) + ' | ' + str(row['" + prov_name_col + "'])",
-                "where care_site_id is the resolved OMOP care_site_id (use the string 'None' if not found).",
-                "IMPORTANT: cast every value to str() before joining.",
-                "Truncate to 50 chars. Use this composite value as the deduplication key.",
-                "",
-            ]
-        care_site_config: dict = (project.etl_config or {}).get("care_site", {})
-        if care_site_config:
-            lines += [
-                "## CARE SITE CONFIG (for care_site_id lookup)",
-                "Use care_site_name_col from this config to match against care_site_name in ETL_OUTPUT_DIR/care_site.csv.",
-                "Build dict: {str(row['care_site_name']): int(row['care_site_id'])} and look up each provider row.",
-                "If no match, file absent, or care_site_name_col not configured, set care_site_id to None.",
-                "```json",
-                json.dumps(care_site_config, indent=2),
-                "```",
-                "",
-            ]
-
-    # ── Care site composite source value ─────────────────────────────────
-    if table == "care_site":
-        cs_cfg: dict = (project.etl_config or {}).get("care_site", {})
-        loc_cfg: dict = (project.etl_config or {}).get("location", {})
-        name_col = cs_cfg.get("care_site_name_col", "")
-        cs_addr_cols = [
-            col for key in ("cs_address_1_col", "cs_address_2_col", "cs_city_col",
-                            "cs_state_col", "cs_zip_col", "cs_county_col")
-            if (col := loc_cfg.get(key, ""))
-        ]
-        cs_country = loc_cfg.get("cs_country_source_value", "")
-        if name_col:
-            lines += [
-                "## CARE_SITE_SOURCE_VALUE — COMPOSITE KEY",
-                "Build care_site_source_value as: str(location_id) + ' | ' + str(row['" + name_col + "'])",
-                "where location_id is the OMOP location_id looked up from ETL_OUTPUT_DIR/location.csv",
-                "using the cs_location_source_value for that row (computed from the cs_* address columns).",
-                "  IMPORTANT: cast every column value to str() before joining — columns like zip may be integers.",
-                f"  Address columns used to compute cs_location_source_value: {cs_addr_cols}" + (f" + static country '{cs_country}'" if cs_country else ""),
-                "Use this composite value as the deduplication key (max 50 chars).",
-                "",
-            ]
-
-    # ── Location config (injected into care_site and person for location_id lookup) ──
-    if table in ("care_site", "person"):
-        location_config: dict = (project.etl_config or {}).get("location", {})
-        if location_config:
-            lines += [
-                "## LOCATION CONFIG (for location_id lookup)",
-                "Use the address columns below to compute location_source_value per row",
-                "and look up location_id from ETL_OUTPUT_DIR/location.csv.",
-                "IMPORTANT: cast every column value to str() before joining — columns like zip may be integers.",
-                "```json",
-                json.dumps(location_config, indent=2),
-                "```",
-                "",
-            ]
-
-    if table == "person":
-        care_site_config: dict = (project.etl_config or {}).get("care_site", {})
-        if care_site_config:
-            lines += [
-                "## CARE SITE CONFIG (for care_site_id lookup)",
-                "Load ETL_OUTPUT_DIR/care_site.csv and build a dict {care_site_source_value: care_site_id}.",
-                "care_site_source_value in that file has the format: '<location_id> | <care_site_name>'",
-                "To look up care_site_id for a person row: compute cs_location_source_value from the cs_* address",
-                "columns, resolve location_id from location.csv, then reconstruct the key as",
-                "  str(location_id) + ' | ' + str(row[care_site_name_col])",
-                "```json",
-                json.dumps(care_site_config, indent=2),
-                "```",
-                "",
-            ]
-
-        provider_config: dict = (project.etl_config or {}).get("provider", {})
-        if provider_config:
-            lines += [
-                "## PROVIDER CONFIG (for provider_id lookup)",
-                "Use the column below to look up provider_id from ETL_OUTPUT_DIR/provider.csv.",
-                "```json",
-                json.dumps(provider_config, indent=2),
-                "```",
-                "",
-            ]
 
     # ── Extra user instructions ───────────────────────────────────────────
     if extra:
@@ -974,39 +826,22 @@ def _generate_person_script(project) -> str:
 
     # ── per-row code blocks ───────────────────────────────────────────────
 
-    if auto_increment:
-        counter_init = "    person_id_counter = 1\n"
+    # person_id is always a sequential auto-incrementing integer per OMOP CDM.
+    # person_source_value holds the original patient identifier from the source.
+    counter_init = "    person_id_counter = 1\n"
+    counter_inc = "            person_id_counter += 1\n"
+    if pid_col:
+        pid_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_id = person_id_counter\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
         pid_lines = (
             "            person_id = person_id_counter\n"
-            "            person_source_value = str(person_id)\n"
-        )
-        counter_inc = "            person_id_counter += 1\n"
-    elif pid_transform == "str":
-        counter_init = counter_inc = ""
-        pid_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_id = str(_pid_raw)\n"
-            "            person_source_value = person_id\n"
-        )
-    elif pid_transform == "int":
-        counter_init = counter_inc = ""
-        pid_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_id = int(_pid_raw)\n"
-            "            person_source_value = str(person_id)\n"
-        )
-    else:  # int_float
-        counter_init = counter_inc = ""
-        pid_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            "                continue\n"
-            "            person_id = int(float(_pid_raw))\n"
-            "            person_source_value = str(person_id)\n"
+            "            person_source_value = str(_src_idx)\n"
         )
 
     if dob_col:
@@ -1168,7 +1003,7 @@ def _generate_person_script(project) -> str:
         + counter_init
         + "\n"
         "    rows = []\n"
-        "    for _, row in df.iterrows():\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
         "        try:\n"
         + pid_lines
         + dob_lines
@@ -1213,16 +1048,367 @@ def _generate_person_script(project) -> str:
     )
 
 
+def _generate_visit_occurrence_script(project) -> str:
+    """Deterministic template-based generator for the OMOP visit_occurrence script."""
+    visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
+    person_cfg = (project.etl_config or {}).get("person", {})
+
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+    source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
+
+    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    auto_increment = pid_cfg.get("auto_increment", False)
+    pid_col = pid_cfg.get("source_col", "")
+    pid_transform = pid_cfg.get("transform", "int_float")
+
+    visit_defs = visit_cfg.get("visit_definitions", [])
+    vd_repr = repr(visit_defs)
+
+    # person_source_value in visit_occurrence must match what person.csv stores —
+    # which is always str(_pid_raw) with no type casting.
+    if pid_col:
+        psv_setup = ""
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
+        psv_setup = ""
+        psv_lines = (
+            "            person_source_value = str(_src_idx)\n"
+        )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "from datetime import datetime, date\n"
+        "\n"
+        "INPATIENT_CONCEPT_IDS = {9201, 262, 42898160}\n"
+        "\n"
+        f"VISIT_DEFS = {vd_repr}\n"
+        "\n"
+        f"SOURCE_STEM = {repr(source_stem)}\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        + psv_setup
+        + "    visit_id_counter = 1\n"
+        "    rows = []\n"
+        "\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+        "        try:\n"
+        + psv_lines
+        + "            person_id = person_lookup.get(person_source_value)\n"
+        "            if person_id is None:\n"
+        "                continue\n"
+        "\n"
+        "            for vd in VISIT_DEFS:\n"
+        "                try:\n"
+        "                    date_val = row.get(vd['date_col'])\n"
+        "                    _date_str = str(date_val).strip() if pd.notnull(date_val) else ''\n"
+        "                    if vd.get('optional') and (not _date_str or _date_str == 'nan'):\n"
+        "                        continue\n"
+        "                    if not _date_str or _date_str == 'nan':\n"
+        "                        continue\n"
+        "                    _date_fmt = vd.get('date_format') or '%Y-%m-%d'\n"
+        "                    visit_start_date = datetime.strptime(_date_str, _date_fmt).date()\n"
+        "                    visit_start_datetime = datetime.combine(visit_start_date, datetime.min.time())\n"
+        "\n"
+        "                    end_col = vd.get('end_date_col') or ''\n"
+        "                    if end_col:\n"
+        "                        _ev = row.get(end_col)\n"
+        "                        _ev_str = str(_ev).strip() if pd.notnull(_ev) else ''\n"
+        "                        if _ev_str and _ev_str != 'nan':\n"
+        "                            try:\n"
+        "                                visit_end_date = datetime.strptime(_ev_str, _date_fmt).date()\n"
+        "                            except Exception:\n"
+        "                                visit_end_date = visit_start_date\n"
+        "                        else:\n"
+        "                            visit_end_date = visit_start_date\n"
+        "                    elif vd.get('visit_concept_id') in INPATIENT_CONCEPT_IDS:\n"
+        "                        visit_end_date = date.today()\n"
+        "                    else:\n"
+        "                        visit_end_date = visit_start_date\n"
+        "                    visit_end_datetime = datetime.combine(visit_end_date, datetime.min.time())\n"
+        "\n"
+        "                    vcsc = vd.get('visit_concept_source_col') or ''\n"
+        "                    if vcsc:\n"
+        "                        _vcv = (str(row.get(vcsc, '')).strip() or None) if pd.notnull(row.get(vcsc)) else None\n"
+        "                        visit_concept_id = (vd.get('visit_concept_value_map') or {}).get(_vcv, vd['visit_concept_id']) if _vcv else vd['visit_concept_id']\n"
+        "                    else:\n"
+        "                        visit_concept_id = vd['visit_concept_id']\n"
+        "\n"
+        "                    vtsc = vd.get('visit_type_source_col') or ''\n"
+        "                    if vtsc:\n"
+        "                        _vtv = (str(row.get(vtsc, '')).strip() or None) if pd.notnull(row.get(vtsc)) else None\n"
+        "                        visit_type_concept_id = (vd.get('visit_type_value_map') or {}).get(_vtv, vd['type_concept_id']) if _vtv else vd['type_concept_id']\n"
+        "                    else:\n"
+        "                        visit_type_concept_id = vd['type_concept_id']\n"
+        "\n"
+        "                    label_norm = vd['label'].lower().replace(' ', '_')\n"
+        "                    visit_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
+        "\n"
+        "                    afc_col = vd.get('admitted_from_source_col') or ''\n"
+        "                    if afc_col:\n"
+        "                        _afv = (str(row.get(afc_col, '')).strip() or None) if pd.notnull(row.get(afc_col)) else None\n"
+        "                        admitted_from_source_value = _afv\n"
+        "                        admitted_from_concept_id = (vd.get('admitted_from_value_map') or {}).get(_afv, vd.get('admitted_from_concept_id') or 0) if _afv else (vd.get('admitted_from_concept_id') or 0)\n"
+        "                    else:\n"
+        "                        admitted_from_source_value = vd.get('admitted_from_source_value')\n"
+        "                        admitted_from_concept_id = vd.get('admitted_from_concept_id') or 0\n"
+        "\n"
+        "                    dtc_col = vd.get('discharged_to_source_col') or ''\n"
+        "                    if dtc_col:\n"
+        "                        _dtv = (str(row.get(dtc_col, '')).strip() or None) if pd.notnull(row.get(dtc_col)) else None\n"
+        "                        discharged_to_source_value = _dtv\n"
+        "                        discharged_to_concept_id = (vd.get('discharged_to_value_map') or {}).get(_dtv, vd.get('discharged_to_concept_id') or 0) if _dtv else (vd.get('discharged_to_concept_id') or 0)\n"
+        "                    else:\n"
+        "                        discharged_to_source_value = vd.get('discharged_to_source_value')\n"
+        "                        discharged_to_concept_id = vd.get('discharged_to_concept_id') or 0\n"
+        "\n"
+        "                    rows.append({\n"
+        "                        'visit_occurrence_id': visit_id_counter,\n"
+        "                        'person_id': person_id,\n"
+        "                        'visit_concept_id': visit_concept_id,\n"
+        "                        'visit_start_date': visit_start_date,\n"
+        "                        'visit_start_datetime': visit_start_datetime,\n"
+        "                        'visit_end_date': visit_end_date,\n"
+        "                        'visit_end_datetime': visit_end_datetime,\n"
+        "                        'visit_type_concept_id': visit_type_concept_id,\n"
+        "                        'provider_id': None,\n"
+        "                        'care_site_id': None,\n"
+        "                        'visit_source_value': visit_source_value,\n"
+        "                        'visit_source_concept_id': 0,\n"
+        "                        'admitted_from_concept_id': admitted_from_concept_id,\n"
+        "                        'admitted_from_source_value': admitted_from_source_value,\n"
+        "                        'discharged_to_concept_id': discharged_to_concept_id,\n"
+        "                        'discharged_to_source_value': discharged_to_source_value,\n"
+        "                        'preceding_visit_occurrence_id': None,\n"
+        "                        'record_source_value': visit_source_value,\n"
+        "                    })\n"
+        "                    visit_id_counter += 1\n"
+        "                except Exception as e:\n"
+        "                    print(f'WARNING: skipping visit for {person_source_value} — {e}')\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: skipping row — {e}')\n"
+        "\n"
+        "    df_out = pd.DataFrame(rows)\n"
+        "\n"
+        "    if not df_out.empty:\n"
+        "        df_out = df_out.sort_values(['person_id', 'visit_start_date']).reset_index(drop=True)\n"
+        "        for _pid, grp in df_out.groupby('person_id', sort=False):\n"
+        "            idx_list = grp.index.tolist()\n"
+        "            for k in range(1, len(idx_list)):\n"
+        "                df_out.at[idx_list[k], 'preceding_visit_occurrence_id'] = df_out.at[idx_list[k - 1], 'visit_occurrence_id']\n"
+        "\n"
+        "    output_file = os.path.join(output_dir, 'visit_occurrence.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing visit_occurrence.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
+def _generate_observation_period_script(project) -> str:
+    """Deterministic template-based generator for the OMOP observation_period script."""
+    obs = (project.etl_config or {}).get("observation_period", {})
+    person_cfg = (project.etl_config or {}).get("person", {})
+
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+
+    start_col = obs.get("start_date_col", "")
+    end_col = obs.get("end_date_col", "")
+    fallback = obs.get("end_date_fallback", "start_date")
+    type_concept_id = int(obs.get("period_type_concept_id") or 32879)
+    date_fmt = obs.get("date_format") or "%Y-%m-%d"
+
+    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_col = pid_cfg.get("source_col", "")
+
+    if pid_col:
+        psv_setup = ""
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
+        psv_setup = ""
+        psv_lines = (
+            "            person_source_value = str(_src_idx)\n"
+        )
+
+    if end_col:
+        end_date_lines = (
+            f"                _end_raw = str(row.get({repr(end_col)}, '')).strip()\n"
+            "                if _end_raw and _end_raw != 'nan':\n"
+            f"                    obs_end_date = datetime.strptime(_end_raw, {repr(date_fmt)}).date()\n"
+            "                else:\n"
+            + ("                    obs_end_date = obs_start_date\n" if fallback == "start_date"
+               else "                    obs_end_date = date.today()\n")
+        )
+    else:
+        end_date_lines = (
+            "                obs_end_date = obs_start_date\n" if fallback == "start_date"
+            else "                obs_end_date = date.today()\n"
+        )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "from datetime import datetime, date, timedelta\n"
+        "\n"
+        "\n"
+        "def _merge_periods(periods):\n"
+        "    if not periods:\n"
+        "        return []\n"
+        "    periods = sorted(periods, key=lambda x: x[0])\n"
+        "    merged = [list(periods[0])]\n"
+        "    for start, end in periods[1:]:\n"
+        "        if start <= merged[-1][1] + timedelta(days=1):\n"
+        "            merged[-1][1] = max(merged[-1][1], end)\n"
+        "        else:\n"
+        "            merged.append([start, end])\n"
+        "    return merged\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        + psv_setup
+        + "\n"
+        "    person_periods: dict = {}\n"
+        "\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+        "        try:\n"
+        + psv_lines
+        + "            person_id = person_lookup.get(person_source_value)\n"
+        "            if person_id is None:\n"
+        "                continue\n"
+        "\n"
+        f"            _start_raw = str(row.get({repr(start_col)}, '')).strip()\n"
+        "            if not _start_raw or _start_raw == 'nan':\n"
+        "                continue\n"
+        f"            obs_start_date = datetime.strptime(_start_raw, {repr(date_fmt)}).date()\n"
+        "\n"
+        "            try:\n"
+        + end_date_lines
+        + "            except Exception:\n"
+        "                obs_end_date = obs_start_date\n"
+        "\n"
+        "            person_periods.setdefault(person_id, []).append((obs_start_date, obs_end_date))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: skipping row — {e}')\n"
+        "\n"
+        "    rows = []\n"
+        "    obs_id = 1\n"
+        "    for person_id, periods in person_periods.items():\n"
+        "        for start, end in _merge_periods(periods):\n"
+        "            rows.append({\n"
+        "                'observation_period_id': obs_id,\n"
+        "                'person_id': person_id,\n"
+        "                'observation_period_start_date': start,\n"
+        "                'observation_period_end_date': end,\n"
+        f"                'period_type_concept_id': {type_concept_id},\n"
+        "            })\n"
+        "            obs_id += 1\n"
+        "\n"
+        "    df_out = pd.DataFrame(rows)\n"
+        "    output_file = os.path.join(output_dir, 'observation_period.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing observation_period.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
+async def _apply_extra_instructions(code: str, instructions: str, table: str) -> str:
+    """Patch a deterministically generated script with user-supplied instructions via AI."""
+    client = AsyncOpenAI(api_key=settings.openai_api_key)
+    response = await client.chat.completions.create(
+        model=settings.openai_model,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are an expert Python ETL engineer. "
+                    "Apply the user's modifications to the given script exactly as requested. "
+                    "Return ONLY the complete modified Python script — no markdown fences, no explanations."
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Apply these modifications to the OMOP {table} script:\n\n"
+                    f"{instructions}\n\n"
+                    f"CURRENT SCRIPT:\n{code}"
+                ),
+            },
+        ],
+        temperature=0.1,
+        max_tokens=8192,
+    )
+    content = response.choices[0].message.content or ""
+    return _strip_fences(content)
+
+
 async def generate_table_script(project, table: str) -> str:
     """Generate the Python ETL script for a single OMOP table."""
+    code: str | None = None
+
     if table == "location":
-        return _generate_location_script(project)
-    if table == "care_site":
-        return _generate_care_site_script(project)
-    if table == "provider":
-        return _generate_provider_script(project)
-    if table == "person":
-        return _generate_person_script(project)
+        code = _generate_location_script(project)
+    elif table == "care_site":
+        code = _generate_care_site_script(project)
+    elif table == "provider":
+        code = _generate_provider_script(project)
+    elif table == "person":
+        code = _generate_person_script(project)
+    elif table == "visit_occurrence":
+        code = _generate_visit_occurrence_script(project)
+    elif table == "observation_period":
+        code = _generate_observation_period_script(project)
+
+    if code is not None:
+        extra = (project.etl_config or {}).get(table, {}).get("extra_instructions", "").strip()
+        if extra:
+            code = await _apply_extra_instructions(code, extra, table)
+        return code
 
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 

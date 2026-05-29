@@ -43,6 +43,10 @@ export interface PersonConfig {
     location_id?: RaceEthnicityMapping
   }
   required_source_cols: string[]
+  // UI mode persistence
+  gender_mode?: 'column' | 'default'
+  race_mode?: 'column' | 'default'
+  ethnicity_mode?: 'column' | 'default'
 }
 
 export interface FieldMapping {
@@ -75,7 +79,11 @@ export interface RaceEthnicityMapping {
 export interface VisitDefinition {
   label: string
   date_col: string
+  time_col?: string
   end_date_col?: string
+  end_time_col?: string
+  date_format?: string
+  time_format?: string
   // visit_concept_id: fixed concept or default when column mapping is used
   visit_concept_id: number
   visit_concept_source_col?: string
@@ -85,6 +93,9 @@ export interface VisitDefinition {
   visit_type_source_col?: string
   visit_type_value_map?: Record<string, number>
   optional: boolean
+  // UI mode persistence
+  visit_concept_mode?: 'column' | 'default'
+  visit_type_mode?: 'column' | 'default'
   // inpatient fields
   admitted_from_concept_id?: number
   admitted_from_source_col?: string
@@ -107,6 +118,7 @@ export interface ObservationPeriodConfig {
   end_date_col: string
   end_date_fallback: 'start_date' | 'today'
   period_type_concept_id: number
+  date_format?: string
 }
 
 export interface LocationConfig {
@@ -141,6 +153,9 @@ export interface LocationConfig {
   // Care site country config
   cs_country_concept_id_map: Record<string, number>
   cs_country_concept_id_default: number
+  // UI mode persistence
+  country_mode?: 'column' | 'default'
+  cs_country_mode?: 'column' | 'default'
 }
 
 export interface CareSiteConfig {
@@ -164,6 +179,9 @@ export interface ProviderConfig {
   gender_concept_id_default?: number
   specialty_source_value_col: string
   gender_source_value_col: string
+  // UI mode persistence
+  specialty_mode?: 'column' | 'prefix'
+  gender_mode?: 'column' | 'default'
 }
 
 export interface StemTableOverride {
@@ -177,6 +195,7 @@ export interface StemTableOverride {
 export interface StemTableConfig {
   enabled: boolean
   variable_groups: Record<string, string[]>
+  visit_labels?: string[]
   concept_mapping_csvs: {
     variable_mapping?: string
     value_mapping?: string

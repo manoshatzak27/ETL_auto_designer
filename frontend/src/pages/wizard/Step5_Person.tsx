@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
+import { updateTableConfig, getTableConfig, getColumnValues, detectColumnType } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, PersonConfig, RaceEthnicityMapping } from '../../types'
 import WizardLayout from './WizardLayout'
@@ -53,6 +53,25 @@ export default function Step2Person({ project, onUpdate }: Props) {
   const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
   const [raceMode, setRaceMode] = useState<'column' | 'default'>('column')
   const [ethnicityMode, setEthnicityMode] = useState<'column' | 'default'>('column')
+  const [detectedTransform, setDetectedTransform] = useState<string | null>(null)
+
+  const pidCol = cfg.mappings.person_id.source_col
+  useEffect(() => {
+    if (!pidCol || cfg.mappings.person_id.auto_increment) {
+      setDetectedTransform(null)
+      return
+    }
+    detectColumnType(project.id, pidCol).then(res => {
+      setDetectedTransform(res.transform)
+      setCfg(prev => ({
+        ...prev,
+        mappings: {
+          ...prev.mappings,
+          person_id: { ...prev.mappings.person_id, transform: res.transform },
+        },
+      }))
+    }).catch(() => setDetectedTransform(null))
+  }, [pidCol, project.id, cfg.mappings.person_id.auto_increment])
 
   useEffect(() => {
     Promise.all([
@@ -75,15 +94,27 @@ export default function Step2Person({ project, onUpdate }: Props) {
         }
 
         const genderCol = m.gender_concept_id?.source_col
-        if (genderCol) { setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {})); setGenderMode('column') }
+        if (existing.gender_mode) {
+          setGenderMode(existing.gender_mode)
+          if (existing.gender_mode === 'column' && genderCol)
+            setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {}))
+        } else if (genderCol) { setGenderValues(getValues(genderCol, m.gender_concept_id?.value_map ?? {})); setGenderMode('column') }
         else if (m.gender_concept_id?.default) setGenderMode('default')
 
         const raceCol = (m.race_concept_id as RaceEthnicityMapping)?.source_col
-        if (raceCol) { setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setRaceMode('column') }
+        if (existing.race_mode) {
+          setRaceMode(existing.race_mode)
+          if (existing.race_mode === 'column' && raceCol)
+            setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+        } else if (raceCol) { setRaceValues(getValues(raceCol, (m.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setRaceMode('column') }
         else if ((m.race_concept_id as RaceEthnicityMapping)?.default) setRaceMode('default')
 
         const ethCol = (m.ethnicity_concept_id as RaceEthnicityMapping)?.source_col
-        if (ethCol) { setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setEthnicityMode('column') }
+        if (existing.ethnicity_mode) {
+          setEthnicityMode(existing.ethnicity_mode)
+          if (existing.ethnicity_mode === 'column' && ethCol)
+            setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}))
+        } else if (ethCol) { setEthnicityValues(getValues(ethCol, (m.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})); setEthnicityMode('column') }
         else if ((m.ethnicity_concept_id as RaceEthnicityMapping)?.default) setEthnicityMode('default')
 
         setCfg({
@@ -178,7 +209,14 @@ export default function Step2Person({ project, onUpdate }: Props) {
       cfg.mappings.gender_concept_id.source_col,
       cfg.mappings.year_of_birth.source_col,
     ].filter(Boolean)
-    const updated = { ...cfg, required_source_cols: required as string[], extra_instructions: extraInstructions }
+    const updated = {
+      ...cfg,
+      required_source_cols: required as string[],
+      extra_instructions: extraInstructions,
+      gender_mode: genderMode,
+      race_mode: raceMode,
+      ethnicity_mode: ethnicityMode,
+    }
     const p = await updateTableConfig(project.id, 'person', updated)
     onUpdate(p)
   }
@@ -198,6 +236,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
       currentSlug="person"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel="Next →"
       saving={saving}
     >
@@ -237,10 +276,15 @@ export default function Step2Person({ project, onUpdate }: Props) {
               />
 
               <div>
-                <Label>Patient ID transform</Label>
+                <div className="flex items-center gap-2 mb-1">
+                  <Label>Patient ID transform</Label>
+                  {detectedTransform && (
+                    <span className="text-xs text-green-600 dark:text-green-400 font-medium">(auto-detected)</span>
+                  )}
+                </div>
                 <Select
                   value={cfg.mappings.person_id.transform}
-                  onChange={e => setField(['mappings', 'person_id', 'transform'], e.target.value)}
+                  onChange={e => { setDetectedTransform(null); setField(['mappings', 'person_id', 'transform'], e.target.value) }}
                   className="mt-1"
                 >
                   <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
@@ -441,6 +485,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           tableName="person"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -448,6 +493,7 @@ export default function Step2Person({ project, onUpdate }: Props) {
           table="person"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>
