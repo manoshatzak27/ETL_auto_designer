@@ -221,6 +221,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
           tableName="death"
           value={extraInstructions}
           onChange={setExtraInstructions}
+          deterministic
         />
 
         <ScriptGenerator
@@ -228,6 +229,7 @@ export default function Step8Death({ project, onUpdate }: Props) {
           table="death"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>
