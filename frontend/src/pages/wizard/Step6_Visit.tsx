@@ -35,8 +35,7 @@ const DEFAULT_VISIT: VisitDefinition = {
 const DEFAULTS: VisitOccurrenceConfig = {
   enabled: true,
   visit_definitions: [
-    { label: 'Onset', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: false },
-    { label: '10y Follow-up', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: true },
+    { label: 'Baseline', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: false },
   ],
 }
 
