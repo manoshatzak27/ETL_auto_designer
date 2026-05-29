@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-dom'
 import { useState, useEffect } from 'react'
+import { GenerationProvider } from './context/GenerationContext'
 import Dashboard from './pages/Dashboard'
 import Step1Upload from './pages/wizard/Step1_Upload'
 import LocationStep from './pages/wizard/Step2_Location'
@@ -70,10 +71,10 @@ function ProjectWizard() {
   const update = (p: Project) => setProject(p)
 
   return (
-    <>
+    <GenerationProvider>
       <Comp project={project} onUpdate={update} />
       <ChatPanel project={project} onUpdate={update} />
-    </>
+    </GenerationProvider>
   )
 }
 

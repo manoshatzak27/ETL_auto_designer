@@ -5,6 +5,7 @@
  */
 import { useState, useEffect, useRef } from 'react'
 import { generateTableScript } from '../api/client'
+import { useGeneration } from '../context/GenerationContext'
 import type { Project } from '../types'
 import {
   Sparkles, RefreshCw, Copy, Check,
@@ -30,6 +31,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   const scripts: Record<string, string> = project.generated_scripts || {}
   const script = scripts[table] || null
 
+  const { isAnyGenerating, acquireLock, releaseLock } = useGeneration()
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
@@ -48,10 +50,10 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   }, [script])
 
   const handleGenerate = async () => {
+    if (!acquireLock()) return
     setGenerating(true)
     setError('')
     try {
-      // Flush unsaved form state (extra_instructions, mappings, etc.) before generating
       if (beforeGenerate) await beforeGenerate()
       const updated = await generateTableScript(project.id, table)
       onUpdate(updated)
@@ -60,6 +62,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
       setError(err?.response?.data?.detail || `Failed to generate ${table}.py`)
     } finally {
       setGenerating(false)
+      releaseLock()
     }
   }
 
@@ -125,7 +128,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
               variant={script ? 'outline' : 'default'}
               size="sm"
               onClick={handleGenerate}
-              disabled={generating}
+              disabled={isAnyGenerating}
               className={clsx('text-xs h-7 px-4', buttonClassName)}
             >
               {generating
