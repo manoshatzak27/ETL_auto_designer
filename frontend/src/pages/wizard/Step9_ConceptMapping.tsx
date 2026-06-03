@@ -1427,6 +1427,11 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
 
   const { prev: prevSlug, next: nextSlug } = getAdjacentSlugs(project, 'concepts')
 
+  const saveConfig = async () => {
+    const updated = await saveConceptDecisions(project.id, decisions as Record<string, unknown>)
+    onUpdate(updated)
+  }
+
   const handleNext = async () => {
     setSaving(true)
     setGenError('')
@@ -1468,6 +1473,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
       currentSlug="concepts"
       onBack={prevSlug ? () => navigate(`/project/${project.id}/step/${prevSlug}`) : undefined}
       onNext={handleNext}
+      onBeforeStepChange={saveConfig}
       nextLabel={generating ? 'Generating CSVs…' : saving ? 'Saving…' : 'Next: Stem Table →'}
       nextDisabled={saving || generating}
       saving={saving}
