@@ -7,6 +7,7 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import SingleConceptInput from '../../components/SingleConceptInput'
 import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -359,11 +360,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
           ) : (
             <div>
               <Label>Default gender_concept_id</Label>
-              <Input
-                type="number"
-                value={cfg.mappings.gender_concept_id.default ?? 0}
-                onChange={e => setField(['mappings', 'gender_concept_id', 'default'], parseInt(e.target.value))}
-                className="mt-1 w-32"
+              <SingleConceptInput
+                value={cfg.mappings.gender_concept_id.default || null}
+                onChange={v => setField(['mappings', 'gender_concept_id', 'default'], v ?? 0)}
+                placeholder="e.g. 8507"
               />
               <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
             </div>
@@ -443,11 +443,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
           ) : (
             <div>
               <Label>Default race_concept_id</Label>
-              <Input
-                type="number"
-                value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default ?? 0}
-                onChange={e => setField(['mappings', 'race_concept_id', 'default'], parseInt(e.target.value))}
-                className="mt-1 w-32"
+              <SingleConceptInput
+                value={(cfg.mappings.race_concept_id as RaceEthnicityMapping)?.default || null}
+                onChange={v => setField(['mappings', 'race_concept_id', 'default'], v ?? 0)}
+                placeholder="e.g. 8527"
               />
               <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
             </div>
@@ -493,11 +492,10 @@ export default function Step2Person({ project, onUpdate }: Props) {
           ) : (
             <div>
               <Label>Default ethnicity_concept_id</Label>
-              <Input
-                type="number"
-                value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default ?? 0}
-                onChange={e => setField(['mappings', 'ethnicity_concept_id', 'default'], parseInt(e.target.value))}
-                className="mt-1 w-32"
+              <SingleConceptInput
+                value={(cfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default || null}
+                onChange={v => setField(['mappings', 'ethnicity_concept_id', 'default'], v ?? 0)}
+                placeholder="e.g. 38003564"
               />
               <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
             </div>

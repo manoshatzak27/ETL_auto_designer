@@ -7,6 +7,7 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import SingleConceptInput from '../../components/SingleConceptInput'
 import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -261,12 +262,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
               </div>
               <div className="flex flex-col gap-1">
                 <Label>Specialty concept ID</Label>
-                <Input
-                  type="number"
-                  value={cfg.prefix_specialty_concept_id ?? ''}
-                  onChange={e => setCfg(prev => ({ ...prev, prefix_specialty_concept_id: e.target.value === '' ? null : parseInt(e.target.value) }))}
+                <SingleConceptInput
+                  value={cfg.prefix_specialty_concept_id}
+                  onChange={v => setCfg(prev => ({ ...prev, prefix_specialty_concept_id: v }))}
                   placeholder="e.g. 38004477"
-                  className="w-48"
                 />
                 <p className="text-xs text-muted-foreground">OMOP Provider-domain concept ID for the prefix specialty.</p>
               </div>
@@ -321,11 +320,10 @@ export default function Step7Provider({ project, onUpdate }: Props) {
           ) : (
             <div>
               <Label>Default gender_concept_id</Label>
-              <Input
-                type="number"
-                value={cfg.gender_concept_id_default ?? 0}
-                onChange={e => setCfg(prev => ({ ...prev, gender_concept_id_default: parseInt(e.target.value) }))}
-                className="mt-1 w-32"
+              <SingleConceptInput
+                value={cfg.gender_concept_id_default || null}
+                onChange={v => setCfg(prev => ({ ...prev, gender_concept_id_default: v ?? 0 }))}
+                placeholder="e.g. 8507"
               />
               <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
             </div>

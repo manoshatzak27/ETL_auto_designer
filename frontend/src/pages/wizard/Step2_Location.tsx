@@ -7,6 +7,7 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
+import SingleConceptInput from '../../components/SingleConceptInput'
 import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -354,11 +355,10 @@ export default function Step5Location({ project, onUpdate }: Props) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Default country_concept_id</Label>
-                  <Input
-                    type="number"
-                    value={cfg.country_concept_id_default ?? 0}
-                    onChange={e => setCfg(prev => ({ ...prev, country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                    className="mt-1 w-32"
+                  <SingleConceptInput
+                    value={cfg.country_concept_id_default || null}
+                    onChange={v => setCfg(prev => ({ ...prev, country_concept_id_default: v ?? 0 }))}
+                    placeholder="e.g. 4330442"
                   />
                   <p className="text-xs text-muted-foreground mt-1">Applied to all person rows (0 = unknown).</p>
                 </div>
@@ -507,11 +507,10 @@ export default function Step5Location({ project, onUpdate }: Props) {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <Label>Default country_concept_id</Label>
-                  <Input
-                    type="number"
-                    value={cfg.cs_country_concept_id_default ?? 0}
-                    onChange={e => setCfg(prev => ({ ...prev, cs_country_concept_id_default: parseInt(e.target.value) || 0 }))}
-                    className="mt-1 w-32"
+                  <SingleConceptInput
+                    value={cfg.cs_country_concept_id_default || null}
+                    onChange={v => setCfg(prev => ({ ...prev, cs_country_concept_id_default: v ?? 0 }))}
+                    placeholder="e.g. 4330442"
                   />
                   <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows (0 = unknown).</p>
                 </div>

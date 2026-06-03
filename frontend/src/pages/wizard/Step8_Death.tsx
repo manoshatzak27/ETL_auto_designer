@@ -6,6 +6,7 @@ import type { Project, DeathConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
+import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
@@ -173,15 +174,10 @@ export default function Step8Death({ project, onUpdate }: Props) {
               cause_concept_id
               <span className="ml-1 font-normal text-muted-foreground">— Standard OMOP concept for cause of death</span>
             </Label>
-            <Input
-              type="number"
-              value={cfg.cause_concept_id ?? ''}
-              onChange={e => setCfg(prev => ({
-                ...prev,
-                cause_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
-              }))}
-              placeholder="e.g. 433753 for Neoplasm or leave blank"
-              className="mt-1"
+            <SingleConceptInput
+              value={cfg.cause_concept_id}
+              onChange={v => setCfg(prev => ({ ...prev, cause_concept_id: v }))}
+              placeholder="e.g. 433753"
             />
             <p className="mt-1 text-xs text-muted-foreground">
               No domain restriction — choose the Standard concept that best represents the cause of death. Use 0 if unknown.
@@ -201,15 +197,10 @@ export default function Step8Death({ project, onUpdate }: Props) {
               cause_source_concept_id
               <span className="ml-1 font-normal text-muted-foreground">— OMOP concept ID for the source cause code</span>
             </Label>
-            <Input
-              type="number"
-              value={cfg.cause_source_concept_id ?? ''}
-              onChange={e => setCfg(prev => ({
-                ...prev,
-                cause_source_concept_id: e.target.value === '' ? null : parseInt(e.target.value),
-              }))}
-              placeholder="CONCEPT_ID from OMOP vocabularies, or leave blank"
-              className="mt-1"
+            <SingleConceptInput
+              value={cfg.cause_source_concept_id}
+              onChange={v => setCfg(prev => ({ ...prev, cause_source_concept_id: v }))}
+              placeholder="CONCEPT_ID from OMOP vocabularies"
             />
             <p className="mt-1 text-xs text-muted-foreground">
               Use if the cause of death was coded using a vocabulary present in OMOP. Use 0 if not applicable.

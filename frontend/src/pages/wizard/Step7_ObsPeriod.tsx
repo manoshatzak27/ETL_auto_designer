@@ -6,6 +6,7 @@ import type { Project, ObservationPeriodConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
+import SingleConceptInput from '../../components/SingleConceptInput'
 import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
@@ -137,11 +138,9 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
               period_type_concept_id
               <span className="ml-1 font-normal text-muted-foreground">— how the period was determined</span>
             </Label>
-            <Input
-              type="number"
-              value={cfg.period_type_concept_id}
-              onChange={e => setCfg(prev => ({ ...prev, period_type_concept_id: parseInt(e.target.value) || 0 }))}
-              className="mt-1"
+            <SingleConceptInput
+              value={cfg.period_type_concept_id || null}
+              onChange={v => setCfg(prev => ({ ...prev, period_type_concept_id: v ?? 0 }))}
               placeholder="e.g. 32879"
             />
             <a
