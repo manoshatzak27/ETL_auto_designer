@@ -6,6 +6,7 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
 import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import VocabLoaderCard from '../../components/VocabLoaderCard'
 import clsx from 'clsx'
 
 interface Props {
@@ -223,6 +224,19 @@ export default function Step1Upload({ project, onUpdate }: Props) {
             Tip: domain tables (Condition, Drug, Measurement, Observation, Procedure) are produced automatically by Stem Table — no setup needed.
           </p>
         </Card>
+
+        {/* OMOP vocabulary — one-time shared setup. Started here so it can run
+            in the background while the user configures the rest of the wizard. */}
+        <div className="flex flex-col gap-2">
+          <div className="flex items-center gap-2">
+            <h3 className="font-semibold text-foreground">OMOP vocabulary <span className="font-normal text-muted-foreground">(one-time setup)</span></h3>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Load the Athena vocabulary into the shared <code className="bg-muted px-1 rounded">vocab</code> schema.
+            It's shared across all projects — kick it off here and it'll keep running in the background while you set up the rest of the wizard.
+          </p>
+          <VocabLoaderCard />
+        </div>
       </div>
     </WizardLayout>
   )

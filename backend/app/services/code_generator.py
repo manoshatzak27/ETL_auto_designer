@@ -1393,13 +1393,62 @@ def _generate_observation_period_script(project) -> str:
     )
 
 
+def _infer_stem_overrides(project) -> list[dict]:
+    """Deterministically derive SPECIAL_OVERRIDES entries from Step 9 decisions.
+
+    The runtime stem_table.py already consumes unit_mapping.csv for per-row
+    unit lookups. This function covers the edge case where Step 9 captured
+    a unit_mapping with a SINGLE concept_id and NO unit_col (a fixed unit
+    for every row of that variable) — in which case unit_mapping.csv has
+    nothing to look up on, and the unit must be hardcoded as an override.
+
+    Rules (v1):
+      - Skip variables with strategy == 'skip' or no decision.
+      - For Measurement/Observation variables (domain_id in {1, 2}) whose
+        unit_mapping carries exactly one unit concept_id and no unit_col,
+        emit { variable, field: 'unit_concept_id', value: <concept_id> }.
+      - No legacy hardcoded overrides; every entry traces back to data.
+
+    The extensible hook for future inferred-override rules.
+    """
+    decisions: dict = project.concept_decisions or {}
+    inferred: list[dict] = []
+    for variable, d in decisions.items():
+        if not isinstance(d, dict):
+            continue
+        if d.get("strategy") == "skip":
+            continue
+        if d.get("domain_id") not in (1, 2):
+            continue
+        um = d.get("unit_mapping") or {}
+        if um.get("unit_col"):
+            continue  # handled at runtime via unit_mapping.csv
+        unit_concepts = um.get("unit_concepts") or {}
+        ids = [v for v in unit_concepts.values() if isinstance(v, int) and v > 0]
+        if len(ids) != 1:
+            continue
+        inferred.append({
+            "variable": variable,
+            "field": "unit_concept_id",
+            "value": ids[0],
+        })
+    return inferred
+
+
 def _generate_stem_table_script(project) -> str:
-    """Deterministic template-based generator for the OMOP stem_table script."""
+    """Deterministic template-based generator for the OMOP stem_table script.
+
+    Visit assignment per variable is no longer driven by a user-edited
+    `variable_groups` mapping. Instead the generated script does a runtime
+    substring match between each variable name and the configured visit
+    labels, builds the standard visit_record_source_value composite key, and
+    delegates the dict lookup to a `lookup_visit_occurrence_id` helper that
+    mirrors the OHDSI wrapper.lookup_visit_occurrence_id reference (single
+    arg, lazy dict init, logger.info on miss, return None).
+    """
     stem_cfg = (project.etl_config or {}).get("stem_table", {})
     visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
     person_cfg = (project.etl_config or {}).get("person", {})
-
-    stem_cfg = _sync_stem_variable_groups(stem_cfg, visit_cfg)
 
     delim = repr(project.source_delimiter or ",")
     enc = repr(project.source_encoding or "utf-8")
@@ -1408,10 +1457,15 @@ def _generate_stem_table_script(project) -> str:
     pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
     pid_col = pid_cfg.get("source_col", "")
 
-    variable_groups = stem_cfg.get("variable_groups", {})
-    special_overrides = stem_cfg.get("special_overrides", [])
+    # Background-inferred overrides (Step 9 fixed-unit cases) come first;
+    # user-entered overrides (Step 10 UI) win on conflict because the
+    # generated OVERRIDE_MAP build uses dict overwrite (later entry wins).
+    inferred_overrides = _infer_stem_overrides(project)
+    user_overrides = stem_cfg.get("special_overrides", []) or []
+    special_overrides = inferred_overrides + user_overrides
 
     visit_defs = visit_cfg.get("visit_definitions", [])
+    visit_labels_list = [vd["label"] for vd in visit_defs if vd.get("label")]
     visit_date_info = {
         vd["label"]: {
             "date_col": vd.get("date_col", ""),
@@ -1431,30 +1485,34 @@ def _generate_stem_table_script(project) -> str:
     else:
         psv_lines = "            person_source_value = str(_src_idx)\n"
 
-    vg_repr = repr(variable_groups)
+    vl_repr = repr(visit_labels_list)
     vdi_repr = repr(visit_date_info)
     so_repr = repr(special_overrides)
 
     return (
         "import os\n"
+        "import logging\n"
         "import pandas as pd\n"
         "from datetime import datetime\n"
         "\n"
+        "logging.basicConfig(level=logging.INFO, format='%(message)s')\n"
+        "logger = logging.getLogger(__name__)\n"
+        "\n"
         f"SOURCE_STEM = {repr(source_stem)}\n"
         "\n"
-        f"VARIABLE_GROUPS = {vg_repr}\n"
-        "\n"
-        "VARIABLE_TO_VISIT = {\n"
-        "    v.lower(): label\n"
-        "    for label, variables in VARIABLE_GROUPS.items()\n"
-        "    for v in variables\n"
-        "}\n"
+        "# Visit labels declared in Step 6 (visit_occurrence). Used to detect\n"
+        "# which visit a variable belongs to via case-insensitive substring\n"
+        "# match against the column name.\n"
+        f"VISIT_LABELS = {vl_repr}\n"
         "\n"
         f"VISIT_DATE_INFO = {vdi_repr}\n"
         "\n"
         f"SPECIAL_OVERRIDES = {so_repr}\n"
         "\n"
         "OVERRIDE_MAP = {o['variable'].lower(): o for o in SPECIAL_OVERRIDES}\n"
+        "\n"
+        "# Lazy-built once on first lookup_visit_occurrence_id call.\n"
+        "visit_occurrence_id_lookup = None\n"
         "\n"
         "\n"
         "def _load_csv(path):\n"
@@ -1480,6 +1538,39 @@ def _generate_stem_table_script(project) -> str:
         "        return {'concept_id': concept_id, 'value_as_concept_id': None, 'value_as_number': None, 'unit_concept_id': None}\n"
         "\n"
         "\n"
+        "def create_visit_lookup():\n"
+        "    \"\"\"Build {visit_source_value -> visit_occurrence_id} from visit_occurrence.csv.\"\"\"\n"
+        "    global visit_occurrence_id_lookup\n"
+        "    visit_occurrence_id_lookup = {}\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "    if not output_dir:\n"
+        "        return\n"
+        "    visit_file = os.path.join(output_dir, 'visit_occurrence.csv')\n"
+        "    if os.path.exists(visit_file):\n"
+        "        try:\n"
+        "            vis_df = pd.read_csv(visit_file, delimiter=';', encoding='utf-8')\n"
+        "            visit_occurrence_id_lookup = dict(\n"
+        "                zip(vis_df['visit_source_value'].astype(str), vis_df['visit_occurrence_id'])\n"
+        "            )\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load visit_occurrence.csv: {e}')\n"
+        "\n"
+        "\n"
+        "def lookup_visit_occurrence_id(visit_record_source_value):\n"
+        "    \"\"\"Mirror of wrapper.lookup_visit_occurrence_id from the OHDSI reference.\n"
+        "    Returns the visit_occurrence_id for the given key, or None if the key\n"
+        "    isn't present (the miss is logged so the user can audit which records\n"
+        "    have no visit attached).\n"
+        "    \"\"\"\n"
+        "    global visit_occurrence_id_lookup\n"
+        "    if visit_occurrence_id_lookup is None:\n"
+        "        create_visit_lookup()\n"
+        "    if visit_record_source_value not in visit_occurrence_id_lookup:\n"
+        "        logger.info('Visit record_source_value \"{}\" not found in lookup.'.format(visit_record_source_value))\n"
+        "        return None\n"
+        "    return visit_occurrence_id_lookup.get(visit_record_source_value)\n"
+        "\n"
+        "\n"
         "def main():\n"
         "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
         "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
@@ -1495,14 +1586,8 @@ def _generate_stem_table_script(project) -> str:
         "        except Exception as e:\n"
         "            print(f'WARNING: could not load person.csv: {e}')\n"
         "\n"
-        "    visit_lookup = {}\n"
-        "    visit_file = os.path.join(output_dir, 'visit_occurrence.csv')\n"
-        "    if os.path.exists(visit_file):\n"
-        "        try:\n"
-        "            vis_df = pd.read_csv(visit_file, delimiter=';', encoding='utf-8')\n"
-        "            visit_lookup = dict(zip(vis_df['visit_source_value'].astype(str), vis_df['visit_occurrence_id']))\n"
-        "        except Exception as e:\n"
-        "            print(f'WARNING: could not load visit_occurrence.csv: {e}')\n"
+        "    # visit_lookup is built lazily by create_visit_lookup() on first\n"
+        "    # lookup_visit_occurrence_id call. No need to materialize it here.\n"
         "\n"
         "    vm = _load_csv(os.environ.get('ETL_MAPPING_variable_mapping', ''))\n"
         "    vl = _load_csv(os.environ.get('ETL_MAPPING_value_mapping', ''))\n"
@@ -1546,7 +1631,16 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "            for variable in df.columns:\n"
         "                try:\n"
-        "                    visit_label = VARIABLE_TO_VISIT.get(variable.lower())\n"
+        "                    # Detect which visit this variable was measured at via\n"
+        "                    # case-insensitive substring match against VISIT_LABELS\n"
+        "                    # (longest-match-wins so e.g. 'followup_10y' beats\n"
+        "                    # 'followup'). Variables whose name doesn't contain any\n"
+        "                    # visit label are silently skipped (not a stem record).\n"
+        "                    _lc = variable.lower()\n"
+        "                    visit_label = next(\n"
+        "                        (l for l in sorted(VISIT_LABELS, key=len, reverse=True) if l.lower() in _lc),\n"
+        "                        None,\n"
+        "                    )\n"
         "                    if visit_label is None:\n"
         "                        continue\n"
         "\n"
@@ -1569,10 +1663,10 @@ def _generate_stem_table_script(project) -> str:
         "                        start_datetime = _dt\n"
         "\n"
         "                    label_norm = visit_label.lower().replace(' ', '_')\n"
-        "                    visit_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
-        "                    visit_occurrence_id = visit_lookup.get(visit_source_value)\n"
+        "                    visit_record_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
+        "                    visit_occurrence_id = lookup_visit_occurrence_id(visit_record_source_value)\n"
         "                    if visit_occurrence_id is None:\n"
-        "                        continue\n"
+        "                        continue   # helper already logged the miss\n"
         "\n"
         "                    mapped = lookup_concept(variable, raw_value, var_map, val_map, var_val_map)\n"
         "                    concept_id = mapped['concept_id']\n"

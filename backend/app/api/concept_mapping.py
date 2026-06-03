@@ -10,7 +10,6 @@ Endpoints:
 """
 from pathlib import Path
 from typing import Any
-import threading
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -26,48 +25,52 @@ router = APIRouter(prefix="/projects", tags=["concept-mapping"])
 
 # ── Concept domain lookup (CONCEPT.csv cache) ───────────────────────────────
 
-_concept_df: "pd.DataFrame | None" = None
-_concept_lock = threading.Lock()
+# Per-process LRU cache so the same concept_id only hits Postgres once.
+# Bound the size — the lookup is called as the user types concept IDs, so
+# duplicates within a session are common.
+from functools import lru_cache
 
 
+@lru_cache(maxsize=20000)
 def _get_concept_domain(concept_id: int) -> "str | None":
-    global _concept_df
-    if _concept_df is None:
-        with _concept_lock:
-            if _concept_df is None:
-                path = settings.get_upload_path() / "concepts" / "CONCEPT.csv"
-                if path.exists():
-                    try:
-                        _concept_df = pd.read_csv(
-                            path,
-                            sep="\t",
-                            usecols=["concept_id", "domain_id"],
-                            dtype={"domain_id": "category"},
-                            index_col="concept_id",
-                        )
-                        _concept_df.index = _concept_df.index.astype("int64")
-                    except Exception as exc:
-                        print(f"[concept-lookup] Failed to load CONCEPT.csv: {exc}")
-                        _concept_df = pd.DataFrame(
-                            columns=["domain_id"],
-                            index=pd.Index([], name="concept_id", dtype="int64"),
-                        )
-                else:
-                    print(f"[concept-lookup] CONCEPT.csv not found at {path}")
-                    _concept_df = pd.DataFrame(
-                        columns=["domain_id"],
-                        index=pd.Index([], name="concept_id", dtype="int64"),
-                    )
+    """Look up domain_id for an OMOP concept by querying the loaded
+    vocabulary in Postgres. Returns None when the concept isn't there
+    (vocab not loaded, wrong id, etc.) so the UI can render "not found"
+    gracefully instead of throwing."""
+    if concept_id is None or concept_id <= 0:
+        return None
     try:
-        val = _concept_df.at[concept_id, "domain_id"]
-        return str(val) if pd.notna(val) else None
-    except KeyError:
+        from app.services.db import connect
+        from psycopg2 import sql as pgsql
+    except Exception:
+        return None
+
+    schema = settings.omop_vocab_schema or "vocab"
+    try:
+        with connect() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    pgsql.SQL(
+                        "SELECT domain_id FROM {schema}.concept WHERE concept_id = %s"
+                    ).format(schema=pgsql.Identifier(schema)),
+                    (int(concept_id),),
+                )
+                row = cur.fetchone()
+                return str(row[0]) if row and row[0] is not None else None
+    except Exception as exc:
+        # Likely: vocab schema/table missing because Load vocabulary hasn't
+        # run yet, or Postgres unreachable. Quiet failure — clear cache
+        # so a later call after a successful vocab load can succeed.
+        _get_concept_domain.cache_clear()
+        print(f"[concept-lookup] vocab.concept query failed: {exc}")
         return None
 
 
 @router.get("/concept-lookup/domain")
 def concept_lookup(concept_id: int):
-    """Return the domain_id string for a given concept_id from CONCEPT.csv."""
+    """Return the domain_id string for a given concept_id by querying the
+    loaded OMOP vocabulary in Postgres (vocab.concept).
+    """
     domain = _get_concept_domain(concept_id)
     return {"concept_id": concept_id, "domain_id": domain, "found": domain is not None}
 

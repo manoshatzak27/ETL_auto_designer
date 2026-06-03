@@ -252,7 +252,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
               </div>
 
               {/* ── Group 1: Identity & dates ─────────────────────────────── */}
-              <Card className="flex flex-col gap-4 p-6">
+              <Card className="flex flex-col gap-3 p-4">
                 <h3 className="font-semibold text-foreground">Visit identity &amp; dates</h3>
 
                 <div>
@@ -266,92 +266,64 @@ export default function Step3Visit({ project, onUpdate }: Props) {
                   />
                 </div>
 
-                <FieldMapper
-                  label="visit_start_date column"
-                  sourceColumns={availCols(vd.date_col)}
-                  value={vd.date_col}
-                  onChange={v => updateVisit(i, 'date_col', v)}
-                  required={!vd.optional}
-                  hint="Source column containing the visit start date"
-                />
-
-                <FieldMapper
-                  label="visit_start_time column (optional)"
-                  sourceColumns={availCols(vd.time_col ?? '')}
-                  value={vd.time_col ?? ''}
-                  onChange={v => updateVisit(i, 'time_col', v || undefined)}
-                  required={false}
-                  hint="Separate column with the start time. If absent, visit_start_datetime defaults to midnight (00:00:00)."
-                />
-
-                <FieldMapper
-                  label="visit_end_date column (optional)"
-                  sourceColumns={availCols(vd.end_date_col ?? '')}
-                  value={vd.end_date_col ?? ''}
-                  onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
-                  required={false}
-                  hint="Separate end date column. Leave blank to use start date as end date (for same-day visits)."
-                />
-
-                <FieldMapper
-                  label="visit_end_time column (optional)"
-                  sourceColumns={availCols(vd.end_time_col ?? '')}
-                  value={vd.end_time_col ?? ''}
-                  onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
-                  required={false}
-                  hint="Separate column with the end time. If absent, visit_end_datetime defaults to midnight (00:00:00)."
-                />
-
-                <div>
-                  <Label>Date format</Label>
-                  <Input
-                    type="text"
-                    value={vd.date_format ?? '%Y-%m-%d'}
-                    onChange={e => updateVisit(i, 'date_format', e.target.value || '%Y-%m-%d')}
-                    placeholder="%Y-%m-%d"
-                    className="mt-1 font-mono"
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <FieldMapper
+                    label="Start date"
+                    sourceColumns={availCols(vd.date_col)}
+                    value={vd.date_col}
+                    onChange={v => updateVisit(i, 'date_col', v)}
+                    required={!vd.optional}
                   />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
-                  </p>
+                  <FieldMapper
+                    label="Start time (optional)"
+                    sourceColumns={availCols(vd.time_col ?? '')}
+                    value={vd.time_col ?? ''}
+                    onChange={v => updateVisit(i, 'time_col', v || undefined)}
+                  />
+                  <FieldMapper
+                    label="End date (optional)"
+                    sourceColumns={availCols(vd.end_date_col ?? '')}
+                    value={vd.end_date_col ?? ''}
+                    onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
+                  />
+                  <FieldMapper
+                    label="End time (optional)"
+                    sourceColumns={availCols(vd.end_time_col ?? '')}
+                    value={vd.end_time_col ?? ''}
+                    onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
+                  />
                 </div>
 
-                <div>
-                  <Label>Time format</Label>
-                  <Input
-                    type="text"
-                    value={vd.time_format ?? '%H:%M:%S'}
-                    onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
-                    placeholder="%H:%M:%S"
-                    className="mt-1 font-mono"
-                  />
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    Format applied to the time column(s) (e.g. <code className="bg-muted px-1 rounded">%H:%M</code>, <code className="bg-muted px-1 rounded">%H:%M:%S</code>). If no time column is mapped, datetime defaults to midnight.
-                  </p>
-                </div>
-              </Card>
-
-              {/* ── Group 2: Visit source value (auto-computed) ───────────── */}
-              <Card className="flex flex-col gap-2 p-6">
-                <h3 className="font-semibold text-foreground">Visit source value</h3>
-                <div className="rounded-lg border border-border bg-secondary/60 p-4 flex flex-col gap-2">
-                  <p className="text-sm font-medium text-secondary-foreground">Auto-computed — no mapping required</p>
-                  <p className="text-sm text-muted-foreground">
-                    Constructed at ETL runtime by joining three parts with{' '}
-                    <code className="bg-accent px-1 rounded text-xs">-</code>:
-                    the person source value, the source filename stem, and the visit label (lowercased, spaces → underscores).
-                    Used as the lookup key that links records in stem_table and death to this visit.
-                  </p>
-                  <div className="mt-1">
-                    <p className="text-xs font-medium text-primary mb-1">Formula preview:</p>
-                    <code className="bg-accent text-secondary-foreground text-xs px-2 py-1 rounded block">
-                      {`<person_source_value>-<filename_stem>-${vd.label ? vd.label.toLowerCase().replace(/ /g, '_') : '<visit_label>'}`}
-                    </code>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label>Date format</Label>
+                    <Input
+                      type="text"
+                      value={vd.date_format ?? '%Y-%m-%d'}
+                      onChange={e => updateVisit(i, 'date_format', e.target.value || '%Y-%m-%d')}
+                      placeholder="%Y-%m-%d"
+                      className="mt-1 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <Label>Time format</Label>
+                    <Input
+                      type="text"
+                      value={vd.time_format ?? '%H:%M:%S'}
+                      onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
+                      placeholder="%H:%M:%S"
+                      className="mt-1 font-mono"
+                    />
                   </div>
                 </div>
+
+                <p className="text-xs text-muted-foreground -mt-1">
+                  Python strptime formats. End date blank → same as start date. Missing time → midnight (00:00:00).
+                  Examples: <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>, <code className="bg-muted px-1 rounded">%H:%M</code>.
+                </p>
               </Card>
 
-              {/* ── Group 3: visit_concept_id ──────────────────────────────── */}
+              {/* ── Group 2: visit_concept_id ──────────────────────────────── */}
               <Card className="flex flex-col gap-4 p-6">
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-foreground">visit_concept_id</h3>

@@ -46,6 +46,17 @@ export const lookupConceptDomain = (conceptId: number) =>
 export const getSourcePreview = (projectId: string, rows = 5) =>
   api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
 
+export interface OutputPreview {
+  columns: string[]
+  rows: Record<string, string>[]
+  total_rows: number
+}
+
+export const getOutputPreview = (projectId: string, filename: string, rows = 20) =>
+  api
+    .get<OutputPreview>(`/projects/${projectId}/output-preview?filename=${encodeURIComponent(filename)}&rows=${rows}`)
+    .then(r => r.data)
+
 export const detectColumnType = (projectId: string, column: string) =>
   api.get(`/projects/${projectId}/detect-column-type?column=${encodeURIComponent(column)}`).then(r => r.data as { column: string; transform: string })
 

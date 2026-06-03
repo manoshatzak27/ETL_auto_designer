@@ -58,6 +58,42 @@ VOCAB_TABLES: set[str] = {
     "source_to_concept_map",
 }
 
+# stem_table is an OHDSI staging-table convention, NOT part of the official
+# OMOP CDM v5.4. The vendored DDL files don't define it, so we emit a
+# permissive CREATE TABLE here matching the columns the deterministic
+# stem_table.py generator emits (see _generate_stem_table_script in
+# code_generator.py). Applied alongside the clinical DDL.
+_STEM_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS @cdmDatabaseSchema.stem_table (
+    id                   bigint PRIMARY KEY,
+    domain_id            integer,
+    person_id            bigint,
+    visit_occurrence_id  bigint,
+    visit_detail_id      bigint,
+    concept_id           integer,
+    start_date           date,
+    start_datetime       timestamp,
+    end_date             date,
+    end_datetime         timestamp,
+    type_concept_id      integer,
+    operator_concept_id  integer,
+    value_as_number      numeric,
+    value_as_string      varchar(2000),
+    value_as_concept_id  integer,
+    unit_concept_id      integer,
+    unit_source_value    varchar(255),
+    range_low            numeric,
+    range_high           numeric,
+    provider_id          bigint,
+    modifier_concept_id  integer,
+    quantity             numeric,
+    value_source_value   varchar(255),
+    source_value         varchar(255),
+    source_concept_id    integer,
+    record_source_value  varchar(255)
+);
+"""
+
 _TABLE_BLOCK = re.compile(
     r"CREATE\s+TABLE\s+@cdmDatabaseSchema\.(\w+)\b[^;]*;",
     re.IGNORECASE | re.DOTALL,
@@ -207,6 +243,19 @@ def apply_schema_ddl(
         conn.autocommit = False
         _ensure_schema(conn, schema)
         conn.commit()
+
+        # Clinical schemas always get the stem_table convention applied —
+        # the marker doesn't gate this because the stem_table CREATE was
+        # added after the marker scheme already existed, so old schemas
+        # need a one-shot migration. CREATE TABLE IF NOT EXISTS keeps
+        # it idempotent on subsequent runs.
+        if kind == "clinical":
+            try:
+                _apply_substituted(conn, schema, _STEM_TABLE_DDL)
+                conn.commit()
+            except Exception:
+                conn.rollback()
+                raise
 
         if not force and _marker_present(conn, schema, kind):
             return {

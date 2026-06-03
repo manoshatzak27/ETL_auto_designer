@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pathlib import Path
+import pandas as pd
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
@@ -81,3 +82,54 @@ def download_output(project_id: str, filename: str, db: Session = Depends(get_db
 
     media_type = "text/x-python" if filename.endswith(".py") else "text/csv"
     return FileResponse(str(file_path), filename=filename, media_type=media_type)
+
+
+@router.get("/{project_id}/output-preview")
+def get_output_preview(
+    project_id: str,
+    filename: str,
+    rows: int = 20,
+    db: Session = Depends(get_db),
+):
+    """Return the first N rows of a generated OMOP CSV as JSON.
+    Mirrors source-preview's shape: { columns, rows, total_rows }.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    safe_name = Path(filename).name
+    if safe_name not in [Path(f).name for f in (project.output_files or [])]:
+        raise HTTPException(status_code=403, detail="File not in project outputs")
+
+    file_path = settings.get_output_path() / project_id / safe_name
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    n_rows = max(1, min(rows, 500))
+    try:
+        df = pd.read_csv(
+            file_path,
+            sep=";",
+            encoding="utf-8",
+            nrows=n_rows,
+            dtype=str,
+            keep_default_na=False,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to read CSV: {exc}")
+
+    # Cheap total-row count (sum of \n in the file minus the header line).
+    # Output CSVs are bounded by source size so this is fine.
+    try:
+        with open(file_path, "rb") as fh:
+            total_lines = sum(1 for _ in fh)
+        total_rows = max(0, total_lines - 1)
+    except Exception:
+        total_rows = len(df)
+
+    return {
+        "columns": [str(c) for c in df.columns.tolist()],
+        "rows": df.to_dict(orient="records"),
+        "total_rows": total_rows,
+    }

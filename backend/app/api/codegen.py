@@ -8,6 +8,7 @@ from app.services.code_generator import (
     generate_table_script,
     generate_all_table_scripts,
     SUPPORTED_TABLES,
+    _DOMAIN_TABLES,
 )
 
 router = APIRouter(prefix="/projects", tags=["codegen"])
@@ -43,6 +44,16 @@ async def generate_single_table(
 
     scripts: dict = dict(project.generated_scripts or {})
     scripts[table] = code
+
+    # When stem_table is generated, also (re)generate its 5 domain-routing
+    # scripts. They're deterministic templates that read stem_table.csv and
+    # split by domain_id; the UI doesn't expose them as separate buttons, so
+    # without this they'd never enter generated_scripts and Execute would
+    # skip them (producing no measurement.csv, observation.csv, etc.).
+    if table == "stem_table":
+        for dt in _DOMAIN_TABLES:
+            scripts[dt] = await generate_table_script(project, dt)
+
     project.generated_scripts = scripts
 
     project.last_execution_status = ""

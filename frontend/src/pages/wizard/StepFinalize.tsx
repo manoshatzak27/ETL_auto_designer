@@ -4,31 +4,29 @@
 // scrollable page with sticky section headers. No new API calls — every
 // control here uses the same endpoints those two pages used.
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   executeProject,
   downloadOutput,
   getDbHealth,
   getLoadStatus,
-  getVocabBundleInfo,
-  getVocabStatus,
+  getOutputPreview,
   loadDatabase,
-  loadVocabulary,
   type DbHealth,
   type LoadStatus,
-  type VocabBundleInfo,
-  type VocabLoadStatus,
+  type OutputPreview,
 } from '../../api/client'
 import type { Project } from '../../types'
 import WizardLayout from './WizardLayout'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import LogStream from '../../components/LogStream'
 import ErrorBanner from '../../components/ErrorBanner'
-import { getAdjacentSlugs } from '../../wizard/steps'
+import OmopTablePreview from '../../components/OmopTablePreview'
+import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
 import {
   PlayCircle, Download, RefreshCw, CheckCircle, AlertCircle, AlertTriangle,
-  Database, Loader2, BookOpen, Server, Code2, Play,
+  Database, Loader2, Server, Code2, Play, Eye,
 } from 'lucide-react'
 import { basename } from '../../utils'
 import { Card } from '@/components/ui/card'
@@ -41,7 +39,10 @@ interface Props {
   onUpdate: (p: Project) => void
 }
 
-const TABLES = [
+// Universe of OMOP tables this page can generate. The visible subset is
+// computed at render time from the project's etl_config so optional tables
+// the user didn't tick on Step 1 don't appear here either.
+const ALL_TABLES = [
   { key: 'person',             label: 'person.py',             description: 'Patient demographics' },
   { key: 'visit_occurrence',   label: 'visit_occurrence.py',   description: 'Clinical visits / timepoints' },
   { key: 'observation_period', label: 'observation_period.py', description: 'Patient observation windows' },
@@ -50,9 +51,14 @@ const TABLES = [
   { key: 'provider',           label: 'provider.py',           description: 'Healthcare provider records' },
   { key: 'stem_table',         label: 'stem_table.py',         description: 'Clinical measurements & observations' },
   { key: 'death',              label: 'death.py',              description: 'Mortality records' },
-]
+] as const
 
-const DEFAULT_VOCAB_PATH = '/vocab'
+function getActiveTables(project: Project): readonly (typeof ALL_TABLES)[number][] {
+  return ALL_TABLES.filter(t => {
+    if (!(OPTIONAL_TABLES as readonly string[]).includes(t.key)) return true
+    return isOptionalTableEnabled(project, t.key as OptionalTable)
+  })
+}
 
 function StatusPill({ status }: { status: string }) {
   const map: Record<string, { bg: string; text: string; label: string }> = {
@@ -86,13 +92,6 @@ function HealthRow({ label, ok, value }: { label: string; ok: boolean; value?: s
   )
 }
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
-  if (n < 1024 * 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`
-  return `${(n / (1024 * 1024 * 1024)).toFixed(2)} GB`
-}
-
 function SectionHeader({ icon: Icon, n, title, subtitle }: { icon: React.ComponentType<{ className?: string }>; n: number; title: string; subtitle?: string }) {
   return (
     <div className="sticky top-0 z-10 -mx-6 px-6 py-3 bg-background/95 backdrop-blur border-b border-border">
@@ -115,11 +114,13 @@ export default function StepFinalize({ project, onUpdate }: Props) {
   const [execResult, setExecResult] = useState<{ status: string; log: string; output_files: string[] } | null>(null)
   const [execError, setExecError] = useState('')
 
+  // Only count / regenerate the tables the user enabled in Step 1.
+  const activeTables = getActiveTables(project)
   const scripts: Record<string, string> = project.generated_scripts || {}
-  const generatedCount = TABLES.filter(t => scripts[t.key]).length
-  const allGenerated   = generatedCount === TABLES.length
+  const generatedCount = activeTables.filter(t => scripts[t.key]).length
+  const allGenerated   = generatedCount === activeTables.length
   const anyGenerated   = generatedCount > 0
-  const missingTables  = TABLES.filter(t => !scripts[t.key]).map(t => t.key)
+  const missingTables  = activeTables.filter(t => !scripts[t.key]).map(t => t.key)
 
   const handleExecute = async () => {
     setExecuting(true)
@@ -137,6 +138,55 @@ export default function StepFinalize({ project, onUpdate }: Props) {
       setExecuting(false)
     }
   }
+
+  // ── Preview state ────────────────────────────────────────────────────────
+  // Cached output previews keyed by csv filename. `null` while in flight,
+  // {error: string} on failure, OutputPreview on success.
+  type PreviewCacheEntry = OutputPreview | { error: string } | null
+  const [previewCache, setPreviewCache] = useState<Record<string, PreviewCacheEntry>>({})
+  const [activePreviewTab, setActivePreviewTab] = useState<string | null>(null)
+
+  // Output files (from current execResult OR project state after page reload).
+  // basenames only, deduped, filtered to .csv. Ordered by activeTables first
+  // then any other CSV (domain-routed tables fall through here).
+  const outputCsvs = useMemo(() => {
+    const raw = (execResult?.output_files ?? project.output_files ?? []) as string[]
+    const basenames = Array.from(new Set(raw.map(p => p.split(/[\\/]/).pop() || ''))).filter(n => n.endsWith('.csv'))
+    const expected = activeTables.map(t => `${t.key}.csv`)
+    const ordered: string[] = []
+    for (const name of expected) {
+      if (basenames.includes(name)) ordered.push(name)
+    }
+    for (const name of basenames) {
+      if (!ordered.includes(name)) ordered.push(name)
+    }
+    return ordered
+  }, [execResult?.output_files, project.output_files, activeTables])
+
+  // When the file list changes (e.g., after an execute) and no tab is selected
+  // or the selected tab disappears, default to the first available CSV.
+  useEffect(() => {
+    if (outputCsvs.length === 0) {
+      if (activePreviewTab !== null) setActivePreviewTab(null)
+      return
+    }
+    if (!activePreviewTab || !outputCsvs.includes(activePreviewTab)) {
+      setActivePreviewTab(outputCsvs[0])
+    }
+  }, [outputCsvs, activePreviewTab])
+
+  // Lazy-load + cache the preview for the active tab.
+  useEffect(() => {
+    if (!activePreviewTab) return
+    if (activePreviewTab in previewCache) return   // already cached (success or error)
+    setPreviewCache(prev => ({ ...prev, [activePreviewTab]: null }))
+    getOutputPreview(project.id, activePreviewTab, 20)
+      .then(data => setPreviewCache(prev => ({ ...prev, [activePreviewTab]: data })))
+      .catch((e: unknown) => {
+        const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
+        setPreviewCache(prev => ({ ...prev, [activePreviewTab]: { error: typeof msg === 'string' ? msg : 'Failed to load preview' } }))
+      })
+  }, [activePreviewTab, project.id])
 
   // ── DB health state ──────────────────────────────────────────────────────
   const [health, setHealth] = useState<DbHealth | null>(null)
@@ -156,23 +206,6 @@ export default function StepFinalize({ project, onUpdate }: Props) {
     }
   }
 
-  // ── Vocab state ──────────────────────────────────────────────────────────
-  const [vocabInfo, setVocabInfo] = useState<VocabBundleInfo | null>(null)
-  const [bundlePath, setBundlePath] = useState(DEFAULT_VOCAB_PATH)
-  const [vocabError, setVocabError] = useState('')
-  const [vocabStarting, setVocabStarting] = useState(false)
-  const [vocabStatus, setVocabStatus] = useState<VocabLoadStatus | null>(null)
-
-  const refreshVocabInfo = async () => {
-    try {
-      const info = await getVocabBundleInfo(DEFAULT_VOCAB_PATH)
-      setVocabInfo(info)
-      if (info.exists && info.detected_files.length > 0) setBundlePath(info.path)
-    } catch {
-      setVocabInfo({ path: DEFAULT_VOCAB_PATH, exists: false, detected_files: [], total_size_bytes: 0 })
-    }
-  }
-
   // ── ETL load state ──────────────────────────────────────────────────────
   const [schemaMode, setSchemaMode] = useState<'shared' | 'project'>('shared')
   const [schemaName, setSchemaName] = useState('')
@@ -183,21 +216,7 @@ export default function StepFinalize({ project, onUpdate }: Props) {
   const [status, setStatus] = useState<LoadStatus | null>(null)
 
   // ── Initial fetch + polling ──────────────────────────────────────────────
-  useEffect(() => { refreshHealth(); refreshVocabInfo() }, [])
-
-  useEffect(() => {
-    let timer: number | null = null
-    const tick = async () => {
-      try {
-        const s = await getVocabStatus()
-        setVocabStatus(s)
-        if (s.overall === 'success' || s.overall === 'error') refreshHealth()
-      } catch { /* ignore */ }
-    }
-    tick()
-    timer = window.setInterval(tick, 1500)
-    return () => { if (timer !== null) window.clearInterval(timer) }
-  }, [])
+  useEffect(() => { refreshHealth() }, [])
 
   useEffect(() => {
     let timer: number | null = null
@@ -213,25 +232,8 @@ export default function StepFinalize({ project, onUpdate }: Props) {
     return () => { if (timer !== null) window.clearInterval(timer) }
   }, [project.id])
 
-  const vocabHasFiles = (vocabInfo?.detected_files?.length ?? 0) > 0
-  const vocabRunning = vocabStatus?.overall === 'running'
   const etlRunning = status?.overall === 'running'
   const canLoadEtl = project.last_execution_status === 'success' && health?.connected === true
-
-  const handleLoadVocab = async () => {
-    const path = (bundlePath || DEFAULT_VOCAB_PATH).trim()
-    if (!path) return
-    setVocabStarting(true)
-    setVocabError('')
-    try {
-      await loadVocabulary({ bundle_path: path })
-    } catch (e: unknown) {
-      const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
-      setVocabError(typeof msg === 'string' ? msg : 'Failed to start vocabulary load')
-    } finally {
-      setVocabStarting(false)
-    }
-  }
 
   const handleLoadEtl = async () => {
     if (applyIndices && (health?.vocab_rows ?? 0) === 0) {
@@ -273,8 +275,8 @@ export default function StepFinalize({ project, onUpdate }: Props) {
           <h2 className="text-xl font-bold text-primary">Generate &amp; load to OMOP DB</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Final step. (1) Generate the Python scripts per table, (2) execute the pipeline
-            against your source CSV, (3) load the Athena vocabulary, then (4) bulk-load the
-            generated CSVs into Postgres. Each section unlocks the next.
+            against your source CSV, (3) preview the generated OMOP CSVs, then (4) bulk-load
+            them into Postgres. (The shared OMOP vocabulary was loaded back on the Source step.)
           </p>
         </div>
 
@@ -286,16 +288,16 @@ export default function StepFinalize({ project, onUpdate }: Props) {
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Script Status</h3>
               <Badge variant={allGenerated ? 'success' : 'warning'}>
-                {generatedCount} / {TABLES.length} ready
+                {generatedCount} / {activeTables.length} ready
               </Badge>
             </div>
 
             <div className="w-full bg-muted rounded-full h-1.5">
-              <div className="bg-success h-1.5 rounded-full transition-all" style={{ width: `${(generatedCount / TABLES.length) * 100}%` }} />
+              <div className="bg-success h-1.5 rounded-full transition-all" style={{ width: `${(generatedCount / activeTables.length) * 100}%` }} />
             </div>
 
             <div className="grid grid-cols-1 gap-1.5">
-              {TABLES.map(t => {
+              {activeTables.map(t => {
                 const has = !!scripts[t.key]
                 const lineCount = has ? scripts[t.key].split('\n').length : 0
                 return (
@@ -326,7 +328,7 @@ export default function StepFinalize({ project, onUpdate }: Props) {
 
           <div className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold text-foreground">Generate / regenerate per table</h3>
-            {TABLES.map(t => (
+            {activeTables.map(t => (
               <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" />
             ))}
           </div>
@@ -393,7 +395,75 @@ export default function StepFinalize({ project, onUpdate }: Props) {
           )}
         </section>
 
-        {/* ── DB health (shared by sections 3 & 4) ─────────────────────── */}
+        {/* ── 3. Preview output ──────────────────────────────────────────── */}
+        {outputCsvs.length > 0 && (
+          <section className="flex flex-col gap-4">
+            <SectionHeader icon={Eye} n={3} title="Preview output" subtitle="Peek at the top 20 rows of each generated OMOP CSV before loading them into Postgres." />
+
+            <Card className="p-5 flex flex-col gap-4">
+              {/* Tab strip */}
+              <div className="flex flex-wrap gap-1 border-b border-border -mb-px">
+                {outputCsvs.map(name => {
+                  const isActive = name === activePreviewTab
+                  return (
+                    <button
+                      key={name}
+                      onClick={() => setActivePreviewTab(name)}
+                      className={clsx(
+                        'px-3 py-1.5 text-xs font-mono rounded-t-md border-b-2 -mb-px transition-colors',
+                        isActive
+                          ? 'border-primary text-primary bg-secondary/40 font-semibold'
+                          : 'border-transparent text-muted-foreground hover:text-foreground hover:bg-muted/50',
+                      )}
+                    >
+                      {name}
+                    </button>
+                  )
+                })}
+              </div>
+
+              {/* Active tab body */}
+              {activePreviewTab && (() => {
+                const entry = previewCache[activePreviewTab]
+                if (entry === null || entry === undefined) {
+                  return (
+                    <OmopTablePreview
+                      columns={[]}
+                      rows={[]}
+                      totalRows={0}
+                      filename={activePreviewTab}
+                      projectId={project.id}
+                      loading
+                    />
+                  )
+                }
+                if ('error' in entry) {
+                  return (
+                    <OmopTablePreview
+                      columns={[]}
+                      rows={[]}
+                      totalRows={0}
+                      filename={activePreviewTab}
+                      projectId={project.id}
+                      error={entry.error}
+                    />
+                  )
+                }
+                return (
+                  <OmopTablePreview
+                    columns={entry.columns}
+                    rows={entry.rows}
+                    totalRows={entry.total_rows}
+                    filename={activePreviewTab}
+                    projectId={project.id}
+                  />
+                )
+              })()}
+            </Card>
+          </section>
+        )}
+
+        {/* ── DB health (informational for section 4) ───────────────────── */}
         <div className="bg-white border border-gray-200 rounded-xl p-5 flex flex-col gap-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
@@ -434,90 +504,6 @@ export default function StepFinalize({ project, onUpdate }: Props) {
             <p className="text-xs text-red-700 bg-red-50 border border-red-200 rounded px-2 py-1.5">{health.error}</p>
           )}
         </div>
-
-        {/* ── 3. Load vocabulary ─────────────────────────────────────────── */}
-        <section className="flex flex-col gap-4">
-          <SectionHeader icon={BookOpen} n={3} title="Load vocabulary" subtitle={`Bulk-load Athena CSVs into the shared "${health?.vocab_schema || 'vocab'}" schema. Re-running truncates and reloads.`} />
-
-          <Card className="p-5 flex flex-col gap-4">
-            {vocabInfo && vocabHasFiles ? (
-              <div className="border border-emerald-200 bg-emerald-50 rounded-lg p-3 text-sm">
-                <p className="font-medium text-emerald-900">
-                  Detected {vocabInfo.detected_files.length} vocabulary file{vocabInfo.detected_files.length === 1 ? '' : 's'}
-                  {' '}({formatBytes(vocabInfo.total_size_bytes)})
-                </p>
-                <p className="text-xs text-emerald-700 mt-1">
-                  Path: <code className="bg-white/60 px-1 rounded font-mono">{vocabInfo.path}</code>
-                </p>
-                <details className="mt-2">
-                  <summary className="text-xs text-emerald-700 cursor-pointer">Show files</summary>
-                  <ul className="mt-1 text-xs text-emerald-800 font-mono">
-                    {vocabInfo.detected_files.map(f => <li key={f}>· {f}</li>)}
-                  </ul>
-                </details>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-                  No Athena CSVs detected at <code className="bg-white/60 px-1 rounded font-mono">{DEFAULT_VOCAB_PATH}</code>.
-                  Mount your unzipped Athena bundle to that path in <code className="bg-white/60 px-1 rounded">docker-compose.yml</code>,
-                  or enter an alternative path here.
-                </p>
-                <input
-                  type="text"
-                  value={bundlePath}
-                  onChange={e => setBundlePath(e.target.value)}
-                  placeholder={DEFAULT_VOCAB_PATH}
-                  className="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-                <button onClick={refreshVocabInfo} className="text-xs text-blue-600 hover:underline w-fit">Re-check path</button>
-              </div>
-            )}
-
-            <button
-              onClick={handleLoadVocab}
-              disabled={!health?.connected || !vocabHasFiles || vocabStarting || vocabRunning}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 disabled:opacity-50 w-fit"
-              title={!health?.connected ? 'Postgres is not reachable' : !vocabHasFiles ? 'No vocabulary files detected' : ''}
-            >
-              {vocabStarting || vocabRunning
-                ? <><RefreshCw className="w-4 h-4 animate-spin" /> {vocabRunning ? 'Loading…' : 'Starting…'}</>
-                : <><PlayCircle className="w-4 h-4" /> Load vocabulary</>
-              }
-            </button>
-
-            <ErrorBanner message={vocabError} />
-
-            {vocabStatus && vocabStatus.files.length > 0 && (
-              <div className="border border-gray-200 rounded-lg overflow-hidden">
-                <table className="w-full text-xs">
-                  <thead className="bg-gray-50 border-b border-gray-200">
-                    <tr>
-                      <th className="text-left px-3 py-2 font-medium text-gray-600">File</th>
-                      <th className="text-left px-3 py-2 font-medium text-gray-600 w-24">Status</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-600 w-24">Rows</th>
-                      <th className="text-right px-3 py-2 font-medium text-gray-600 w-20">Elapsed</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {vocabStatus.files.map(f => (
-                      <tr key={f.file} className="border-b last:border-0 border-gray-100">
-                        <td className="px-3 py-2 font-mono text-gray-700">{f.table}</td>
-                        <td className="px-3 py-2"><StatusPill status={f.status} /></td>
-                        <td className="px-3 py-2 text-right text-gray-600">{f.rows.toLocaleString()}</td>
-                        <td className="px-3 py-2 text-right text-gray-500">{f.elapsed.toFixed(1)}s</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-
-            {vocabStatus?.log && (
-              <pre className="bg-gray-900 text-gray-100 text-xs rounded-lg p-3 max-h-48 overflow-y-auto whitespace-pre-wrap">{vocabStatus.log}</pre>
-            )}
-          </Card>
-        </section>
 
         {/* ── 4. Load DB ─────────────────────────────────────────────────── */}
         <section className="flex flex-col gap-4">

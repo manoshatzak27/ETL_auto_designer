@@ -20,8 +20,6 @@ import {
   AlertTriangle, Tag, Sparkles, Plus, Scale,
 } from 'lucide-react'
 import clsx from 'clsx'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
-import DomainWarning from '../../components/DomainWarning'
 
 interface Props {
   project: Project
@@ -746,130 +744,107 @@ function ValueMappingTable({
 
 const EMPTY_UNIT_MAPPING: UnitMapping = { unit_col: null, unit_concepts: {} }
 
+// Read the single fixed-unit concept out of a UnitMapping (or null if none / legacy
+// column-based). Hardcoded units are stored as a one-entry dict keyed by the
+// concept name so the backend's _infer_stem_overrides picks it up cleanly.
+function getFixedUnit(um: UnitMapping | undefined | null): { id: number; name: string } | null {
+  if (!um || um.unit_col) return null
+  const entries = Object.entries(um.unit_concepts || {}).filter(([, v]) => typeof v === 'number' && v > 0)
+  if (entries.length !== 1) return null
+  return { name: entries[0][0], id: entries[0][1] }
+}
+
 function UnitMappingSection({
-  columns,
-  columnInfos,
   unitMapping,
   onChange,
 }: {
-  columns: string[]
-  columnInfos: Record<string, ColumnInfo>
   unitMapping: UnitMapping
   onChange: (u: UnitMapping) => void
 }) {
-  const conceptIds = useMemo(
-    () => Object.values(unitMapping.unit_concepts).filter(id => id > 0),
-    [unitMapping.unit_concepts],
-  )
-  const unitViolations = useDomainValidation(conceptIds, 'Unit')
+  const [manualId, setManualId] = useState('')
+  const [manualName, setManualName] = useState('')
 
-  const unitValues: string[] = unitMapping.unit_col
-    ? (columnInfos[unitMapping.unit_col]?.distinct_values ?? [])
-    : []
+  const fixed = getFixedUnit(unitMapping)
+
+  const applyManual = () => {
+    const id = parseInt(manualId, 10)
+    if (isNaN(id) || id < 1) return
+    const displayName = manualName.trim() || `Concept ${id}`
+    onChange({ unit_col: null, unit_concepts: { [displayName]: id } })
+    setManualId('')
+    setManualName('')
+  }
+
+  const clear = () => {
+    onChange({ unit_col: null, unit_concepts: {} })
+    setManualId('')
+    setManualName('')
+  }
+
+  // Pre-fill the Athena query with whatever the user has typed as the name
+  // so the link jumps closer to what they're looking for.
+  const athenaUrl =
+    'https://athena.ohdsi.org/search-terms/terms?vocabulary=UCUM&page=1&pageSize=15&query=' +
+    encodeURIComponent(manualName.trim())
 
   return (
-    <div className="flex flex-col gap-3 rounded-lg border border-sky-200 bg-sky-50/40 p-3">
+    <div className="flex flex-col gap-2 rounded-lg border border-sky-200 bg-sky-50/40 p-3">
       <div className="flex items-center gap-2">
         <Scale className="w-4 h-4 text-sky-600 flex-shrink-0" />
-        <p className="text-xs font-semibold text-sky-800">Unit</p>
+        <p className="text-xs font-semibold text-sky-800">
+          Unit <span className="font-normal text-sky-600">(optional)</span>
+        </p>
         <span className="ml-auto text-[10px] text-sky-500">
-          fills <code className="bg-sky-100 px-1 rounded">unit_concept_id</code> &amp;{' '}
-          <code className="bg-sky-100 px-1 rounded">unit_source_value</code>
+          fills <code className="bg-sky-100 px-1 rounded">unit_concept_id</code>
         </span>
       </div>
+      <p className="text-[11px] text-sky-700/90">
+        Hardcode the OMOP UCUM unit for this variable (e.g. mmHg, mg/dL). Leave blank if the value is unitless.
+      </p>
 
-      <div className="flex flex-col gap-1">
-        <label className="text-[10px] font-medium uppercase tracking-wide text-sky-700">
-          Unit column
-        </label>
-        <select
-          value={unitMapping.unit_col ?? ''}
-          onChange={e => {
-            const col = e.target.value || null
-            onChange({ unit_col: col, unit_concepts: {} })
-          }}
-          className="border border-sky-200 rounded px-2 py-1.5 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-sky-400"
-        >
-          <option value="">— select a column —</option>
-          {columns.map(col => (
-            <option key={col} value={col}>{col}</option>
-          ))}
-        </select>
-      </div>
-
-      {unitMapping.unit_col && (
-        unitValues.length === 0 ? (
-          <p className="text-xs text-amber-700 flex items-center gap-1">
-            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
-            No values loaded for column "{unitMapping.unit_col}".
-          </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            <div className="border border-sky-200 rounded-lg overflow-hidden">
-              <table className="w-full text-xs">
-                <thead className="bg-sky-100 border-b border-sky-200">
-                  <tr>
-                    <th className="text-left px-3 py-2 font-medium text-sky-700 w-1/2">
-                      unit_source_value
-                    </th>
-                    <th className="text-left px-3 py-2 font-medium text-sky-700">
-                      unit_concept_id
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {unitValues.map((val, i) => {
-                    const cid = unitMapping.unit_concepts[val]
-                    const hasViolation = cid !== undefined && unitViolations.has(cid)
-                    return (
-                      <tr
-                        key={val}
-                        className={clsx(
-                          'border-b last:border-0 border-sky-100',
-                          hasViolation
-                            ? 'bg-amber-50'
-                            : i % 2 === 0 ? 'bg-white' : 'bg-sky-50/30',
-                        )}
-                      >
-                        <td className="px-3 py-2 font-mono text-foreground">{val}</td>
-                        <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            value={cid ?? ''}
-                            onChange={e => {
-                              const raw = e.target.value
-                              const next = { ...unitMapping.unit_concepts }
-                              if (!raw) {
-                                delete next[val]
-                              } else {
-                                const n = parseInt(raw, 10)
-                                if (!isNaN(n)) next[val] = n
-                              }
-                              onChange({ ...unitMapping, unit_concepts: next })
-                            }}
-                            className={clsx(
-                              'border rounded px-2 py-0.5 text-xs w-36 bg-white focus:outline-none focus:ring-1',
-                              hasViolation
-                                ? 'border-amber-300 focus:ring-amber-400'
-                                : 'border-sky-200 focus:ring-sky-400',
-                            )}
-                            placeholder="Concept ID…"
-                          />
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-
-            <DomainWarning violations={unitViolations} expectedDomain="Unit" />
-
-            <p className="text-xs text-sky-600">
-              {Object.keys(unitMapping.unit_concepts).length}/{unitValues.length} units mapped
-            </p>
+      {fixed ? (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-sky-100 border border-sky-300 text-xs">
+          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 text-sky-700" />
+          <span className="font-semibold text-sky-900">{fixed.name}</span>
+          <span className="text-sky-700">({fixed.id})</span>
+          <button onClick={clear} className="ml-auto text-sky-500 hover:text-sky-700" title="Clear unit">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <input
+              type="number"
+              value={manualId}
+              onChange={e => setManualId(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && applyManual()}
+              placeholder="Concept ID"
+              className="border border-sky-200 rounded px-2 py-1 text-xs w-24 bg-white focus:outline-none focus:ring-1 focus:ring-sky-400"
+            />
+            <input
+              type="text"
+              value={manualName}
+              onChange={e => setManualName(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && applyManual()}
+              placeholder="Name (optional)"
+              className="border border-sky-200 rounded px-2 py-1 text-xs flex-1 min-w-[120px] bg-white focus:outline-none focus:ring-1 focus:ring-sky-400"
+            />
+            <button
+              onClick={applyManual}
+              disabled={!manualId}
+              className="px-2 py-1 text-xs bg-sky-600 text-white rounded disabled:opacity-30 hover:bg-sky-700"
+            >Set</button>
           </div>
-        )
+          <a
+            href={athenaUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-[11px] text-sky-700 hover:text-sky-900 hover:underline w-fit"
+          >
+            ↗ Find UCUM concepts on Athena
+          </a>
+        </div>
       )}
     </div>
   )
@@ -993,6 +968,20 @@ function VariableRow({
             {sm.icon}{sm.label}
           </span>
 
+          {/* Unit indicator — shown when a fixed unit_concept_id was assigned */}
+          {(() => {
+            const fixed = getFixedUnit(decision.unit_mapping)
+            if (!fixed) return null
+            return (
+              <span
+                className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200 flex-shrink-0"
+                title={`Unit concept: ${fixed.name} (${fixed.id})`}
+              >
+                unit: <span className="font-mono">{fixed.name}</span>
+              </span>
+            )
+          })()}
+
           {/* Sample value chips (header preview) */}
           {!open && info && sampleValues.length > 0 && (
             <div className="hidden sm:flex items-center gap-1 flex-1 min-w-0 overflow-hidden">
@@ -1113,16 +1102,6 @@ function VariableRow({
             </div>
           )}
 
-          {/* Unit mapping — visible for Measurement (1) and Observation (2) */}
-          {(decision.domain_id === 1 || decision.domain_id === 2) && decision.strategy !== 'skip' && (
-            <UnitMappingSection
-              columns={allColumns}
-              columnInfos={allColumnInfos}
-              unitMapping={decision.unit_mapping ?? EMPTY_UNIT_MAPPING}
-              onChange={u => onChange({ ...decision, unit_mapping: u })}
-            />
-          )}
-
           {/* Strategy selector */}
           <div>
             <p className="text-xs font-semibold text-muted-foreground mb-2">Mapping strategy</p>
@@ -1197,6 +1176,14 @@ function VariableRow({
                 />
               )}
             </div>
+          )}
+
+          {/* Unit (optional) — shown for Measurement / Observation under the concept */}
+          {(decision.domain_id === 1 || decision.domain_id === 2) && decision.strategy !== 'skip' && (
+            <UnitMappingSection
+              unitMapping={decision.unit_mapping ?? EMPTY_UNIT_MAPPING}
+              onChange={u => onChange({ ...decision, unit_mapping: u })}
+            />
           )}
         </div>
       )}
