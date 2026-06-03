@@ -1209,6 +1209,202 @@ def _generate_observation_period_script(project) -> str:
     )
 
 
+def _generate_death_script(project) -> str:
+    """Deterministic template-based generator for the OMOP death script.
+
+    Reads the source CSV, keeps rows where filter_col == filter_value, looks
+    up the OMOP person_id from person.csv, and writes one death row per
+    person. Always emits the full DEATH header — when no rows match the
+    filter, an empty-but-parseable CSV is still produced so downstream
+    previews/tooling don't choke.
+    """
+    death_cfg = (project.etl_config or {}).get("death", {})
+    person_cfg = (project.etl_config or {}).get("person", {})
+
+    delim = repr(project.source_delimiter or ",")
+    enc = repr(project.source_encoding or "utf-8")
+
+    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_col = pid_cfg.get("source_col", "")
+
+    filter_col = death_cfg.get("filter_col", "")
+    filter_value = str(death_cfg.get("filter_value", "") or "")
+    death_date_col = death_cfg.get("death_date_col", "")
+    death_dt_col = death_cfg.get("death_datetime_col", "")
+    death_type_cid = int(death_cfg.get("death_type_concept_id") or 32879)
+
+    _cc = death_cfg.get("cause_concept_id")
+    cause_cid_lit = "None" if _cc in (None, "") else str(int(_cc))
+    _csc = death_cfg.get("cause_source_concept_id")
+    cause_sc_cid_lit = "None" if _csc in (None, "") else str(int(_csc))
+    cause_sv_col = death_cfg.get("cause_source_value_col", "")
+
+    if filter_col:
+        filter_check = (
+            f"            _fv = row.get({repr(filter_col)})\n"
+            "            if pd.isnull(_fv):\n"
+            "                continue\n"
+            f"            _fv_target = {repr(filter_value)}\n"
+            "            _matched = str(_fv).strip() == _fv_target\n"
+            "            if not _matched:\n"
+            "                try:\n"
+            "                    _matched = float(_fv) == float(_fv_target)\n"
+            "                except (ValueError, TypeError):\n"
+            "                    _matched = False\n"
+            "            if not _matched:\n"
+            "                continue\n"
+        )
+    else:
+        filter_check = "            # no filter column configured — every row becomes a death\n"
+
+    if pid_col:
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            "                continue\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
+        psv_lines = "            person_source_value = str(_src_idx)\n"
+
+    if death_date_col:
+        date_lines = (
+            f"            _dd_raw = row.get({repr(death_date_col)})\n"
+            "            if pd.isnull(_dd_raw):\n"
+            "                continue\n"
+            "            _dd_str = str(_dd_raw).strip()\n"
+            "            if not _dd_str or _dd_str == 'nan':\n"
+            "                continue\n"
+            "            death_date = _dd_str\n"
+        )
+    else:
+        date_lines = "            death_date = None\n"
+
+    if death_dt_col:
+        dt_lines = (
+            f"            _ddt_raw = row.get({repr(death_dt_col)})\n"
+            "            if pd.notnull(_ddt_raw):\n"
+            "                _ddt_str = str(_ddt_raw).strip()\n"
+            "                death_datetime = _ddt_str if _ddt_str and _ddt_str != 'nan' else None\n"
+            "            else:\n"
+            "                death_datetime = None\n"
+        )
+    else:
+        dt_lines = "            death_datetime = None\n"
+
+    if cause_sv_col:
+        cause_sv_lines = (
+            f"            _csv_raw = row.get({repr(cause_sv_col)})\n"
+            "            cause_source_value = (str(_csv_raw).strip()[:50] or None) if pd.notnull(_csv_raw) else None\n"
+        )
+    else:
+        cause_sv_lines = "            cause_source_value = None\n"
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "COLUMNS = [\n"
+        "    'person_id', 'death_date', 'death_datetime', 'death_type_concept_id',\n"
+        "    'cause_concept_id', 'cause_source_value', 'cause_source_concept_id',\n"
+        "]\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        "    rows = []\n"
+        "    seen_person_ids = set()\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+        "        try:\n"
+        + filter_check
+        + psv_lines
+        + "            person_id = person_lookup.get(person_source_value)\n"
+        "            if person_id is None:\n"
+        "                continue\n"
+        "            if person_id in seen_person_ids:\n"
+        "                continue\n"
+        "            seen_person_ids.add(person_id)\n"
+        + date_lines
+        + dt_lines
+        + cause_sv_lines
+        + "            rows.append({\n"
+        + "                'person_id': person_id,\n"
+        + "                'death_date': death_date,\n"
+        + "                'death_datetime': death_datetime,\n"
+        f"                'death_type_concept_id': {death_type_cid},\n"
+        f"                'cause_concept_id': {cause_cid_lit},\n"
+        + "                'cause_source_value': cause_source_value,\n"
+        f"                'cause_source_concept_id': {cause_sc_cid_lit},\n"
+        + "            })\n"
+        + "        except Exception as e:\n"
+        + "            print(f'WARNING: skipping row — {e}')\n"
+        + "\n"
+        + "    df_out = pd.DataFrame(rows, columns=COLUMNS)\n"
+        + "    output_file = os.path.join(output_dir, 'death.csv')\n"
+        + "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        + "    print(f'Writing death.csv ... done ({len(df_out)} records)')\n"
+        + "\n"
+        + "\n"
+        + "if __name__ == '__main__':\n"
+        + "    main()\n"
+    )
+
+
+def _infer_stem_overrides(project) -> list[dict]:
+    """Deterministically derive SPECIAL_OVERRIDES entries from Step 9 decisions.
+
+    The runtime stem_table.py already consumes unit_mapping.csv for per-row
+    unit lookups. This function covers the edge case where Step 9 captured
+    a unit_mapping with a SINGLE concept_id and NO unit_col (a fixed unit
+    for every row of that variable) — in which case unit_mapping.csv has
+    nothing to look up on, and the unit must be hardcoded as an override.
+
+    Rules (v1):
+      - Skip variables with strategy == 'skip' or no decision.
+      - For Measurement/Observation variables (domain_id in {1, 2}) whose
+        unit_mapping carries exactly one unit concept_id and no unit_col,
+        emit { variable, field: 'unit_concept_id', value: <concept_id> }.
+      - No legacy hardcoded overrides; every entry traces back to data.
+
+    The extensible hook for future inferred-override rules.
+    """
+    decisions: dict = project.concept_decisions or {}
+    inferred: list[dict] = []
+    for variable, d in decisions.items():
+        if not isinstance(d, dict):
+            continue
+        if d.get("strategy") == "skip":
+            continue
+        if d.get("domain_id") not in (1, 2):
+            continue
+        um = d.get("unit_mapping") or {}
+        if um.get("unit_col"):
+            continue  # handled at runtime via unit_mapping.csv
+        unit_concepts = um.get("unit_concepts") or {}
+        ids = [v for v in unit_concepts.values() if isinstance(v, int) and v > 0]
+        if len(ids) != 1:
+            continue
+        inferred.append({
+            "variable": variable,
+            "field": "unit_concept_id",
+            "value": ids[0],
+        })
+    return inferred
+
+
 def _generate_stem_table_script(project) -> str:
     """Deterministic template-based generator for the OMOP stem_table script.
 
@@ -1534,6 +1730,60 @@ def _generate_domain_script(table: str) -> str:
     """
     domain_id = _DOMAIN_TABLES[table]
 
+    columns_per_table: dict[str, list[str]] = {
+        "measurement": [
+            "measurement_id", "person_id", "measurement_concept_id",
+            "measurement_date", "measurement_datetime", "measurement_time",
+            "measurement_type_concept_id", "operator_concept_id",
+            "value_as_number", "value_as_concept_id", "unit_concept_id",
+            "range_low", "range_high", "provider_id", "visit_occurrence_id",
+            "visit_detail_id", "measurement_source_value",
+            "measurement_source_concept_id", "unit_source_value",
+            "unit_source_concept_id", "value_source_value",
+            "measurement_event_id", "meas_event_field_concept_id",
+        ],
+        "observation": [
+            "observation_id", "person_id", "observation_concept_id",
+            "observation_date", "observation_datetime",
+            "observation_type_concept_id", "value_as_number",
+            "value_as_string", "value_as_concept_id", "qualifier_concept_id",
+            "unit_concept_id", "provider_id", "visit_occurrence_id",
+            "visit_detail_id", "observation_source_value",
+            "observation_source_concept_id", "unit_source_value",
+            "qualifier_source_value", "value_source_value",
+            "obs_event_field_concept_id", "observation_event_id",
+        ],
+        "drug_exposure": [
+            "drug_exposure_id", "person_id", "drug_concept_id",
+            "drug_exposure_start_date", "drug_exposure_start_datetime",
+            "drug_exposure_end_date", "drug_exposure_end_datetime",
+            "verbatim_end_date", "drug_type_concept_id", "stop_reason",
+            "refills", "quantity", "days_supply", "sig", "route_concept_id",
+            "lot_number", "provider_id", "visit_occurrence_id",
+            "visit_detail_id", "drug_source_value", "drug_source_concept_id",
+            "route_source_value", "dose_unit_source_value",
+        ],
+        "procedure_occurrence": [
+            "procedure_occurrence_id", "person_id", "procedure_concept_id",
+            "procedure_date", "procedure_datetime", "procedure_end_date",
+            "procedure_end_datetime", "procedure_type_concept_id",
+            "modifier_concept_id", "quantity", "provider_id",
+            "visit_occurrence_id", "visit_detail_id",
+            "procedure_source_value", "procedure_source_concept_id",
+            "modifier_source_value",
+        ],
+        "condition_occurrence": [
+            "condition_occurrence_id", "person_id", "condition_concept_id",
+            "condition_start_date", "condition_start_datetime",
+            "condition_end_date", "condition_end_datetime",
+            "condition_type_concept_id", "condition_status_concept_id",
+            "stop_reason", "provider_id", "visit_occurrence_id",
+            "visit_detail_id", "condition_source_value",
+            "condition_source_concept_id", "condition_status_source_value",
+        ],
+    }
+    columns_lit = repr(columns_per_table[table])
+
     if table == "measurement":
         row_lines = (
             "            rows.append({\n"
@@ -1668,6 +1918,8 @@ def _generate_domain_script(table: str) -> str:
         "\n"
         f"DOMAIN_ID = {domain_id}\n"
         "\n"
+        f"COLUMNS = {columns_lit}\n"
+        "\n"
         "\n"
         "def _si(v, default=None):\n"
         "    try:\n"
@@ -1717,7 +1969,7 @@ def _generate_domain_script(table: str) -> str:
         "        except Exception as e:\n"
         "            print(f'WARNING: skipping row — {e}')\n"
         "\n"
-        "    df_out = pd.DataFrame(rows)\n"
+        "    df_out = pd.DataFrame(rows, columns=COLUMNS)\n"
         f"    output_file = os.path.join(output_dir, '{table}.csv')\n"
         "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
         f"    print(f'Writing {table}.csv ... done ({{len(df_out)}} records)')\n"
@@ -1774,10 +2026,10 @@ async def generate_table_script(project, table: str) -> str:
         code = _generate_visit_occurrence_script(project)
     elif table == "observation_period":
         code = _generate_observation_period_script(project)
-    elif table == "death":
-        code = _generate_death_script(project)
     elif table == "stem_table":
         code = _generate_stem_table_script(project)
+    elif table == "death":
+        code = _generate_death_script(project)
     elif table in _DOMAIN_TABLES:
         code = _generate_domain_script(table)
 
