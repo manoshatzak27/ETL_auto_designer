@@ -580,12 +580,14 @@ function ValueConceptRow({
   const [lookingUpDomain, setLookingUpDomain] = useState(false)
   const [rawDomain, setRawDomain] = useState<string | null>(null)
   const [lookupFailed, setLookupFailed] = useState(false)
+  const [conceptNotFound, setConceptNotFound] = useState(false)
 
   useEffect(() => {
-    if (!concept) { setRawDomain(null); setLookupFailed(false); return }
+    if (!concept) { setRawDomain(null); setLookupFailed(false); setConceptNotFound(false); return }
     if (domainMode !== 'auto') return
 
     setLookupFailed(false)
+    setConceptNotFound(false)
 
     if (concept.domain) {
       setRawDomain(concept.domain)
@@ -606,6 +608,9 @@ function ValueConceptRow({
           if (numeric !== undefined) {
             onSelect({ ...concept, domain_id: numeric })
           }
+        } else if (!res.found) {
+          setConceptNotFound(true)
+          setRawDomain(null)
         } else {
           setRawDomain(null)
         }
@@ -634,7 +639,7 @@ function ValueConceptRow({
               'flex items-center gap-2 px-2.5 py-1 rounded border text-xs',
               detectedDomainId !== null
                 ? 'border-indigo-200 bg-indigo-50 text-indigo-700'
-                : lookupFailed || (rawDomain && detectedDomainId === null)
+                : lookupFailed || conceptNotFound || (rawDomain && detectedDomainId === null)
                   ? 'border-amber-200 bg-amber-50 text-amber-700'
                   : 'border-gray-200 bg-gray-50 text-gray-400',
             )}>
@@ -656,6 +661,12 @@ function ValueConceptRow({
                 <>
                   <AlertTriangle className="w-3 h-3 flex-shrink-0" />
                   <span>Unknown domain "{rawDomain}"</span>
+                  <button type="button" onClick={() => setDomainMode('manual')} className="ml-auto text-[10px] hover:underline">Set manually</button>
+                </>
+              ) : conceptNotFound ? (
+                <>
+                  <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                  <span>Concept {concept.concept_id} not found — set domain manually</span>
                   <button type="button" onClick={() => setDomainMode('manual')} className="ml-auto text-[10px] hover:underline">Set manually</button>
                 </>
               ) : (
