@@ -170,8 +170,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
   const addVisit = () => {
     setCfg(prev => ({ ...prev, visit_definitions: [...prev.visit_definitions, { ...DEFAULT_VISIT }] }))
-    setConceptModes(prev => [...prev, 'default'])
-    setTypeModes(prev => [...prev, 'default'])
+    setConceptModes(prev => [...prev, 'column'])
+    setTypeModes(prev => [...prev, 'column'])
   }
 
   const removeVisit = (i: number) => {
@@ -199,7 +199,16 @@ export default function Step3Visit({ project, onUpdate }: Props) {
   }
 
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'visit_occurrence', { ...cfg, extra_instructions: extraInstructions })
+    const cfgToSave = {
+      ...cfg,
+      visit_definitions: cfg.visit_definitions.map((vd, i) => ({
+        ...vd,
+        visit_concept_mode: getMode(conceptModes, i),
+        visit_type_mode: getMode(typeModes, i),
+      })),
+      extra_instructions: extraInstructions,
+    }
+    const p = await updateTableConfig(project.id, 'visit_occurrence', cfgToSave)
     onUpdate(p)
   }
 
