@@ -108,8 +108,12 @@ export default function Step3Visit({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
-  const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>([])
-  const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>([])
+  const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>(
+    () => DEFAULTS.visit_definitions.map(() => 'column' as const),
+  )
+  const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>(
+    () => DEFAULTS.visit_definitions.map(() => 'column' as const),
+  )
 
   const getMode = (arr: Array<'column' | 'default'>, i: number): 'column' | 'default' => arr[i] ?? 'column'
 
