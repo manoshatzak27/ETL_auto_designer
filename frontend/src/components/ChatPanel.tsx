@@ -3,14 +3,15 @@
  *
  * Opens as a fixed panel anchored to the bottom-right of the screen.
  * The user selects which table to discuss; the AI can answer questions
- * or return an updated version of the script automatically applied to the project.
+ * or return an updated version of the script. Code updates are held as
+ * pending and only applied after explicit user confirmation.
  */
 import { useState, useEffect, useRef } from 'react'
 import { getChatHistory, sendChatMessage, clearChatHistory } from '../api/client'
 import type { Project, ChatMessage } from '../types'
 import {
   MessageSquare, X, Send, RefreshCw, Trash2,
-  Bot, User, Sparkles, Code2,
+  Bot, User, Sparkles, Code2, Check, Ban,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
@@ -48,6 +49,7 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   const [sending, setSending] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [error, setError] = useState('')
+  const [pendingScripts, setPendingScripts] = useState<Record<string, string> | null>(null)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -70,6 +72,17 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   useEffect(() => {
     if (open) setTimeout(() => inputRef.current?.focus(), 120)
   }, [open])
+
+  // Discard pending code update when the user switches tables
+  useEffect(() => { setPendingScripts(null) }, [table])
+
+  const handleApplyCode = () => {
+    if (!pendingScripts) return
+    onUpdate({ ...project, generated_scripts: pendingScripts })
+    setPendingScripts(null)
+  }
+
+  const handleDiscardCode = () => setPendingScripts(null)
 
   // Filter messages for currently selected table
   const visibleMessages = messages.filter(
@@ -98,7 +111,7 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
       setMessages(prev => [...prev, aiMsg])
 
       if (data.code_updated && data.generated_scripts) {
-        onUpdate({ ...project, generated_scripts: data.generated_scripts })
+        setPendingScripts(data.generated_scripts)
       }
     } catch {
       setError('Failed to send message. Please try again.')
@@ -239,6 +252,35 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
 
             <div ref={bottomRef} />
           </div>
+
+          {/* Pending code confirmation banner */}
+          {pendingScripts && (
+            <div className="mx-3 mb-2 rounded-xl border border-amber-400/60 bg-amber-50 dark:bg-amber-950/30 px-3.5 py-3 flex-shrink-0">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-2 flex items-center gap-1.5">
+                <Code2 className="w-3.5 h-3.5" />
+                AI generated an updated {table}.py — apply it?
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleApplyCode}
+                  className="h-7 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
+                >
+                  <Check className="w-3 h-3" />
+                  Apply changes
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={handleDiscardCode}
+                  className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
+                >
+                  <Ban className="w-3 h-3" />
+                  Discard
+                </Button>
+              </div>
+            </div>
+          )}
 
           {/* Input */}
           <div className="px-3 py-3 border-t border-border flex-shrink-0">

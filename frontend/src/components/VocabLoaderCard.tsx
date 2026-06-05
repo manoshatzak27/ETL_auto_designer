@@ -88,17 +88,18 @@ export default function VocabLoaderCard() {
     }
   }
 
-  const refreshVocabInfo = async () => {
+  const refreshVocabInfo = async (pathToCheck?: string) => {
+    const probe = (pathToCheck ?? bundlePath ?? DEFAULT_VOCAB_PATH).trim() || DEFAULT_VOCAB_PATH
     try {
-      const info = await getVocabBundleInfo(DEFAULT_VOCAB_PATH)
+      const info = await getVocabBundleInfo(probe)
       setVocabInfo(info)
       if (info.exists && info.detected_files.length > 0) setBundlePath(info.path)
     } catch {
-      setVocabInfo({ path: DEFAULT_VOCAB_PATH, exists: false, detected_files: [], total_size_bytes: 0 })
+      setVocabInfo({ path: probe, exists: false, detected_files: [], total_size_bytes: 0 })
     }
   }
 
-  useEffect(() => { refreshHealth(); refreshVocabInfo() }, [])
+  useEffect(() => { refreshHealth(); refreshVocabInfo(DEFAULT_VOCAB_PATH) }, [])
 
   // Poll vocab status; refresh health on completion so vocab_rows updates.
   useEffect(() => {
@@ -211,7 +212,7 @@ export default function VocabLoaderCard() {
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              No Athena CSVs detected at <code className="bg-white/60 px-1 rounded font-mono">{DEFAULT_VOCAB_PATH}</code>.
+              No Athena CSVs detected at <code className="bg-white/60 px-1 rounded font-mono">{vocabInfo?.path || DEFAULT_VOCAB_PATH}</code>.
               Mount your unzipped Athena bundle to that path in <code className="bg-white/60 px-1 rounded">docker-compose.yml</code>,
               or enter an alternative path here.
             </p>
@@ -222,7 +223,7 @@ export default function VocabLoaderCard() {
               placeholder={DEFAULT_VOCAB_PATH}
               className="border border-gray-300 rounded-md px-3 py-2 text-sm font-mono w-full focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <button onClick={refreshVocabInfo} className="text-xs text-blue-600 hover:underline w-fit">Re-check path</button>
+            <button onClick={() => refreshVocabInfo(bundlePath)} className="text-xs text-blue-600 hover:underline w-fit">Re-check path</button>
           </div>
         )}
 
