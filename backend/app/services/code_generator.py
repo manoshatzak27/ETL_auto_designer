@@ -817,6 +817,8 @@ def _generate_visit_occurrence_script(project) -> str:
     """Deterministic template-based generator for the OMOP visit_occurrence script."""
     visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
     person_cfg = (project.etl_config or {}).get("person", {})
+    cs_cfg = (project.etl_config or {}).get("care_site", {})
+    prov_cfg = (project.etl_config or {}).get("provider", {})
 
     delim = repr(project.source_delimiter or ",")
     enc = repr(project.source_encoding or "utf-8")
@@ -846,6 +848,48 @@ def _generate_visit_occurrence_script(project) -> str:
             "            person_source_value = str(_src_idx)\n"
         )
 
+    cs_name_col = cs_cfg.get("care_site_name_col", "")
+    prov_name_col = prov_cfg.get("provider_name_col", "")
+
+    if cs_name_col:
+        cs_setup = (
+            "    care_site_lookup = {}\n"
+            "    care_site_file = os.path.join(output_dir, 'care_site.csv')\n"
+            "    if os.path.exists(care_site_file):\n"
+            "        try:\n"
+            "            cs_df = pd.read_csv(care_site_file, delimiter=';', encoding='utf-8')\n"
+            "            care_site_lookup = {str(r['care_site_name']): int(r['care_site_id']) for _, r in cs_df.iterrows()}\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load care_site.csv: {e}')\n"
+        )
+        cs_lookup_line = (
+            f"            _cs_name_raw = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
+            "            care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
+        )
+    else:
+        cs_setup = "    care_site_lookup = {}\n"
+        cs_lookup_line = "            care_site_id = None\n"
+
+    if prov_name_col:
+        prov_setup = (
+            "    provider_lookup = {}\n"
+            "    provider_file = os.path.join(output_dir, 'provider.csv')\n"
+            "    if os.path.exists(provider_file):\n"
+            "        try:\n"
+            "            prov_df = pd.read_csv(provider_file, delimiter=';', encoding='utf-8')\n"
+            "            provider_lookup = {str(r['provider_source_value']): int(r['provider_id']) for _, r in prov_df.iterrows()}\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load provider.csv: {e}')\n"
+        )
+        prov_lookup_line = (
+            f"            _prov_name_raw = (str(row.get({repr(prov_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(prov_name_col)})) else None\n"
+            "            _prov_source_value = (str(care_site_id) + ' | ' + (_prov_name_raw or ''))[:50]\n"
+            "            provider_id = provider_lookup.get(_prov_source_value)\n"
+        )
+    else:
+        prov_setup = "    provider_lookup = {}\n"
+        prov_lookup_line = "            provider_id = None\n"
+
     return (
         "import os\n"
         "import pandas as pd\n"
@@ -873,6 +917,10 @@ def _generate_visit_occurrence_script(project) -> str:
         "        except Exception as e:\n"
         "            print(f'WARNING: could not load person.csv: {e}')\n"
         "\n"
+        + cs_setup
+        + "\n"
+        + prov_setup
+        + "\n"
         + psv_setup
         + "    visit_id_counter = 1\n"
         "    rows = []\n"
@@ -884,6 +932,9 @@ def _generate_visit_occurrence_script(project) -> str:
         "            if person_id is None:\n"
         "                continue\n"
         "\n"
+        + cs_lookup_line
+        + prov_lookup_line
+        + "\n"
         "            for vd in VISIT_DEFS:\n"
         "                try:\n"
         "                    date_val = row.get(vd['date_col'])\n"
@@ -987,8 +1038,8 @@ def _generate_visit_occurrence_script(project) -> str:
         "                        'visit_end_date': visit_end_date,\n"
         "                        'visit_end_datetime': visit_end_datetime,\n"
         "                        'visit_type_concept_id': visit_type_concept_id,\n"
-        "                        'provider_id': None,\n"
-        "                        'care_site_id': None,\n"
+        "                        'provider_id': provider_id,\n"
+        "                        'care_site_id': care_site_id,\n"
         "                        'visit_source_value': visit_source_value,\n"
         "                        'visit_source_concept_id': 0,\n"
         "                        'admitted_from_concept_id': admitted_from_concept_id,\n"
