@@ -82,10 +82,12 @@ def _generate_location_script(project) -> str:
     state_col = loc.get("state_col", "")
     zip_col = loc.get("zip_col", "")
     county_col = loc.get("county_col", "")
+    country_col = loc.get("country_col", "")
     country_sv = loc.get("country_source_value", "")
+    cid_map = loc.get("country_concept_id_map", {})
+    cid_default = loc.get("country_concept_id_default", 0) or 0
     lat_col = loc.get("latitude_col", "")
     lon_col = loc.get("longitude_col", "")
-
 
     cs_a1_col = loc.get("cs_address_1_col", "")
     cs_a2_col = loc.get("cs_address_2_col", "")
@@ -93,14 +95,12 @@ def _generate_location_script(project) -> str:
     cs_state_col = loc.get("cs_state_col", "")
     cs_zip_col = loc.get("cs_zip_col", "")
     cs_county_col = loc.get("cs_county_col", "")
+    cs_country_col = loc.get("cs_country_col", "")
     cs_country_sv = loc.get("cs_country_source_value", "")
+    cs_cid_map = loc.get("cs_country_concept_id_map", {})
+    cs_cid_default = loc.get("cs_country_concept_id_default", 0) or 0
     cs_lat_col = loc.get("cs_latitude_col", "")
     cs_lon_col = loc.get("cs_longitude_col", "")
-
-    cid_map = json.dumps(loc.get("country_concept_id_map", {}))
-    cid_default = loc.get("country_concept_id_default", 0)
-    cs_cid_map = json.dumps(loc.get("cs_country_concept_id_map", {}))
-    cs_cid_default = loc.get("cs_country_concept_id_default", 0)
 
     return (
         "import os\n"
@@ -132,36 +132,17 @@ def _generate_location_script(project) -> str:
         "\n"
         f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
         "\n"
-        "    person_config = {\n"
-        f'        "address_1_col": {repr(a1_col)},\n'
-        f'        "address_2_col": {repr(a2_col)},\n'
-        f'        "city_col": {repr(city_col)},\n'
-        f'        "state_col": {repr(state_col)},\n'
-        f'        "zip_col": {repr(zip_col)},\n'
-        f'        "county_col": {repr(county_col)},\n'
-        f'        "country_source_value": {repr(country_sv)},\n'
-        f'        "latitude_col": {repr(lat_col)},\n'
-        f'        "longitude_col": {repr(lon_col)},\n'
-        "    }\n"
-        "\n"
-        "    care_site_config = {\n"
-        f'        "address_1_col": {repr(cs_a1_col)},\n'
-        f'        "address_2_col": {repr(cs_a2_col)},\n'
-        f'        "city_col": {repr(cs_city_col)},\n'
-        f'        "state_col": {repr(cs_state_col)},\n'
-        f'        "zip_col": {repr(cs_zip_col)},\n'
-        f'        "county_col": {repr(cs_county_col)},\n'
-        f'        "country_source_value": {repr(cs_country_sv)},\n'
-        f'        "latitude_col": {repr(cs_lat_col)},\n'
-        f'        "longitude_col": {repr(cs_lon_col)},\n'
-        "    }\n"
-        "\n"
-        f"    country_concept_id_map = {cid_map}\n"
-        f"    country_concept_id_default = {cid_default}\n"
-        f"    cs_country_concept_id_map = {cs_cid_map}\n"
-        f"    cs_country_concept_id_default = {cs_cid_default}\n"
-        "\n"
-        "    rows = []\n"
+        + (
+            f"    country_concept_id_map = {json.dumps(cid_map)}\n"
+            f"    country_concept_id_default = {cid_default}\n"
+            if country_col else ""
+        )
+        + (
+            f"    cs_country_concept_id_map = {json.dumps(cs_cid_map)}\n"
+            f"    cs_country_concept_id_default = {cs_cid_default}\n"
+            if cs_country_col else ""
+        )
+        + "    rows = []\n"
         "\n"
         "    for _, row in df.iterrows():\n"
         + _xtr("address_1", a1_col) + "\n"
@@ -172,12 +153,14 @@ def _generate_location_script(project) -> str:
         + _xtr("county", county_col) + "\n"
         + _xtr("latitude", lat_col) + "\n"
         + _xtr("longitude", lon_col) + "\n"
-        + '        country_source_value = person_config["country_source_value"]\n'
-        + "\n"
+        + (
+            _xtr("country_source_value", country_col) + "\n"
+            + "        country_concept_id = (country_concept_id_map.get(country_source_value, country_concept_id_default) or None) if country_source_value else (country_concept_id_default or None)\n"
+            if country_col else
+            f"        country_source_value = {repr(country_sv) if country_sv else 'None'}\n"
+            + f"        country_concept_id = {cid_default if cid_default else 'None'}\n"
+        )
         + '        location_source_value = " | ".join(filter(None, [address_1, address_2, city, state, zip_code, county, country_source_value]))[:255]\n'
-        + "        country_concept_id = country_concept_id_map.get(county, country_concept_id_default)\n"
-        + "        if country_concept_id == 0:\n"
-        + "            country_concept_id = None\n"
         + "\n"
         + "        if any([address_1, city, state, zip_code]):\n"
         + "            rows.append([\n"
@@ -201,14 +184,17 @@ def _generate_location_script(project) -> str:
         + _xtr("cs_state", cs_state_col) + "\n"
         + _xtr("cs_zip_code", cs_zip_col) + "\n"
         + _xtr("cs_county", cs_county_col) + "\n"
-        + '        cs_country_source_value = care_site_config["country_source_value"]\n'
+        + (
+            _xtr("cs_country_source_value", cs_country_col) + "\n"
+            + "        cs_country_concept_id = (cs_country_concept_id_map.get(cs_country_source_value, cs_country_concept_id_default) or None) if cs_country_source_value else (cs_country_concept_id_default or None)\n"
+            if cs_country_col else
+            f"        cs_country_source_value = {repr(cs_country_sv) if cs_country_sv else 'None'}\n"
+            + f"        cs_country_concept_id = {cs_cid_default if cs_cid_default else 'None'}\n"
+        )
         + _xtr("cs_latitude", cs_lat_col) + "\n"
         + _xtr("cs_longitude", cs_lon_col) + "\n"
         + "\n"
         + '        cs_location_source_value = " | ".join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n'
-        + "        cs_country_concept_id = cs_country_concept_id_map.get(cs_county, cs_country_concept_id_default)\n"
-        + "        if cs_country_concept_id == 0:\n"
-        + "            cs_country_concept_id = None\n"
         + "\n"
         + "        if any([cs_address_1, cs_city, cs_state, cs_zip_code]):\n"
         + "            rows.append([\n"
