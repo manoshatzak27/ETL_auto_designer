@@ -43,12 +43,12 @@ interface Props {
 // computed at render time from the project's etl_config so optional tables
 // the user didn't tick on Step 1 don't appear here either.
 const ALL_TABLES = [
-  { key: 'person',             label: 'person.py',             description: 'Patient demographics' },
-  { key: 'visit_occurrence',   label: 'visit_occurrence.py',   description: 'Clinical visits / timepoints' },
-  { key: 'observation_period', label: 'observation_period.py', description: 'Patient observation windows' },
   { key: 'location',           label: 'location.py',           description: 'Physical address / location records' },
   { key: 'care_site',          label: 'care_site.py',          description: 'Institutional care site records' },
   { key: 'provider',           label: 'provider.py',           description: 'Healthcare provider records' },
+  { key: 'person',             label: 'person.py',             description: 'Patient demographics' },
+  { key: 'visit_occurrence',   label: 'visit_occurrence.py',   description: 'Clinical visits / timepoints' },
+  { key: 'observation_period', label: 'observation_period.py', description: 'Patient observation windows' },
   { key: 'stem_table',         label: 'stem_table.py',         description: 'Clinical measurements & observations' },
   { key: 'death',              label: 'death.py',              description: 'Mortality records' },
 ] as const
@@ -342,7 +342,12 @@ export default function StepFinalize({ project, onUpdate }: Props) {
             <Card className="p-5 flex flex-col gap-4">
               <div>
                 <p className="text-xs text-muted-foreground">
-                  Order: <span className="font-mono text-foreground">person → visit_occurrence → observation_period → stem_table → death → (domain tables)</span>.
+                  Order: <span className="font-mono text-foreground">{
+                    [
+                      ...activeTables.map(t => t.key),
+                      ...(activeTables.some(t => t.key === 'stem_table') ? ['(domain tables)'] : []),
+                    ].join(' → ')
+                  }</span>.
                 </p>
               </div>
 
