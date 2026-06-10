@@ -358,6 +358,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
                   <SingleConceptInput
                     value={cfg.country_concept_id_default || null}
                     onChange={v => setCfg(prev => ({ ...prev, country_concept_id_default: v ?? 0 }))}
+                    onConceptName={name => { if (name) setCfg(prev => ({ ...prev, country_source_value: name })) }}
                     placeholder="e.g. 4330442"
                   />
                   <p className="text-xs text-muted-foreground mt-1">Applied to all person rows (0 = unknown).</p>
@@ -510,6 +511,7 @@ export default function Step5Location({ project, onUpdate }: Props) {
                   <SingleConceptInput
                     value={cfg.cs_country_concept_id_default || null}
                     onChange={v => setCfg(prev => ({ ...prev, cs_country_concept_id_default: v ?? 0 }))}
+                    onConceptName={name => { if (name) setCfg(prev => ({ ...prev, cs_country_source_value: name })) }}
                     placeholder="e.g. 4330442"
                   />
                   <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows (0 = unknown).</p>

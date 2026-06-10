@@ -5,11 +5,12 @@ import { Loader2, AlertTriangle, CheckCircle, X } from 'lucide-react'
 interface Props {
   value: number | null | undefined
   onChange: (v: number | null) => void
+  onConceptName?: (name: string | null) => void
   placeholder?: string
   className?: string
 }
 
-export default function SingleConceptInput({ value, onChange, placeholder = 'Concept ID', className }: Props) {
+export default function SingleConceptInput({ value, onChange, onConceptName, placeholder = 'Concept ID', className }: Props) {
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [domain, setDomain] = useState<string | null>(null)
@@ -28,8 +29,13 @@ export default function SingleConceptInput({ value, onChange, placeholder = 'Con
     setFailed(false)
     lookupConceptDomain(value as number)
       .then(res => {
-        if (res.found && res.domain_id) setDomain(res.domain_id)
-        else setDomain(null)
+        if (res.found && res.domain_id) {
+          setDomain(res.domain_id)
+          onConceptName?.(res.concept_name ?? null)
+        } else {
+          setDomain(null)
+          onConceptName?.(null)
+        }
       })
       .catch(() => setFailed(true))
       .finally(() => setLookingUp(false))
