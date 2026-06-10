@@ -101,7 +101,7 @@ def generate_mapping_csvs(
         if strategy == "map_values":
             for val, vc in val_concepts.items():
                 if vc.get("concept_id"):
-                    var_value_rows.append(_value_row(variable, val, vc, domain_id=domain_id))
+                    var_value_rows.append(_value_row(variable, val, vc, domain_id=vc.get("domain_id")))
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
                         custom_rows.append(_custom_row(vc, custom_vocabulary_id))
 

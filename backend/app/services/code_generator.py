@@ -1232,6 +1232,7 @@ def _generate_death_script(project) -> str:
     death_date_col = death_cfg.get("death_date_col", "")
     death_dt_col = death_cfg.get("death_datetime_col", "")
     death_type_cid = int(death_cfg.get("death_type_concept_id") or 32879)
+    date_fmt = death_cfg.get("date_format") or "%Y-%m-%d"
 
     _cc = death_cfg.get("cause_concept_id")
     cause_cid_lit = "None" if _cc in (None, "") else str(int(_cc))
@@ -1275,22 +1276,42 @@ def _generate_death_script(project) -> str:
             "            _dd_str = str(_dd_raw).strip()\n"
             "            if not _dd_str or _dd_str == 'nan':\n"
             "                continue\n"
-            "            death_date = _dd_str\n"
+            "            try:\n"
+            f"                _dd_dt = datetime.strptime(_dd_str, {repr(date_fmt)})\n"
+            "            except ValueError as _e:\n"
+            "                print(f'WARNING: cannot parse death_date {_dd_str!r} with format ' + repr("
+            + repr(date_fmt) + ") + f' for person {person_source_value} — skipping row. ({_e})')\n"
+            "                continue\n"
+            "            death_date = _dd_dt.date().isoformat()\n"
         )
     else:
-        date_lines = "            death_date = None\n"
+        date_lines = (
+            "            _dd_dt = None\n"
+            "            death_date = None\n"
+        )
 
     if death_dt_col:
         dt_lines = (
             f"            _ddt_raw = row.get({repr(death_dt_col)})\n"
             "            if pd.notnull(_ddt_raw):\n"
             "                _ddt_str = str(_ddt_raw).strip()\n"
-            "                death_datetime = _ddt_str if _ddt_str and _ddt_str != 'nan' else None\n"
+            "                if _ddt_str and _ddt_str != 'nan':\n"
+            "                    try:\n"
+            f"                        _ddt_dt = datetime.strptime(_ddt_str, {repr(date_fmt)})\n"
+            "                        death_datetime = _ddt_dt.strftime('%Y-%m-%d %H:%M:%S')\n"
+            "                    except ValueError:\n"
+            "                        death_datetime = None\n"
+            "                else:\n"
+            "                    death_datetime = None\n"
             "            else:\n"
             "                death_datetime = None\n"
         )
     else:
-        dt_lines = "            death_datetime = None\n"
+        dt_lines = (
+            "            death_datetime = (\n"
+            "                _dd_dt.strftime('%Y-%m-%d %H:%M:%S') if _dd_dt is not None else None\n"
+            "            )\n"
+        )
 
     if cause_sv_col:
         cause_sv_lines = (
@@ -1303,6 +1324,7 @@ def _generate_death_script(project) -> str:
     return (
         "import os\n"
         "import pandas as pd\n"
+        "from datetime import datetime\n"
         "\n"
         "COLUMNS = [\n"
         "    'person_id', 'death_date', 'death_datetime', 'death_type_concept_id',\n"
@@ -1455,9 +1477,19 @@ def _generate_stem_table_script(project) -> str:
     else:
         psv_lines = "            person_source_value = str(_src_idx)\n"
 
+    # Universe of variables the user explicitly mapped in Step 9 (strategy != skip).
+    # Structural columns already used by Person/Visit/Death/etc. are absent from
+    # concept_decisions entirely, so this set automatically excludes them.
+    mapped_variables = {
+        k.lower()
+        for k, v in (project.concept_decisions or {}).items()
+        if isinstance(v, dict) and v.get("strategy") != "skip"
+    }
+
     vl_repr = repr(visit_labels_list)
     vdi_repr = repr(visit_date_info)
     so_repr = repr(special_overrides)
+    sv_repr = repr(sorted(mapped_variables))
 
     return (
         "import os\n"
@@ -1478,6 +1510,12 @@ def _generate_stem_table_script(project) -> str:
         f"VISIT_DATE_INFO = {vdi_repr}\n"
         "\n"
         f"SPECIAL_OVERRIDES = {so_repr}\n"
+        "\n"
+        "# Variables the user explicitly mapped in Step 9 (strategy != 'skip').\n"
+        "# Source columns NOT in this set (structural fields already consumed by\n"
+        "# Person/Visit/Death/etc.) are skipped — even if their name happens to\n"
+        "# contain a visit-label substring like 'baseline'.\n"
+        f"STEM_VARIABLES = set({sv_repr})\n"
         "\n"
         "OVERRIDE_MAP = {o['variable'].lower(): o for o in SPECIAL_OVERRIDES}\n"
         "\n"
@@ -1601,12 +1639,17 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "            for variable in df.columns:\n"
         "                try:\n"
+        "                    _lc = variable.lower()\n"
+        "                    # Only process columns the user explicitly mapped in\n"
+        "                    # Step 9. Structural fields (visit_*_date, patient_id,\n"
+        "                    # death_date, gender, …) are absent from STEM_VARIABLES.\n"
+        "                    if _lc not in STEM_VARIABLES:\n"
+        "                        continue\n"
         "                    # Detect which visit this variable was measured at via\n"
         "                    # case-insensitive substring match against VISIT_LABELS\n"
         "                    # (longest-match-wins so e.g. 'followup_10y' beats\n"
         "                    # 'followup'). Variables whose name doesn't contain any\n"
         "                    # visit label are silently skipped (not a stem record).\n"
-        "                    _lc = variable.lower()\n"
         "                    visit_label = next(\n"
         "                        (l for l in sorted(VISIT_LABELS, key=len, reverse=True) if l.lower() in _lc),\n"
         "                        None,\n"
@@ -1640,6 +1683,11 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "                    mapped = lookup_concept(variable, raw_value, var_map, val_map, var_val_map)\n"
         "                    concept_id = mapped['concept_id']\n"
+        "                    # Skip when neither the variable nor the (variable, value) pair\n"
+        "                    # resolved to a concept — e.g. an unmapped value under a\n"
+        "                    # `map_values` strategy. No concept = no clinical event.\n"
+        "                    if not concept_id:\n"
+        "                        continue\n"
         "                    value_as_concept_id = mapped['value_as_concept_id']\n"
         "                    value_as_number = mapped['value_as_number']\n"
         "                    unit_concept_id = mapped['unit_concept_id']\n"

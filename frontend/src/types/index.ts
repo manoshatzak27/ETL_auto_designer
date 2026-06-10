@@ -210,6 +210,7 @@ export interface DeathConfig {
   filter_value: string
   death_date_col: string
   death_datetime_col: string
+  date_format?: string
   death_type_concept_id: number
   cause_concept_id: number | null
   cause_source_value_col: string

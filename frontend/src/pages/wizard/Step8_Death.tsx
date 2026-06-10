@@ -139,6 +139,20 @@ export default function Step8Death({ project, onUpdate }: Props) {
             onChange={set('death_datetime_col')}
             hint="Source column containing the full datetime of death. Leave empty to populate as NULL."
           />
+
+          <div>
+            <Label>Date format</Label>
+            <Input
+              type="text"
+              value={cfg.date_format ?? '%Y-%m-%d'}
+              onChange={e => setCfg(prev => ({ ...prev, date_format: e.target.value || '%Y-%m-%d' }))}
+              placeholder="%Y-%m-%d"
+              className="mt-1 font-mono"
+            />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Python strptime format applied to the death date column (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code> for <code className="bg-muted px-1 rounded">14/7/2021</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code> for <code className="bg-muted px-1 rounded">20210714</code>). Parsed and re-emitted as ISO so Postgres COPY accepts it.
+            </p>
+          </div>
         </Card>
 
         {/* Death Type */}
