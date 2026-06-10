@@ -1443,7 +1443,6 @@ def _generate_stem_table_script(project) -> str:
     special_overrides = inferred_overrides + user_overrides
 
     visit_defs = visit_cfg.get("visit_definitions", [])
-    visit_labels_list = [vd["label"] for vd in visit_defs if vd.get("label")]
     visit_date_info = {
         vd["label"]: {
             "date_col": vd.get("date_col", ""),
@@ -1451,6 +1450,13 @@ def _generate_stem_table_script(project) -> str:
         }
         for vd in visit_defs
         if vd.get("label")
+    }
+
+    # variable → visit label, as configured by the user in Step 10.
+    # Keys are normalised to lowercase to match the runtime _lc lookup.
+    variable_visit_map = {
+        k.lower(): v
+        for k, v in (stem_cfg.get("variable_visit_map") or {}).items()
     }
 
     if pid_col:
@@ -1472,8 +1478,8 @@ def _generate_stem_table_script(project) -> str:
         if isinstance(v, dict) and v.get("strategy") != "skip"
     }
 
-    vl_repr = repr(visit_labels_list)
     vdi_repr = repr(visit_date_info)
+    vvm_repr = repr(variable_visit_map)
     so_repr = repr(special_overrides)
     sv_repr = repr(sorted(mapped_variables))
 
@@ -1488,12 +1494,10 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         f"SOURCE_STEM = {repr(source_stem)}\n"
         "\n"
-        "# Visit labels declared in Step 6 (visit_occurrence). Used to detect\n"
-        "# which visit a variable belongs to via case-insensitive substring\n"
-        "# match against the column name.\n"
-        f"VISIT_LABELS = {vl_repr}\n"
-        "\n"
         f"VISIT_DATE_INFO = {vdi_repr}\n"
+        "\n"
+        "# Maps each variable (lowercase) to its visit label as configured in Step 10.\n"
+        f"VARIABLE_VISIT_MAP = {vvm_repr}\n"
         "\n"
         f"SPECIAL_OVERRIDES = {so_repr}\n"
         "\n"
@@ -1631,15 +1635,7 @@ def _generate_stem_table_script(project) -> str:
         "                    # death_date, gender, …) are absent from STEM_VARIABLES.\n"
         "                    if _lc not in STEM_VARIABLES:\n"
         "                        continue\n"
-        "                    # Detect which visit this variable was measured at via\n"
-        "                    # case-insensitive substring match against VISIT_LABELS\n"
-        "                    # (longest-match-wins so e.g. 'followup_10y' beats\n"
-        "                    # 'followup'). Variables whose name doesn't contain any\n"
-        "                    # visit label are silently skipped (not a stem record).\n"
-        "                    visit_label = next(\n"
-        "                        (l for l in sorted(VISIT_LABELS, key=len, reverse=True) if l.lower() in _lc),\n"
-        "                        None,\n"
-        "                    )\n"
+        "                    visit_label = VARIABLE_VISIT_MAP.get(_lc)\n"
         "                    if visit_label is None:\n"
         "                        continue\n"
         "\n"

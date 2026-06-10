@@ -196,6 +196,7 @@ export interface StemTableConfig {
   enabled: boolean
   variable_groups: Record<string, string[]>
   visit_labels?: string[]
+  variable_visit_map?: Record<string, string>
   concept_mapping_csvs: {
     variable_mapping?: string
     value_mapping?: string

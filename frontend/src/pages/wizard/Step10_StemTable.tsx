@@ -19,11 +19,8 @@ interface Props {
 
 const DEFAULTS: StemTableConfig = {
   enabled: true,
-  // variable_groups is retained in the config shape for backward compat with
-  // existing projects, but the generated stem_table.py no longer reads it —
-  // visit assignment now happens at runtime via lookup_visit_occurrence_id
-  // doing a substring match against the visit labels from Step 6.
   variable_groups: {},
+  variable_visit_map: {},
   concept_mapping_csvs: {},
   special_overrides: [],
 }
@@ -35,9 +32,14 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
 
-  // Which mapping CSVs were generated in Step 9
   const mappingFiles = project.mapping_files || {}
   const hasMappings = Object.values(mappingFiles).some(v => !!v)
+
+  const visitLabels = useMemo<string[]>(() => {
+    const defs = (project.etl_config as Record<string, unknown> | undefined)
+      ?.visit_occurrence as { visit_definitions?: { label?: string }[] } | undefined
+    return (defs?.visit_definitions || []).map(vd => vd.label).filter((l): l is string => !!l)
+  }, [project.etl_config])
 
   useEffect(() => {
     Promise.all([
@@ -52,8 +54,6 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     })
   }, [project.id])
 
-  // Variables that survived Step 9 (mapped + non-structural) — used to populate
-  // the variable dropdown in the Special Overrides editor.
   const mappedCols = useMemo(() => {
     const structuralCols = getStructuralColumns((project.etl_config || {}) as Record<string, unknown>)
     return (project.source_columns || []).filter(col => {
@@ -63,6 +63,22 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
       return !!d.variable_concept || Object.keys(d.value_concepts).length > 0
     })
   }, [rawDecisions, project.source_columns, project.etl_config])
+
+  const variableVisitMap = cfg.variable_visit_map || {}
+
+  const toggleAssignment = (variable: string, visitLabel: string) => {
+    setCfg(prev => {
+      const next = { ...(prev.variable_visit_map || {}) }
+      if (next[variable] === visitLabel) {
+        // clicking the same board deassigns the variable
+        delete next[variable]
+      } else {
+        // assign to this board (removes from any previous board automatically)
+        next[variable] = visitLabel
+      }
+      return { ...prev, variable_visit_map: next }
+    })
+  }
 
   const addOverride = () => {
     setCfg(prev => ({
@@ -89,7 +105,6 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const saveConfig = async () => {
     const updatedCfg = {
       ...cfg,
-      // variable_groups intentionally left as {} — UI no longer authors it.
       concept_mapping_csvs: {
         variable_mapping: mappingFiles.variable_mapping || '',
         value_mapping: mappingFiles.value_mapping || '',
@@ -110,6 +125,8 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
+  const unassignedCount = mappedCols.filter(col => !variableVisitMap[col]).length
+
   return (
     <WizardLayout
       project={project}
@@ -124,10 +141,8 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
         <div>
           <h2 className="text-xl font-bold text-primary">Stem Table</h2>
           <p className="text-sm text-muted-foreground mt-1">
-            The stem_table is the staging table that holds every clinical observation before
-            domain routing. Concept mappings from Step 9 and visit info from Step 6 are wired
-            in automatically — most projects just hit <strong>Generate</strong> here. Add
-            field overrides below only if you need to force a specific OMOP value for a variable.
+            Assign each mapped variable to its visit by clicking it in the corresponding board.
+            A variable can only belong to one visit. Click it again to remove the assignment.
           </p>
         </div>
 
@@ -151,6 +166,68 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
           </div>
         </div>
 
+        {/* Visit Assignment Boards */}
+        {visitLabels.length === 0 ? (
+          <div className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-amber-50 border-amber-200 text-sm text-amber-700">
+            <AlertCircle className="w-5 h-5 flex-shrink-0" />
+            No visits configured. Go back to Step 6 (Visit Occurrence) and define at least one visit.
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {unassignedCount > 0 && (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
+                {unassignedCount} variable{unassignedCount > 1 ? 's' : ''} not yet assigned to a visit — they will be skipped in the generated script.
+              </p>
+            )}
+
+            <div className="flex flex-col gap-4">
+              {visitLabels.map(label => {
+                // show: variables assigned to THIS board + variables not assigned anywhere
+                const visibleCols = mappedCols.filter(
+                  col => variableVisitMap[col] === label || !variableVisitMap[col]
+                )
+                const assignedCount = visibleCols.filter(col => variableVisitMap[col] === label).length
+
+                return (
+                  <Card key={label} className="p-4 flex flex-col gap-3">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-sm text-foreground">{label}</h3>
+                      <span className="text-xs text-muted-foreground">
+                        {assignedCount} / {mappedCols.length}
+                      </span>
+                    </div>
+
+                    {visibleCols.length === 0 ? (
+                      <p className="text-xs text-muted-foreground italic">No variables available.</p>
+                    ) : (
+                      <div className="flex flex-wrap gap-1.5">
+                        {visibleCols.map(col => {
+                          const isAssigned = variableVisitMap[col] === label
+                          return (
+                            <button
+                              key={col}
+                              onClick={() => toggleAssignment(col, label)}
+                              title={isAssigned ? `Remove "${col}" from ${label}` : `Assign "${col}" to ${label}`}
+                              className={[
+                                'px-2 py-1 rounded text-xs font-mono border transition-colors cursor-pointer',
+                                isAssigned
+                                  ? 'bg-primary text-primary-foreground border-primary hover:bg-primary/80'
+                                  : 'bg-background text-foreground border-border hover:border-primary hover:bg-primary/5',
+                              ].join(' ')}
+                            >
+                              {col}
+                            </button>
+                          )
+                        })}
+                      </div>
+                    )}
+                  </Card>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Special Overrides */}
         <Card className="p-6 flex flex-col gap-4">
           <div className="flex items-center justify-between">
@@ -172,9 +249,6 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
 
           <div className="flex flex-col gap-2">
             {cfg.special_overrides.map((ov, i) => {
-              // If the saved variable isn't in the current mapped set (e.g. an
-              // older project, or the user removed it from Step 9), still show
-              // it as an option so the user doesn't silently lose data.
               const variableOptions = ov.variable && !mappedCols.includes(ov.variable)
                 ? [ov.variable, ...mappedCols]
                 : mappedCols
