@@ -35,6 +35,9 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
   const mappingFiles = project.mapping_files || {}
   const hasMappings = Object.values(mappingFiles).some(v => !!v)
 
+  const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
+  const visitSourceCol = ((project.etl_config?.visit_occurrence as Record<string, unknown> | undefined)?.visit_source_col as string | undefined) ?? ''
+
   const visitLabels = useMemo<string[]>(() => {
     const defs = (project.etl_config as Record<string, unknown> | undefined)
       ?.visit_occurrence as { visit_definitions?: { label?: string }[] } | undefined
@@ -167,7 +170,28 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
         </div>
 
         {/* Visit Assignment Boards */}
-        {visitLabels.length === 0 ? (
+        {isMultiRow ? (
+          <Card className="flex flex-col gap-3 p-4 border-primary/40 bg-primary/5">
+            <p className="text-sm font-semibold text-primary">Multi-row dataset mode</p>
+            <p className="text-xs text-muted-foreground">
+              All mapped variables are automatically assigned to the visit identified by the{' '}
+              <code className="bg-muted px-1 rounded">{visitSourceCol || 'visit identifier column'}</code> column.
+              No manual visit assignment is needed — every variable in a row is attached to that row's visit.
+            </p>
+            {mappedCols.length > 0 && (
+              <div>
+                <p className="text-xs text-muted-foreground mb-1.5">Mapped variables ({mappedCols.length}):</p>
+                <div className="flex flex-wrap gap-1.5">
+                  {mappedCols.map(col => (
+                    <span key={col} className="px-2 py-1 rounded text-xs font-mono border bg-background text-foreground border-border">
+                      {col}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        ) : visitLabels.length === 0 ? (
           <div className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-amber-50 border-amber-200 text-sm text-amber-700">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
             No visits configured. Go back to Step 6 (Visit Occurrence) and define at least one visit.

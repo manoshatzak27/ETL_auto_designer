@@ -383,65 +383,126 @@ function ConceptPicker({
   const { rerankerAvailable, customVocabularyId } = useStep9Settings()
   const cs = useConceptSearch(projectId)
   const [manualId, setManualId] = useState('')
+  const [idLocked, setIdLocked] = useState(false)
   const [manualName, setManualName] = useState('')
+  const [lookingUpName, setLookingUpName] = useState(false)
+  const [editingName, setEditingName] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [showCustom, setShowCustom] = useState(false)
   const [useReranker, setUseReranker] = useState(rerankerAvailable)
 
-  const applyManual = () => {
+  useEffect(() => {
+    if (value) setEditingName(value.concept_name)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value?.concept_id])
+
+  const applyId = () => {
     const id = parseInt(manualId)
     if (isNaN(id) || id < 1) return
-    onSelect({ concept_id: id, concept_name: manualName || `Concept ${id}` })
-    setManualId(''); setManualName('')
+    setIdLocked(true)
+    if (manualName.trim()) return  // name already typed — nothing to auto-fill
+    setLookingUpName(true)
+    lookupConceptDomain(id)
+      .then(res => { if (res.concept_name) setManualName(res.concept_name) })
+      .catch(() => {})
+      .finally(() => setLookingUpName(false))
+  }
+
+  const unlockId = () => { setIdLocked(false) }
+
+  const applyName = () => {
+    const id = parseInt(manualId)
+    if (isNaN(id) || id < 1) return
+    onSelect({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
+    setManualId(''); setManualName(''); setIdLocked(false)
+  }
+
+  const commitEditingName = () => {
+    if (!value) return
+    const trimmed = editingName.trim()
+    if (trimmed && trimmed !== value.concept_name) onSelect({ ...value, concept_name: trimmed })
   }
 
   if (value) {
     const isCustom = value.is_custom || value.concept_id >= 2_000_000_000
+    const lockedCls = isCustom
+      ? 'border border-purple-200 bg-purple-50 text-purple-800'
+      : 'border border-green-200 bg-green-50 text-green-800'
+    const clearId = () => { setIdLocked(false); setManualId(''); setManualName(''); onClear() }
+    const clearName = () => { setManualId(String(value.concept_id)); setIdLocked(true); setManualName(''); onClear() }
     return (
-      <div className={clsx(
-        'flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs w-full',
-        isCustom ? 'bg-purple-50 border border-purple-200 text-purple-800' : 'bg-green-50 border border-green-200 text-green-800'
-      )}>
-        <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
-        {isCustom && (
-          <span className="bg-purple-200 text-purple-800 px-1.5 py-0 rounded text-[10px] font-bold uppercase tracking-wide">Custom</span>
-        )}
-        <span className="font-semibold">{value.concept_name}</span>
-        <span className="text-muted-foreground ml-1">({value.concept_id})</span>
-        {value.vocabulary_id && <span className="text-muted-foreground">· {value.vocabulary_id}</span>}
-        {isCustom && value.concept_code && (
-          <span className="text-muted-foreground">· code: {value.concept_code}</span>
-        )}
-        <button onClick={onClear} className="ml-auto text-muted-foreground hover:text-destructive"><X className="w-3 h-3" /></button>
+      <div className="flex items-center gap-1.5 w-full">
+        {/* Locked ID chip with X — clears only ID, preserves name */}
+        <div className={clsx('flex items-center gap-1 px-2 py-1 text-xs rounded font-mono flex-shrink-0', lockedCls)}>
+          <CheckCircle className="w-3 h-3 flex-shrink-0" />
+          {isCustom && (
+            <span className="bg-purple-200 text-purple-800 px-1 rounded text-[10px] font-bold uppercase tracking-wide ml-0.5">Custom</span>
+          )}
+          <span>{value.concept_id}</span>
+          {value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
+          {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
+          <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
+        </div>
+        {/* Editable name input with X — clears only name, preserves ID */}
+        <input
+          type="text"
+          value={editingName}
+          onChange={e => setEditingName(e.target.value)}
+          onBlur={commitEditingName}
+          onKeyDown={e => e.key === 'Enter' && commitEditingName()}
+          placeholder="Name"
+          className={clsx('px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-green-300 w-40', lockedCls)}
+        />
+        <button onClick={clearName} className="text-muted-foreground hover:text-destructive flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
       </div>
     )
   }
 
   return (
     <div className="flex flex-col gap-1.5 w-full">
-      {/* Manual entry row */}
+      {/* Single row: ID (input or locked chip) + ID Set + Name input + Name Set */}
       <div className="flex items-center gap-1.5 flex-wrap">
-        <input
-          type="number"
-          value={manualId}
-          onChange={e => setManualId(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && applyManual()}
-          placeholder="Concept ID"
-          className="border border-border rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
-        />
+        {idLocked ? (
+          <div className="flex items-center gap-1 px-2 py-1 text-xs border border-green-200 rounded bg-green-50 text-green-800 font-mono flex-shrink-0">
+            <CheckCircle className="w-3 h-3 flex-shrink-0" />
+            <span>{manualId}</span>
+            <button onClick={unlockId} className="text-green-600 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
+          </div>
+        ) : (
+          <>
+            <input
+              type="number"
+              value={manualId}
+              onChange={e => setManualId(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && applyId()}
+              placeholder="Concept ID"
+              className="border border-border rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+            />
+            <button
+              onClick={applyId}
+              disabled={!manualId || lookingUpName}
+              className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90 flex items-center gap-1"
+            >
+              {lookingUpName && <Loader2 className="w-3 h-3 animate-spin" />}
+              Set
+            </button>
+          </>
+        )}
         <input
           type="text"
           value={manualName}
           onChange={e => setManualName(e.target.value)}
-          onKeyDown={e => e.key === 'Enter' && applyManual()}
+          onKeyDown={e => e.key === 'Enter' && applyName()}
           placeholder="Name (optional)"
-          className="border border-border rounded px-2 py-1 text-xs flex-1 min-w-[120px] focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+          className="border border-border rounded px-2 py-1 text-xs w-40 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
         />
         <button
-          onClick={applyManual}
-          disabled={!manualId}
+          onClick={applyName}
+          disabled={!idLocked}
           className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90"
         >Set</button>
+      </div>
+      <div className="flex items-center gap-1.5">
         <button
           onClick={() => { setShowSearch(s => !s); setShowCustom(false); if (!cs.query) cs.setQuery(defaultQuery) }}
           className={clsx(

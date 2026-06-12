@@ -4,7 +4,7 @@ import { uploadSource, updateTableConfig } from '../../api/client'
 import type { Project } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
-import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull } from 'lucide-react'
+import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import VocabLoaderCard from '../../components/VocabLoaderCard'
 import clsx from 'clsx'
@@ -50,6 +50,22 @@ export default function Step1Upload({ project, onUpdate }: Props) {
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [togglingTable, setTogglingTable] = useState<string | null>(null)
+  const [togglingMultiRow, setTogglingMultiRow] = useState(false)
+
+  const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
+
+  const toggleMultiRow = async (checked: boolean) => {
+    setTogglingMultiRow(true)
+    try {
+      const existing = (project.etl_config?.dataset_options as Record<string, unknown> | undefined) || {}
+      const updated = await updateTableConfig(project.id, 'dataset_options', { ...existing, multiple_rows_per_patient: checked })
+      onUpdate(updated)
+    } catch {
+      // revert silently
+    } finally {
+      setTogglingMultiRow(false)
+    }
+  }
 
   const handleFile = async (file: File) => {
     setUploading(true)
@@ -223,6 +239,70 @@ export default function Step1Upload({ project, onUpdate }: Props) {
           <p className="text-xs text-muted-foreground">
             Tip: domain tables (Condition, Drug, Measurement, Observation, Procedure) are produced automatically by Stem Table — no setup needed.
           </p>
+        </Card>
+
+        {/* Dataset structure — one row vs. multiple rows per patient */}
+        <Card className="flex flex-col gap-4 p-6">
+          <div className="flex items-start gap-3">
+            <Rows3 className="size-5 text-primary flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="font-semibold text-foreground">Dataset structure</h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                How many rows does each patient occupy in your dataset?
+              </p>
+            </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            {/* One row per patient */}
+            <label
+              className={clsx(
+                'flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
+                !isMultiRow ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/40',
+                togglingMultiRow && 'opacity-60 cursor-wait',
+              )}
+            >
+              <input
+                type="radio"
+                name="dataset-structure"
+                checked={!isMultiRow}
+                disabled={togglingMultiRow}
+                onChange={() => toggleMultiRow(false)}
+                className="mt-0.5 accent-primary"
+              />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-foreground">One row per patient</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Each patient appears exactly once in the dataset.
+                </p>
+              </div>
+            </label>
+
+            {/* Multiple rows per patient */}
+            <label
+              className={clsx(
+                'flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
+                isMultiRow ? 'border-primary bg-primary/5' : 'border-border bg-card hover:border-primary/40',
+                togglingMultiRow && 'opacity-60 cursor-wait',
+              )}
+            >
+              <input
+                type="radio"
+                name="dataset-structure"
+                checked={isMultiRow}
+                disabled={togglingMultiRow}
+                onChange={() => toggleMultiRow(true)}
+                className="mt-0.5 accent-primary"
+              />
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-foreground">Multiple rows per patient</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Each row is a different visit for the same patient (e.g. baseline, follow-up). A column identifies the visit type.
+                </p>
+              </div>
+              {togglingMultiRow && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+            </label>
+          </div>
         </Card>
 
         {/* OMOP vocabulary — one-time shared setup. Started here so it can run

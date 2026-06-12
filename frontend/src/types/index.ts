@@ -110,6 +110,7 @@ export interface VisitDefinition {
 export interface VisitOccurrenceConfig {
   enabled: boolean
   visit_definitions: VisitDefinition[]
+  visit_source_col?: string
 }
 
 export interface ObservationPeriodConfig {

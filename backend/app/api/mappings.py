@@ -11,6 +11,7 @@ VALID_TABLES = {
     "person", "visit_occurrence", "observation_period", "location", "care_site", "provider",
     "stem_table", "death",
     "measurement", "observation", "drug_exposure", "procedure_occurrence", "condition_occurrence",
+    "dataset_options",
 }
 
 

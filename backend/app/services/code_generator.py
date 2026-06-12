@@ -514,6 +514,8 @@ def _generate_person_script(project) -> str:
     loc = (project.etl_config or {}).get("location", {})
     cs_cfg = (project.etl_config or {}).get("care_site", {})
     prov_cfg = (project.etl_config or {}).get("provider", {})
+    dataset_options = (project.etl_config or {}).get("dataset_options", {})
+    multiple_rows_per_patient = dataset_options.get("multiple_rows_per_patient", False)
     delim = repr(project.source_delimiter or ",")
     enc = repr(project.source_encoding or "utf-8")
 
@@ -790,6 +792,14 @@ def _generate_person_script(project) -> str:
         + "\n"
         + "    df_out = pd.DataFrame(rows)\n"
         + "\n"
+        + (
+            # In multi-row datasets the source has one row per (patient, visit); deduplicate
+            # person rows so that each unique person_source_value appears only once.
+            "    df_out = df_out.drop_duplicates(subset=['person_source_value'], keep='first').reset_index(drop=True)\n"
+            "    df_out['person_id'] = range(1, len(df_out) + 1)\n"
+            "\n"
+            if multiple_rows_per_patient else ""
+        )
         + "    output_file = os.path.join(output_dir, 'person.csv')\n"
         + "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
         + "    print(f'Writing person.csv ... done ({len(df_out)} records)')\n"
@@ -817,6 +827,7 @@ def _generate_visit_occurrence_script(project) -> str:
 
     visit_defs = visit_cfg.get("visit_definitions", [])
     vd_repr = repr(visit_defs)
+    visit_source_col = visit_cfg.get("visit_source_col", "")
 
     # person_source_value in visit_occurrence must match what person.csv stores —
     # which is always str(_pid_raw) with no type casting.
@@ -886,6 +897,7 @@ def _generate_visit_occurrence_script(project) -> str:
         f"VISIT_DEFS = {vd_repr}\n"
         "\n"
         f"SOURCE_STEM = {repr(source_stem)}\n"
+        f"VISIT_SOURCE_COL = {repr(visit_source_col)}\n"
         "\n"
         "\n"
         "def main():\n"
@@ -921,7 +933,8 @@ def _generate_visit_occurrence_script(project) -> str:
         + cs_lookup_line
         + prov_lookup_line
         + "\n"
-        "            for vd in VISIT_DEFS:\n"
+        "            _defs_to_use = VISIT_DEFS[:1] if VISIT_SOURCE_COL else VISIT_DEFS\n"
+        "            for vd in _defs_to_use:\n"
         "                try:\n"
         "                    date_val = row.get(vd['date_col'])\n"
         "                    _date_str = str(date_val).strip() if pd.notnull(date_val) else ''\n"
@@ -994,7 +1007,13 @@ def _generate_visit_occurrence_script(project) -> str:
         "                    else:\n"
         "                        visit_type_concept_id = vd['type_concept_id']\n"
         "\n"
-        "                    label_norm = vd['label'].lower().replace(' ', '_')\n"
+        "                    if VISIT_SOURCE_COL:\n"
+        "                        _vsv_raw = str(row.get(VISIT_SOURCE_COL, '')).strip()\n"
+        "                        if not _vsv_raw or _vsv_raw == 'nan':\n"
+        "                            continue\n"
+        "                        label_norm = _vsv_raw.lower().replace(' ', '_')\n"
+        "                    else:\n"
+        "                        label_norm = vd['label'].lower().replace(' ', '_')\n"
         "                    visit_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
         "\n"
         "                    afc_col = vd.get('admitted_from_source_col') or ''\n"
@@ -1443,6 +1462,7 @@ def _generate_stem_table_script(project) -> str:
     special_overrides = inferred_overrides + user_overrides
 
     visit_defs = visit_cfg.get("visit_definitions", [])
+    visit_source_col = visit_cfg.get("visit_source_col", "")
     visit_date_info = {
         vd["label"]: {
             "date_col": vd.get("date_col", ""),
@@ -1451,6 +1471,12 @@ def _generate_stem_table_script(project) -> str:
         for vd in visit_defs
         if vd.get("label")
     }
+
+    # In multi-row mode all variables on a row share one visit; use the first
+    # visit definition's date column as the default for all stem rows.
+    first_vd = visit_defs[0] if visit_defs else {}
+    default_date_col = first_vd.get("date_col", "") if visit_source_col else ""
+    default_date_format = (first_vd.get("date_format") or "%Y-%m-%d") if visit_source_col else "%Y-%m-%d"
 
     # variable → visit label, as configured by the user in Step 10.
     # Keys are normalised to lowercase to match the runtime _lc lookup.
@@ -1493,6 +1519,9 @@ def _generate_stem_table_script(project) -> str:
         "logger = logging.getLogger(__name__)\n"
         "\n"
         f"SOURCE_STEM = {repr(source_stem)}\n"
+        f"VISIT_SOURCE_COL = {repr(visit_source_col)}\n"
+        f"DEFAULT_DATE_COL = {repr(default_date_col)}\n"
+        f"DEFAULT_DATE_FORMAT = {repr(default_date_format)}\n"
         "\n"
         f"VISIT_DATE_INFO = {vdi_repr}\n"
         "\n"
@@ -1635,17 +1664,26 @@ def _generate_stem_table_script(project) -> str:
         "                    # death_date, gender, …) are absent from STEM_VARIABLES.\n"
         "                    if _lc not in STEM_VARIABLES:\n"
         "                        continue\n"
-        "                    visit_label = VARIABLE_VISIT_MAP.get(_lc)\n"
-        "                    if visit_label is None:\n"
-        "                        continue\n"
+        "                    if VISIT_SOURCE_COL:\n"
+        "                        # Multi-row mode: visit label comes from the row's visit column.\n"
+        "                        _vsv_raw = str(row.get(VISIT_SOURCE_COL, '')).strip()\n"
+        "                        if not _vsv_raw or _vsv_raw == 'nan':\n"
+        "                            continue\n"
+        "                        visit_label = _vsv_raw\n"
+        "                        date_col = DEFAULT_DATE_COL\n"
+        "                        date_fmt = DEFAULT_DATE_FORMAT\n"
+        "                    else:\n"
+        "                        visit_label = VARIABLE_VISIT_MAP.get(_lc)\n"
+        "                        if visit_label is None:\n"
+        "                            continue\n"
+        "                        date_info = VISIT_DATE_INFO.get(visit_label, {})\n"
+        "                        date_col = date_info.get('date_col', '')\n"
+        "                        date_fmt = date_info.get('date_format', '%Y-%m-%d')\n"
         "\n"
         "                    raw_value = row.get(variable)\n"
         "                    if pd.isnull(raw_value) or str(raw_value).strip() in ('', 'nan'):\n"
         "                        continue\n"
         "\n"
-        "                    date_info = VISIT_DATE_INFO.get(visit_label, {})\n"
-        "                    date_col = date_info.get('date_col', '')\n"
-        "                    date_fmt = date_info.get('date_format', '%Y-%m-%d')\n"
         "                    start_date = None\n"
         "                    start_datetime = None\n"
         "                    if date_col:\n"

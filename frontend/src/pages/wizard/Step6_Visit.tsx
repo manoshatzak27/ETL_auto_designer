@@ -115,6 +115,8 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     () => DEFAULTS.visit_definitions.map(() => 'column' as const),
   )
 
+  const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
+
   const getMode = (arr: Array<'column' | 'default'>, i: number): 'column' | 'default' => arr[i] ?? 'column'
 
   const setMode = (
@@ -240,6 +242,26 @@ export default function Step3Visit({ project, onUpdate }: Props) {
           </p>
         </div>
 
+        {isMultiRow && (
+          <Card className="flex flex-col gap-3 p-4 border-primary/40 bg-primary/5">
+            <p className="text-sm font-semibold text-primary">Multi-row dataset mode</p>
+            <p className="text-xs text-muted-foreground">
+              Your dataset has multiple rows per patient. Select the column that identifies the visit type
+              (e.g. "baseline", "followup"). The visit source value will be composed as{' '}
+              <code className="bg-muted px-1 rounded">person_id — filename — visit_value</code>.
+              One visit occurrence is created per row; the label comes from the column, not the text field below.
+            </p>
+            <FieldMapper
+              label="Visit identifier column"
+              sourceColumns={cols}
+              value={cfg.visit_source_col ?? ''}
+              onChange={v => setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))}
+              required
+              hint="Column whose values identify the visit type (e.g. 'baseline', 'followup')."
+            />
+          </Card>
+        )}
+
         <div className="flex flex-col gap-6">
           {cfg.visit_definitions.map((vd, i) => {
             const vdVisitIds = getMode(conceptModes, i) === 'column'
@@ -270,13 +292,19 @@ export default function Step3Visit({ project, onUpdate }: Props) {
 
                 <div>
                   <Label>Visit label</Label>
-                  <Input
-                    type="text"
-                    value={vd.label}
-                    onChange={e => updateVisit(i, 'label', e.target.value)}
-                    placeholder="e.g. Onset, Baseline, 10y Follow-up"
-                    className="mt-1"
-                  />
+                  {isMultiRow ? (
+                    <p className="mt-1 text-xs text-muted-foreground italic">
+                      Label is derived from the visit identifier column at runtime.
+                    </p>
+                  ) : (
+                    <Input
+                      type="text"
+                      value={vd.label}
+                      onChange={e => updateVisit(i, 'label', e.target.value)}
+                      placeholder="e.g. Onset, Baseline, 10y Follow-up"
+                      className="mt-1"
+                    />
+                  )}
                 </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -553,12 +581,14 @@ export default function Step3Visit({ project, onUpdate }: Props) {
           })}
         </div>
 
-        <button
-          onClick={addVisit}
-          className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium"
-        >
-          <Plus className="w-4 h-4" /> Add another visit type
-        </button>
+        {!isMultiRow && (
+          <button
+            onClick={addVisit}
+            className="flex items-center gap-2 text-sm text-primary hover:text-primary/80 font-medium"
+          >
+            <Plus className="w-4 h-4" /> Add another visit type
+          </button>
+        )}
 
         <ExtraInstructions
           tableName="visit_occurrence"
