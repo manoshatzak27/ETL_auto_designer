@@ -34,6 +34,7 @@ async def execute_etl_scripts(
     project_id: str,
     mapping_files: dict,
     project_name: str = "",
+    output_mode: str = "basic",
 ) -> tuple[str, str, list[str]]:
     """
     Returns (log: str, status: 'success'|'error', output_files: list[str])
@@ -46,6 +47,7 @@ async def execute_etl_scripts(
     env = os.environ.copy()
     env["ETL_SOURCE_PATH"] = source_path
     env["ETL_OUTPUT_DIR"] = output_dir
+    env["ETL_OUTPUT_MODE"] = output_mode
     env["ETL_MAPPING_FILES"] = json.dumps(mapping_files)
     for key, path in (mapping_files or {}).items():
         env[f"ETL_MAPPING_{key}"] = str(path)

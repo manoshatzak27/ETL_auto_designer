@@ -96,8 +96,8 @@ export const updateProjectSettings = (
 ) => api.patch(`/projects/${projectId}`, payload).then(r => r.data)
 
 // ---- Execution ----
-export const executeProject = (projectId: string) =>
-  api.post(`/projects/${projectId}/execute`).then(r => r.data)
+export const executeProject = (projectId: string, outputMode: 'basic' | 'detailed' = 'basic') =>
+  api.post(`/projects/${projectId}/execute`, { output_mode: outputMode }).then(r => r.data)
 
 export const getExecutionLog = (projectId: string) =>
   api.get(`/projects/${projectId}/execution-log`).then(r => r.data)

@@ -1,18 +1,24 @@
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from pathlib import Path
+from typing import Optional
 import pandas as pd
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
 from app.services.etl_executor import execute_etl_scripts
 from app.config import settings
 
+
+class ExecuteRequest(BaseModel):
+    output_mode: Optional[str] = "basic"
+
 router = APIRouter(prefix="/projects", tags=["execution"])
 
 
 @router.post("/{project_id}/execute")
-async def execute_project(project_id: str, db: Session = Depends(get_db)):
+async def execute_project(project_id: str, body: ExecuteRequest = ExecuteRequest(), db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -42,6 +48,7 @@ async def execute_project(project_id: str, db: Session = Depends(get_db)):
         project_id=project_id,
         mapping_files=project.mapping_files or {},
         project_name=project.name,
+        output_mode=body.output_mode or "basic",
     )
 
     project.last_execution_log = log

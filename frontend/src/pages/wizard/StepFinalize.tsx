@@ -113,6 +113,7 @@ export default function StepFinalize({ project, onUpdate }: Props) {
   const [executing, setExecuting] = useState(false)
   const [execResult, setExecResult] = useState<{ status: string; log: string; output_files: string[] } | null>(null)
   const [execError, setExecError] = useState('')
+  const [outputMode, setOutputMode] = useState<'basic' | 'detailed'>('basic')
 
   // Only count / regenerate the tables the user enabled in Step 1.
   const activeTables = getActiveTables(project)
@@ -126,7 +127,7 @@ export default function StepFinalize({ project, onUpdate }: Props) {
     setExecuting(true)
     setExecError('')
     try {
-      const result = await executeProject(project.id)
+      const result = await executeProject(project.id, outputMode)
       setExecResult(result)
       onUpdate({ ...project, last_execution_status: result.status, output_files: result.output_files })
     } catch (e: unknown) {
@@ -356,6 +357,40 @@ export default function StepFinalize({ project, onUpdate }: Props) {
                   Some scripts are missing — only generated tables will run.
                 </p>
               )}
+
+              <div className="flex flex-col gap-1">
+                <p className="text-xs font-medium text-foreground">Output verbosity</p>
+                <div className="flex items-center gap-4 text-sm">
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="outputMode"
+                      value="basic"
+                      checked={outputMode === 'basic'}
+                      onChange={() => setOutputMode('basic')}
+                      className="accent-blue-600"
+                    />
+                    <span>
+                      <span className="font-medium">Basic</span>
+                      <span className="text-muted-foreground ml-1">— only rows skipped entirely (WARNING)</span>
+                    </span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="outputMode"
+                      value="detailed"
+                      checked={outputMode === 'detailed'}
+                      onChange={() => setOutputMode('detailed')}
+                      className="accent-blue-600"
+                    />
+                    <span>
+                      <span className="font-medium">Detailed</span>
+                      <span className="text-muted-foreground ml-1">— also empty/unmapped fields on written rows (INFO)</span>
+                    </span>
+                  </label>
+                </div>
+              </div>
 
               <Button onClick={handleExecute} disabled={executing} size="lg" className="w-fit">
                 {executing
