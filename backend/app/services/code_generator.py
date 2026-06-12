@@ -264,31 +264,31 @@ def _generate_care_site_script(project) -> str:
     )
 
     cs_extractions = (
-        _xtr("cs_address_1", cs_a1_col, 12) + "\n"
-        + _xtr("cs_address_2", cs_a2_col, 12) + "\n"
-        + _xtr("cs_city", cs_city_col, 12) + "\n"
-        + _xtr("cs_state", cs_state_col, 12) + "\n"
-        + _xtr("cs_zip_code", cs_zip_col, 12) + "\n"
-        + _xtr("cs_county", cs_county_col, 12) + "\n"
-        + f"            cs_country_source_value = {repr(cs_country_sv)}\n"
-        + "            cs_location_source_value = ' | '.join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n"
-        + "            location_id = location_lookup.get(cs_location_source_value)\n"
+        _xtr("cs_address_1", cs_a1_col, 8) + "\n"
+        + _xtr("cs_address_2", cs_a2_col, 8) + "\n"
+        + _xtr("cs_city", cs_city_col, 8) + "\n"
+        + _xtr("cs_state", cs_state_col, 8) + "\n"
+        + _xtr("cs_zip_code", cs_zip_col, 8) + "\n"
+        + _xtr("cs_county", cs_county_col, 8) + "\n"
+        + f"        cs_country_source_value = {repr(cs_country_sv)}\n"
+        + "        cs_location_source_value = ' | '.join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n"
+        + "        location_id = location_lookup.get(cs_location_source_value)\n"
         if has_location else
-        "            location_id = None\n"
+        "        location_id = None\n"
     )
 
     name_extraction = (
-        f"            care_site_name = (str(row.get({repr(name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
+        f"        care_site_name = (str(row.get({repr(name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
         if name_col else
-        "            care_site_name = None\n"
+        "        care_site_name = None\n"
     )
 
     pos_sv_extraction = (
-        f"            pos_source_value = (str(row.get({repr(pos_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(pos_col)})) else None\n"
-        f"            place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
+        f"        pos_source_value = (str(row.get({repr(pos_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(pos_col)})) else None\n"
+        f"        place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
         if pos_col else
-        "            pos_source_value = None\n"
-        "            place_of_service_concept_id = None\n"
+        "        pos_source_value = None\n"
+        "        place_of_service_concept_id = None\n"
     )
 
     dedup_block = (
@@ -315,22 +315,19 @@ def _generate_care_site_script(project) -> str:
         "\n"
         + location_block
         + "\n"
-        "    rows = []\n"
-        "    for _, row in df.iterrows():\n"
-        "        try:\n"
+        + "    rows = []\n"
+        + "    for _, row in df.iterrows():\n"
         + cs_extractions
         + name_extraction
-        + "            care_site_source_value = (str(location_id) + ' | ' + care_site_name)[:50] if care_site_name else None\n"
+        + "        care_site_source_value = (str(location_id) + ' | ' + care_site_name)[:50] if care_site_name else None\n"
         + pos_sv_extraction
-        + "            rows.append({\n"
-        + "                'care_site_name': care_site_name[:255] if care_site_name else None,\n"
-        + "                'place_of_service_concept_id': place_of_service_concept_id,\n"
-        + "                'location_id': location_id,\n"
-        + "                'care_site_source_value': care_site_source_value,\n"
-        + "                'place_of_service_source_value': pos_source_value[:50] if pos_source_value else None,\n"
-        + "            })\n"
-        + "        except Exception as e:\n"
-        + "            print(f'WARNING: skipping row — {e}')\n"
+        + "        rows.append({\n"
+        + "            'care_site_name': care_site_name[:255] if care_site_name else None,\n"
+        + "            'place_of_service_concept_id': place_of_service_concept_id,\n"
+        + "            'location_id': location_id,\n"
+        + "            'care_site_source_value': care_site_source_value,\n"
+        + "            'place_of_service_source_value': pos_source_value[:50] if pos_source_value else None,\n"
+        + "        })\n"
         + "\n"
         + "    df_out = pd.DataFrame(rows)\n"
         + dedup_block
@@ -381,65 +378,65 @@ def _generate_provider_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"            raw_cs_name = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
-            "            care_site_id = care_site_lookup.get(raw_cs_name) if raw_cs_name else None\n"
+            f"        raw_cs_name = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
+            "        care_site_id = care_site_lookup.get(raw_cs_name) if raw_cs_name else None\n"
         )
     else:
         care_site_block = "    care_site_lookup = {}\n"
-        cs_lookup_line = "            care_site_id = None\n"
+        cs_lookup_line = "        care_site_id = None\n"
 
     if specialty_col:
         specialty_lines = (
-            f"            specialty_source_value = (str(row.get({repr(specialty_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(specialty_col)})) else None\n"
-            "            specialty_concept_id = specialty_map.get(specialty_source_value, 0) if specialty_source_value else 0\n"
+            f"        specialty_source_value = (str(row.get({repr(specialty_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(specialty_col)})) else None\n"
+            "        specialty_concept_id = specialty_map.get(specialty_source_value, 0) if specialty_source_value else 0\n"
         )
     elif prefix_specialty:
         _sv = prefix_specialty[:50]
         _cid = prefix_specialty_cid if prefix_specialty_cid is not None else 0
         specialty_lines = (
-            f"            specialty_source_value = {repr(_sv)}\n"
-            f"            specialty_concept_id = {_cid}\n"
+            f"        specialty_source_value = {repr(_sv)}\n"
+            f"        specialty_concept_id = {_cid}\n"
         )
     else:
         specialty_lines = (
-            "            specialty_source_value = None\n"
-            "            specialty_concept_id = 0\n"
+            "        specialty_source_value = None\n"
+            "        specialty_concept_id = 0\n"
         )
 
     if gender_col:
         gender_lines = (
-            f"            gender_source_value = (str(row.get({repr(gender_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(gender_col)})) else None\n"
-            "            gender_concept_id = gender_map.get(gender_source_value, gender_default) if gender_source_value else gender_default\n"
+            f"        gender_source_value = (str(row.get({repr(gender_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(gender_col)})) else None\n"
+            "        gender_concept_id = gender_map.get(gender_source_value, gender_default) if gender_source_value else gender_default\n"
         )
     else:
         gender_lines = (
-            "            gender_source_value = None\n"
-            "            gender_concept_id = gender_default\n"
+            "        gender_source_value = None\n"
+            "        gender_concept_id = gender_default\n"
         )
 
     name_line = (
-        f"            provider_name = (str(row.get({repr(name_col)}, '')).strip()[:255] or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
+        f"        provider_name = (str(row.get({repr(name_col)}, '')).strip()[:255] or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
         if name_col else
-        "            provider_name = None\n"
+        "        provider_name = None\n"
     )
     npi_line = (
-        f"            npi = (str(row.get({repr(npi_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(npi_col)})) else None\n"
+        f"        npi = (str(row.get({repr(npi_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(npi_col)})) else None\n"
         if npi_col else
-        "            npi = None\n"
+        "        npi = None\n"
     )
     dea_line = (
-        f"            dea = (str(row.get({repr(dea_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(dea_col)})) else None\n"
+        f"        dea = (str(row.get({repr(dea_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(dea_col)})) else None\n"
         if dea_col else
-        "            dea = None\n"
+        "        dea = None\n"
     )
     yob_lines = (
-        f"            _yob_raw = row.get({repr(yob_col)})\n"
-        "            try:\n"
-        "                year_of_birth = int(_yob_raw) if pd.notnull(_yob_raw) else None\n"
-        "            except (TypeError, ValueError):\n"
-        "                year_of_birth = None\n"
-        if yob_col else
+        f"        _yob_raw = row.get({repr(yob_col)})\n"
+        "        try:\n"
+        "            year_of_birth = int(_yob_raw) if pd.notnull(_yob_raw) else None\n"
+        "        except (TypeError, ValueError):\n"
         "            year_of_birth = None\n"
+        if yob_col else
+        "        year_of_birth = None\n"
     )
 
     return (
@@ -460,8 +457,7 @@ def _generate_provider_script(project) -> str:
         + "\n"
         "    rows = []\n"
         "    seen = set()\n"
-        "    for _, row in df.iterrows():\n"
-        "        try:\n"
+        + "    for _, row in df.iterrows():\n"
         + name_line
         + npi_line
         + dea_line
@@ -469,27 +465,25 @@ def _generate_provider_script(project) -> str:
         + specialty_lines
         + cs_lookup_line
         + gender_lines
-        + "            provider_source_value = (str(care_site_id) + ' | ' + (provider_name or ''))[:50]\n"
-        + "            if provider_source_value in seen:\n"
-        + "                continue\n"
-        + "            seen.add(provider_source_value)\n"
-        + "            rows.append({\n"
-        + "                'provider_id': None,\n"
-        + "                'provider_name': provider_name,\n"
-        + "                'npi': npi,\n"
-        + "                'dea': dea,\n"
-        + "                'specialty_concept_id': specialty_concept_id,\n"
-        + "                'care_site_id': care_site_id,\n"
-        + "                'year_of_birth': year_of_birth,\n"
-        + "                'gender_concept_id': gender_concept_id,\n"
-        + "                'provider_source_value': provider_source_value,\n"
-        + "                'specialty_source_value': specialty_source_value,\n"
-        + "                'specialty_source_concept_id': 0,\n"
-        + "                'gender_source_value': gender_source_value,\n"
-        + "                'gender_source_concept_id': 0,\n"
-        + "            })\n"
-        + "        except Exception as e:\n"
-        + "            print(f'WARNING: skipping row — {e}')\n"
+        + "        provider_source_value = (str(care_site_id) + ' | ' + (provider_name or ''))[:50]\n"
+        + "        if provider_source_value in seen:\n"
+        + "            continue\n"
+        + "        seen.add(provider_source_value)\n"
+        + "        rows.append({\n"
+        + "            'provider_id': None,\n"
+        + "            'provider_name': provider_name,\n"
+        + "            'npi': npi,\n"
+        + "            'dea': dea,\n"
+        + "            'specialty_concept_id': specialty_concept_id,\n"
+        + "            'care_site_id': care_site_id,\n"
+        + "            'year_of_birth': year_of_birth,\n"
+        + "            'gender_concept_id': gender_concept_id,\n"
+        + "            'provider_source_value': provider_source_value,\n"
+        + "            'specialty_source_value': specialty_source_value,\n"
+        + "            'specialty_source_concept_id': 0,\n"
+        + "            'gender_source_value': gender_source_value,\n"
+        + "            'gender_source_concept_id': 0,\n"
+        + "        })\n"
         + "\n"
         + "    df_out = pd.DataFrame(rows)\n"
         + "    df_out['provider_id'] = range(1, len(df_out) + 1)\n"
