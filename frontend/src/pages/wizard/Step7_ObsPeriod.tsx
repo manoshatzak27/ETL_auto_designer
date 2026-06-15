@@ -40,7 +40,7 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
     cfg.period_type_concept_id > 0 ? [cfg.period_type_concept_id] : [],
     'Type Concept',
   )
-  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period'), [project.etl_config])
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period', ['visit_occurrence']), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))

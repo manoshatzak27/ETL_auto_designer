@@ -26,16 +26,18 @@ function collect(obj: unknown, result: Set<string>): void {
 
 /**
  * Returns the set of source columns already mapped in any table config
- * OTHER than `excludeTable`, and always excluding `visit_occurrence`
- * (whose column choices must not propagate to subsequent steps).
+ * OTHER than `excludeTable`. Pass additional table keys in `extraExclude`
+ * to suppress them too (e.g. obs-period passes ['visit_occurrence'] so
+ * visit columns remain available there).
  */
 export function getCrossStepUsedCols(
   etlConfig: Record<string, unknown>,
   excludeTable: string,
+  extraExclude: string[] = [],
 ): Set<string> {
   const result = new Set<string>()
   for (const [table, config] of Object.entries(etlConfig)) {
-    if (table === 'visit_occurrence' || table === excludeTable) continue
+    if (table === excludeTable || extraExclude.includes(table)) continue
     for (const col of extractMappedCols(config)) result.add(col)
   }
   return result
