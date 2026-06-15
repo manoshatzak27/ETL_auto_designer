@@ -251,14 +251,40 @@ export default function Step3Visit({ project, onUpdate }: Props) {
               <code className="bg-muted px-1 rounded">person_id — filename — visit_value</code>.
               One visit occurrence is created per row; the label comes from the column, not the text field below.
             </p>
-            <FieldMapper
-              label="Visit identifier column"
-              sourceColumns={cols}
-              value={cfg.visit_source_col ?? ''}
-              onChange={v => setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))}
-              required
-              hint="Column whose values identify the visit type (e.g. 'baseline', 'followup')."
-            />
+            <div className="flex items-start gap-2 rounded-md border border-muted bg-muted/40 p-3">
+              <input
+                type="checkbox"
+                id="auto-number-visits"
+                checked={cfg.auto_number_visits ?? false}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                  setCfg(prev => ({
+                    ...prev,
+                    auto_number_visits: e.target.checked,
+                    visit_source_col: e.target.checked ? undefined : prev.visit_source_col,
+                  }))
+                }
+                className="mt-0.5 h-4 w-4 cursor-pointer accent-primary"
+              />
+              <div className="flex flex-col gap-0.5">
+                <label htmlFor="auto-number-visits" className="text-sm font-medium cursor-pointer leading-none">
+                  Auto-number visits
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  Each row for the same patient will be labelled{' '}
+                  <code className="bg-muted px-1 rounded">visit1</code>,{' '}
+                  <code className="bg-muted px-1 rounded">visit2</code>, … in order of appearance.
+                </p>
+              </div>
+            </div>
+            {!cfg.auto_number_visits && (
+              <FieldMapper
+                label="Visit identifier column"
+                sourceColumns={cols}
+                value={cfg.visit_source_col ?? ''}
+                onChange={v => setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))}
+                hint="Column whose values identify the visit type (e.g. 'baseline', 'followup')."
+              />
+            )}
           </Card>
         )}
 
@@ -278,7 +304,9 @@ export default function Step3Visit({ project, onUpdate }: Props) {
             <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
               {/* Visit header */}
               <div className="flex items-center justify-between">
-                <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">Visit {i + 1}</p>
+                <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">
+                  {isMultiRow ? 'Visit Template' : `Visit ${i + 1}`}
+                </p>
                 {cfg.visit_definitions.length > 1 && (
                   <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive">
                     <Trash2 className="w-4 h-4" />

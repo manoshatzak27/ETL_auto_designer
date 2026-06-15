@@ -111,6 +111,7 @@ export interface VisitOccurrenceConfig {
   enabled: boolean
   visit_definitions: VisitDefinition[]
   visit_source_col?: string
+  auto_number_visits?: boolean
 }
 
 export interface ObservationPeriodConfig {

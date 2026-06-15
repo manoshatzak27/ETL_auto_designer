@@ -1048,6 +1048,7 @@ def _generate_visit_occurrence_script(project) -> str:
     visit_defs = visit_cfg.get("visit_definitions", [])
     vd_repr = repr(visit_defs)
     visit_source_col = visit_cfg.get("visit_source_col", "")
+    auto_number_visits = bool(visit_cfg.get("auto_number_visits", False))
 
     # person_source_value in visit_occurrence must match what person.csv stores —
     # which is always str(_pid_raw) with no type casting.
@@ -1132,8 +1133,9 @@ def _generate_visit_occurrence_script(project) -> str:
         "\n"
         f"VISIT_DEFS      = {vd_repr}  # visit definitions from Step 5\n"
         "\n"
-        f"SOURCE_STEM     = {repr(source_stem)}\n"
+        f"SOURCE_STEM      = {repr(source_stem)}\n"
         f"VISIT_SOURCE_COL = {repr(visit_source_col)}  # column that carries visit label (multi-row mode)\n"
+        f"AUTO_NUMBER_VISITS = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
         "\n"
         "\n"
         "def main():\n"
@@ -1162,6 +1164,7 @@ def _generate_visit_occurrence_script(project) -> str:
         + "    # --- Process rows ---\n"
         + "    visit_id_counter = 1\n"
         + "    rows = []\n"
+        + "    _visit_counters = {}  # person_source_value -> int, used for auto-numbering\n"
         + "\n"
         + "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
         + "        try:\n"
@@ -1259,6 +1262,9 @@ def _generate_visit_occurrence_script(project) -> str:
         "                        if not _vsv_raw or _vsv_raw == 'nan':\n"
         "                            continue\n"
         "                        label_norm = _vsv_raw.lower().replace(' ', '_')\n"
+        "                    elif AUTO_NUMBER_VISITS:\n"
+        "                        _visit_counters[person_source_value] = _visit_counters.get(person_source_value, 0) + 1\n"
+        "                        label_norm = f'visit{_visit_counters[person_source_value]}'\n"
         "                    else:\n"
         "                        label_norm = vd['label'].lower().replace(' ', '_')\n"
         "                    visit_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
@@ -1765,6 +1771,7 @@ def _generate_stem_table_script(project) -> str:
 
     visit_defs = visit_cfg.get("visit_definitions", [])
     visit_source_col = visit_cfg.get("visit_source_col", "")
+    auto_number_visits = bool(visit_cfg.get("auto_number_visits", False))
     visit_date_info = {
         vd["label"]: {
             "date_col": vd.get("date_col", ""),
@@ -1836,6 +1843,7 @@ def _generate_stem_table_script(project) -> str:
         "# --- Module-level constants ---\n"
         f"SOURCE_STEM          = {repr(source_stem)}\n"
         f"VISIT_SOURCE_COL     = {repr(visit_source_col)}   # column that carries visit label (multi-row mode)\n"
+        f"AUTO_NUMBER_VISITS   = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
         f"DEFAULT_DATE_COL     = {repr(default_date_col)}\n"
         f"DEFAULT_DATE_FORMAT  = {repr(default_date_format)}\n"
         "\n"
@@ -1968,6 +1976,7 @@ def _generate_stem_table_script(project) -> str:
         "    # --- Process rows ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
+        "    _stem_visit_counters = {}  # person_source_value -> int, for auto-numbering\n"
         "\n"
         "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
         "        try:\n"
@@ -1979,6 +1988,22 @@ def _generate_stem_table_script(project) -> str:
         "                print(f'WARNING: skipping row {_src_idx} — person \"{person_source_value}\" not found in person.csv')\n"
         "                continue\n"
         "\n"
+        "            # Determine the visit label for this entire row (once, outside the variable loop)\n"
+        "            if VISIT_SOURCE_COL:\n"
+        "                _row_vsv_raw = str(row.get(VISIT_SOURCE_COL, '')).strip()\n"
+        "                _row_visit_label = _row_vsv_raw if (_row_vsv_raw and _row_vsv_raw != 'nan') else None\n"
+        "                _row_date_col = DEFAULT_DATE_COL\n"
+        "                _row_date_fmt = DEFAULT_DATE_FORMAT\n"
+        "            elif AUTO_NUMBER_VISITS:\n"
+        "                _stem_visit_counters[person_source_value] = _stem_visit_counters.get(person_source_value, 0) + 1\n"
+        "                _row_visit_label = f'visit{_stem_visit_counters[person_source_value]}'\n"
+        "                _row_date_col = DEFAULT_DATE_COL\n"
+        "                _row_date_fmt = DEFAULT_DATE_FORMAT\n"
+        "            else:\n"
+        "                _row_visit_label = None  # resolved per-variable below\n"
+        "                _row_date_col = None\n"
+        "                _row_date_fmt = None\n"
+        "\n"
         "            # Iterate over each clinical variable in this row\n"
         "            for variable in df.columns:\n"
         "                try:\n"
@@ -1988,14 +2013,12 @@ def _generate_stem_table_script(project) -> str:
         "                    # death_date, gender, …) are absent from STEM_VARIABLES.\n"
         "                    if _lc not in STEM_VARIABLES:\n"
         "                        continue\n"
-        "                    if VISIT_SOURCE_COL:\n"
-        "                        # Multi-row mode: visit label comes from the row's visit column.\n"
-        "                        _vsv_raw = str(row.get(VISIT_SOURCE_COL, '')).strip()\n"
-        "                        if not _vsv_raw or _vsv_raw == 'nan':\n"
+        "                    if VISIT_SOURCE_COL or AUTO_NUMBER_VISITS:\n"
+        "                        if not _row_visit_label:\n"
         "                            continue\n"
-        "                        visit_label = _vsv_raw\n"
-        "                        date_col = DEFAULT_DATE_COL\n"
-        "                        date_fmt = DEFAULT_DATE_FORMAT\n"
+        "                        visit_label = _row_visit_label\n"
+        "                        date_col = _row_date_col\n"
+        "                        date_fmt = _row_date_fmt\n"
         "                    else:\n"
         "                        visit_label = VARIABLE_VISIT_MAP.get(_lc)\n"
         "                        if visit_label is None:\n"
