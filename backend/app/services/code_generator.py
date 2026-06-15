@@ -77,7 +77,8 @@ def _xtr_v(var: str, col: str, indent: int = 8) -> str:
         return f"{pad}{var} = None"
     c = repr(col)
     return (
-        f"{pad}{var} = (str(row.get({c}, '')).strip() or None) if pd.notnull(row.get({c})) else None\n"
+        f"{pad}_raw = row.get({c})\n"
+        f"{pad}{var} = (str(_raw).strip() or None) if pd.notnull(_raw) else None\n"
         f"{pad}if {var} is None:\n"
         f'{pad}    _info(f"INFO: column {col!r} is empty for this row")'
     )
@@ -143,6 +144,7 @@ def _generate_location_script(project) -> str:
         "\n"
         "\n"
         "def _to_lat(val):\n"
+        "    \"\"\"Cast val to float and validate it as a latitude in [-90, 90]. Returns None on failure.\"\"\"\n"
         "    try:\n"
         "        f = float(val)\n"
         "        if -90 <= f <= 90:\n"
@@ -153,6 +155,7 @@ def _generate_location_script(project) -> str:
         "        return None\n"
         "\n"
         "def _to_lon(val):\n"
+        "    \"\"\"Cast val to float and validate it as a longitude in [-180, 180]. Returns None on failure.\"\"\"\n"
         "    try:\n"
         "        f = float(val)\n"
         "        if -180 <= f <= 180:\n"
@@ -378,7 +381,8 @@ def _generate_care_site_script(project) -> str:
     )
 
     name_extraction = (
-        f"        care_site_name = (str(row.get({repr(name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
+        f"        _raw = row.get({repr(name_col)})\n"
+        f"        care_site_name = (str(_raw).strip() or None) if pd.notnull(_raw) else None\n"
         f"        if care_site_name is None:\n"
         f'            _info(f"INFO: care_site_name column {repr(name_col)} is empty for this row")\n'
         if name_col else
@@ -386,7 +390,8 @@ def _generate_care_site_script(project) -> str:
     )
 
     pos_sv_extraction = (
-        f"        pos_source_value = (str(row.get({repr(pos_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(pos_col)})) else None\n"
+        f"        _raw = row.get({repr(pos_col)})\n"
+        f"        pos_source_value = (str(_raw).strip()[:50] or None) if pd.notnull(_raw) else None\n"
         f"        place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
         "        if pos_source_value is None:\n"
         f'            _info(f"INFO: place_of_service column {repr(pos_col)} is empty for this row")\n'
@@ -397,13 +402,14 @@ def _generate_care_site_script(project) -> str:
         "        place_of_service_concept_id = None\n"
     )
 
-    dedup_block = (
-        "    if not df_out.empty:\n"
-        "        df_out['_name_norm'] = df_out['care_site_name'].str.strip().str.lower()\n"
-        "        df_out = df_out.drop_duplicates(subset=['_name_norm'], keep='first')\n"
-        "        df_out = df_out.drop(columns=['_name_norm'])\n"
-        if name_col else
-        ""
+    seen_set_init = "    _seen_source_values = set()\n"
+
+    dedup_check = (
+        "        if care_site_source_value is None:\n"
+        "            continue\n"
+        "        if care_site_source_value in _seen_source_values:\n"
+        "            continue\n"
+        "        _seen_source_values.add(care_site_source_value)\n"
     )
 
     return (
@@ -421,14 +427,14 @@ def _generate_care_site_script(project) -> str:
         "\n"
         "\n"
         "def main():\n"
+        "    # Load environmental variables\n"
         "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
         f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
         "\n"
-        "    # --- Configuration ---\n"
-        f"    care_site_name_col = {repr(name_col)}\n"
+        "    # --- Place of Service concept maps ---\n"
         f"    pos_value_map      = {json.dumps(pos_value_map)}\n"
         "\n"
         "    # --- Load lookup tables ---\n"
@@ -436,6 +442,7 @@ def _generate_care_site_script(project) -> str:
         + "\n"
         + "    # --- Process rows ---\n"
         + "    rows = []\n"
+        + seen_set_init
         + "\n"
         + "    for _, row in df.iterrows():\n"
         + "\n"
@@ -449,6 +456,7 @@ def _generate_care_site_script(project) -> str:
         + "        # Place of service\n"
         + pos_sv_extraction
         + "\n"
+        + dedup_check
         + "        rows.append({\n"
         + "            'care_site_name':                care_site_name[:255] if care_site_name else None,\n"
         + "            'place_of_service_concept_id':   place_of_service_concept_id,\n"
@@ -459,7 +467,6 @@ def _generate_care_site_script(project) -> str:
         + "\n"
         + "    # --- Build output DataFrame ---\n"
         + "    df_out = pd.DataFrame(rows)\n"
-        + dedup_block
         + "    df_out = df_out.reset_index(drop=True)\n"
         + "    df_out['care_site_id'] = df_out.index + 1\n"
         + "\n"
@@ -508,7 +515,8 @@ def _generate_provider_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"        raw_cs_name = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
+            f"        _raw_cs = row.get({repr(cs_name_col)})\n"
+            f"        raw_cs_name = (str(_raw_cs).strip() or None) if pd.notnull(_raw_cs) else None\n"
             "        care_site_id = care_site_lookup.get(raw_cs_name) if raw_cs_name else None\n"
             "        if raw_cs_name and care_site_id is None:\n"
             "            _info(f'INFO: provider row — care_site {raw_cs_name!r} not found in care_site.csv; care_site_id set to NULL')\n"
@@ -519,7 +527,8 @@ def _generate_provider_script(project) -> str:
 
     if specialty_col:
         specialty_lines = (
-            f"        specialty_source_value = (str(row.get({repr(specialty_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(specialty_col)})) else None\n"
+            f"        _raw_spec = row.get({repr(specialty_col)})\n"
+            f"        specialty_source_value = (str(_raw_spec).strip()[:50] or None) if pd.notnull(_raw_spec) else None\n"
             "        if specialty_source_value is None:\n"
             f'            _info(f"INFO: provider row — specialty column {repr(specialty_col)} is empty; specialty_concept_id set to 0")\n'
             "            specialty_concept_id = 0\n"
@@ -544,7 +553,8 @@ def _generate_provider_script(project) -> str:
 
     if gender_col:
         gender_lines = (
-            f"        gender_source_value = (str(row.get({repr(gender_col)}, '')).strip()[:50] or None) if pd.notnull(row.get({repr(gender_col)})) else None\n"
+            f"        _raw_gender = row.get({repr(gender_col)})\n"
+            f"        gender_source_value = (str(_raw_gender).strip()[:50] or None) if pd.notnull(_raw_gender) else None\n"
             "        if gender_source_value is None:\n"
             "            _info(f'INFO: provider row — gender column is empty; gender_concept_id set to {gender_default}')\n"
             "            gender_concept_id = gender_default\n"
@@ -561,27 +571,26 @@ def _generate_provider_script(project) -> str:
         )
 
     name_line = (
-        f"        provider_name = (str(row.get({repr(name_col)}, '')).strip()[:255] or None) if pd.notnull(row.get({repr(name_col)})) else None\n"
+        f"        _raw_name = row.get({repr(name_col)})\n"
+        f"        provider_name = (str(_raw_name).strip()[:255] or None) if pd.notnull(_raw_name) else None\n"
         if name_col else
         "        provider_name = None\n"
     )
     npi_line = (
-        f"        npi = (str(row.get({repr(npi_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(npi_col)})) else None\n"
+        f"        _raw_npi = row.get({repr(npi_col)})\n"
+        f"        npi = (str(_raw_npi).strip()[:20] or None) if pd.notnull(_raw_npi) else None\n"
         if npi_col else
         "        npi = None\n"
     )
     dea_line = (
-        f"        dea = (str(row.get({repr(dea_col)}, '')).strip()[:20] or None) if pd.notnull(row.get({repr(dea_col)})) else None\n"
+        f"        _raw_dea = row.get({repr(dea_col)})\n"
+        f"        dea = (str(_raw_dea).strip()[:20] or None) if pd.notnull(_raw_dea) else None\n"
         if dea_col else
         "        dea = None\n"
     )
     yob_lines = (
         f"        _yob_raw = row.get({repr(yob_col)})\n"
-        "        try:\n"
-        "            year_of_birth = int(_yob_raw) if pd.notnull(_yob_raw) else None\n"
-        "        except (TypeError, ValueError):\n"
-        "            _info(f'INFO: provider row — year_of_birth value {_yob_raw!r} could not be parsed as int; year_of_birth set to NULL')\n"
-        "            year_of_birth = None\n"
+        "        year_of_birth = _parse_year_of_birth(_yob_raw)\n"
         if yob_col else
         "        year_of_birth = None\n"
     )
@@ -600,15 +609,25 @@ def _generate_provider_script(project) -> str:
         "        print(msg)\n"
         "\n"
         "\n"
+        "def _parse_year_of_birth(val):\n"
+        "    try:\n"
+        "        return int(val) if pd.notnull(val) else None\n"
+        "    except (TypeError, ValueError):\n"
+        "        _info(f'INFO: provider row — year_of_birth value {val!r} could not be parsed as int; year_of_birth set to NULL')\n"
+        "        return None\n"
+        "\n"
+        "\n"
         "def main():\n"
+        "    # Load environmental variables\n"
         "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
         f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
         "\n"
-        "    # --- Configuration ---\n"
+        "    # --- specialty_map ---\n"
         f"    specialty_map  = {json.dumps(specialty_map)}\n"
+        "    # --- gender_map ---\n"
         f"    gender_map     = {json.dumps(gender_map)}\n"
         f"    gender_default = {gender_default}\n"
         "\n"
