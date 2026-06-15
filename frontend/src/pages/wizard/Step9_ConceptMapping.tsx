@@ -787,12 +787,30 @@ function ValueMappingTable({
     onChange(next)
   }
 
+  const mixedDomains = (() => {
+    const ids = Object.values(mapped)
+      .map(c => c.domain_id)
+      .filter((id): id is number => id !== undefined && id !== null)
+    const unique = [...new Set(ids)]
+    if (unique.length < 2) return null
+    return unique.map(id => DOMAIN_OPTIONS.find(d => d.value === id)?.label ?? `Domain ${id}`)
+  })()
+
   return (
     <div className="flex flex-col gap-2">
       {values.length > 10 && (
         <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
           {values.length} distinct values — map each one below
+        </div>
+      )}
+      {mixedDomains && (
+        <div className="flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>
+            <span className="font-semibold">Mixed domains detected:</span> values are mapped to{' '}
+            {mixedDomains.join(' and ')}. All values for a single variable should map to the same domain.
+          </span>
         </div>
       )}
       <div className="border border-border rounded-lg overflow-hidden">
