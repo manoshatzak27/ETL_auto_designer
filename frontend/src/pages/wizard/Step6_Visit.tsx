@@ -279,7 +279,7 @@ export default function Step3Visit({ project, onUpdate }: Props) {
             {!cfg.auto_number_visits && (
               <FieldMapper
                 label="Visit identifier column"
-                sourceColumns={cols}
+                sourceColumns={availCols(cfg.visit_source_col ?? '')}
                 value={cfg.visit_source_col ?? ''}
                 onChange={v => setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))}
                 hint="Column whose values identify the visit type (e.g. 'baseline', 'followup')."
