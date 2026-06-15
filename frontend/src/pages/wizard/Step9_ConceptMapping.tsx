@@ -400,12 +400,24 @@ function ConceptPicker({
     const id = parseInt(manualId)
     if (isNaN(id) || id < 1) return
     setIdLocked(true)
-    if (manualName.trim()) return  // name already typed — nothing to auto-fill
+    if (manualName.trim()) {
+      onSelect({ concept_id: id, concept_name: manualName.trim() })
+      setManualId(''); setManualName(''); setIdLocked(false)
+      return
+    }
     setLookingUpName(true)
     lookupConceptDomain(id)
-      .then(res => { if (res.concept_name) setManualName(res.concept_name) })
-      .catch(() => {})
-      .finally(() => setLookingUpName(false))
+      .then(res => {
+        const name = res.concept_name || `Concept ${id}`
+        onSelect({ concept_id: id, concept_name: name })
+      })
+      .catch(() => {
+        onSelect({ concept_id: id, concept_name: `Concept ${id}` })
+      })
+      .finally(() => {
+        setLookingUpName(false)
+        setManualId(''); setManualName(''); setIdLocked(false)
+      })
   }
 
   const unlockId = () => { setIdLocked(false) }
@@ -429,7 +441,7 @@ function ConceptPicker({
       ? 'border border-purple-200 bg-purple-50 text-purple-800'
       : 'border border-green-200 bg-green-50 text-green-800'
     const clearId = () => { setIdLocked(false); setManualId(''); setManualName(''); onClear() }
-    const clearName = () => { setManualId(String(value.concept_id)); setIdLocked(true); setManualName(''); onClear() }
+    const clearName = () => { setEditingName('') }
     return (
       <div className="flex items-center gap-1.5 w-full">
         {/* Locked ID chip with X — clears only ID, preserves name */}
@@ -451,7 +463,12 @@ function ConceptPicker({
           onBlur={commitEditingName}
           onKeyDown={e => e.key === 'Enter' && commitEditingName()}
           placeholder="Name"
-          className={clsx('px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 focus:ring-green-300 w-40', lockedCls)}
+          className={clsx(
+            'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 w-40',
+            editingName.trim()
+              ? clsx(lockedCls, 'focus:ring-green-300')
+              : 'border-gray-300 bg-white text-gray-500 focus:ring-gray-300',
+          )}
         />
         <button onClick={clearName} className="text-muted-foreground hover:text-destructive flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
       </div>
