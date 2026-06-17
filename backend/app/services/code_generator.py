@@ -386,7 +386,7 @@ def _generate_care_site_script(project) -> str:
         f"        if care_site_name is None:\n"
         f'            _info(f"INFO: care_site_name column {repr(name_col)} is empty for this row")\n'
         if name_col else
-        "        care_site_name = None\n"
+        _xtr_doc("care_site_name", "", 8) + "\n"
     )
 
     pos_sv_extraction = (
@@ -398,7 +398,7 @@ def _generate_care_site_script(project) -> str:
         "        elif place_of_service_concept_id is None:\n"
         "            _info(f'INFO: place_of_service value {pos_source_value!r} not in map; place_of_service_concept_id set to NULL')\n"
         if pos_col else
-        "        pos_source_value = None\n"
+        _xtr_doc("pos_source_value", "", 8) + "\n"
         "        place_of_service_concept_id = None\n"
     )
 
@@ -522,7 +522,7 @@ def _generate_provider_script(project) -> str:
         )
     else:
         care_site_block = "    care_site_lookup = {}\n"
-        cs_lookup_line = "        care_site_id = None\n"
+        cs_lookup_line = _xtr_doc("care_site_id", "", 8) + "\n"
 
     if specialty_col:
         specialty_lines = (
@@ -546,7 +546,7 @@ def _generate_provider_script(project) -> str:
         )
     else:
         specialty_lines = (
-            "        specialty_source_value = None\n"
+            _xtr_doc("specialty_source_value", "", 8) + "\n"
             "        specialty_concept_id = 0\n"
         )
 
@@ -565,7 +565,7 @@ def _generate_provider_script(project) -> str:
         )
     else:
         gender_lines = (
-            "        gender_source_value = None\n"
+            _xtr_doc("gender_source_value", "", 8) + "\n"
             "        gender_concept_id = gender_default\n"
         )
 
@@ -573,25 +573,25 @@ def _generate_provider_script(project) -> str:
         f"        _raw_name = row.get({repr(name_col)})\n"
         f"        provider_name = (str(_raw_name).strip()[:255] or None) if pd.notnull(_raw_name) else None\n"
         if name_col else
-        "        provider_name = None\n"
+        _xtr_doc("provider_name", "", 8) + "\n"
     )
     npi_line = (
         f"        _raw_npi = row.get({repr(npi_col)})\n"
         f"        npi = (str(_raw_npi).strip()[:20] or None) if pd.notnull(_raw_npi) else None\n"
         if npi_col else
-        "        npi = None\n"
+        _xtr_doc("npi", "", 8) + "\n"
     )
     dea_line = (
         f"        _raw_dea = row.get({repr(dea_col)})\n"
         f"        dea = (str(_raw_dea).strip()[:20] or None) if pd.notnull(_raw_dea) else None\n"
         if dea_col else
-        "        dea = None\n"
+        _xtr_doc("dea", "", 8) + "\n"
     )
     yob_lines = (
         f"        _yob_raw = row.get({repr(yob_col)})\n"
         "        year_of_birth = _parse_year_of_birth(_yob_raw)\n"
         if yob_col else
-        "        year_of_birth = None\n"
+        _xtr_doc("year_of_birth", "", 8) + "\n"
     )
 
     return (
@@ -834,7 +834,7 @@ def _generate_person_script(project) -> str:
         )
     else:
         gender_lines = (
-            "            gender_source_value = None\n"
+            _xtr_doc("gender_source_value", "", 12) + "\n"
             f"            gender_concept_id = {gender_default}\n"
         )
 
@@ -859,7 +859,7 @@ def _generate_person_script(project) -> str:
     else:
         race_lines = (
             f"            race_concept_id = {race_default}\n"
-            "            race_source_value = None\n"
+            + _xtr_doc("race_source_value", "", 12) + "\n"
         )
 
     if eth_mode == "column":
@@ -883,7 +883,7 @@ def _generate_person_script(project) -> str:
     else:
         eth_lines = (
             f"            ethnicity_concept_id = {eth_default}\n"
-            "            ethnicity_source_value = None\n"
+            + _xtr_doc("ethnicity_source_value", "", 12) + "\n"
         )
 
     if has_location:
@@ -912,7 +912,7 @@ def _generate_person_script(project) -> str:
         )
     else:
         location_setup = "    location_lookup = {}\n"
-        loc_lookup_lines = "            location_id = None\n"
+        loc_lookup_lines = _xtr_doc("location_id", "", 12) + "\n"
 
     if cs_name_col:
         cs_setup = (
@@ -934,7 +934,7 @@ def _generate_person_script(project) -> str:
         )
     else:
         cs_setup = "    care_site_lookup = {}\n"
-        cs_lookup_line = "            care_site_id = None\n"
+        cs_lookup_line = _xtr_doc("care_site_id", "", 12) + "\n"
 
     if prov_name_col:
         prov_setup = (
@@ -956,7 +956,7 @@ def _generate_person_script(project) -> str:
         )
     else:
         prov_setup = "    provider_lookup = {}\n"
-        prov_lookup_line = "            provider_id = None\n"
+        prov_lookup_line = _xtr_doc("provider_id", "", 12) + "\n"
 
     gender_maps = (
         "    # --- gender concept maps ---\n"
@@ -1135,7 +1135,7 @@ def _generate_visit_occurrence_script(project) -> str:
         )
     else:
         cs_setup = "    care_site_lookup = {}\n"
-        cs_lookup_line = "            care_site_id = None\n"
+        cs_lookup_line = _xtr_doc("care_site_id", "", 12) + "\n"
 
     if prov_name_col:
         prov_setup = (
@@ -1158,7 +1158,7 @@ def _generate_visit_occurrence_script(project) -> str:
         )
     else:
         prov_setup = "    provider_lookup = {}\n"
-        prov_lookup_line = "            provider_id = None\n"
+        prov_lookup_line = _xtr_doc("provider_id", "", 12) + "\n"
 
     return (
         "import os\n"
@@ -1623,7 +1623,7 @@ def _generate_death_script(project) -> str:
     else:
         date_lines = (
             "            _dd_dt = None\n"
-            "            death_date = None\n"
+            + _xtr_doc("death_date", "", 12) + "\n"
         )
 
     if death_dt_col:
@@ -1656,7 +1656,7 @@ def _generate_death_script(project) -> str:
             "            cause_source_value = (str(_csv_raw).strip()[:50] or None) if pd.notnull(_csv_raw) else None\n"
         )
     else:
-        cause_sv_lines = "            cause_source_value = None\n"
+        cause_sv_lines = _xtr_doc("cause_source_value", "", 12) + "\n"
 
     return (
         "import os\n"
