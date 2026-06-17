@@ -209,8 +209,7 @@ def _generate_location_script(project) -> str:
         + _xtr_doc("longitude", lon_col) + "\n\n"
         + (
             "        # country: Extract and map to OMOP concept ID\n"
-            + "        val = row.get(" + repr(country_col) + ")\n"
-            + "        country_source_value = (str(val).strip() or None) if pd.notnull(val) else None\n"
+            + _xtr("country_source_value", country_col, 8) + "\n"
             + "        if country_source_value:\n"
             + "            # Look up concept ID from mapping dictionary\n"
             + "            _cid = country_concept_id_map.get(country_source_value)\n"
@@ -268,8 +267,7 @@ def _generate_location_script(project) -> str:
         + _xtr_doc("cs_longitude", cs_lon_col) + "\n\n"
         + (
             "        # country: Extract and map to OMOP concept ID\n"
-            + "        val = row.get(" + repr(cs_country_col) + ")\n"
-            + "        cs_country_source_value = (str(val).strip() or None) if pd.notnull(val) else None\n"
+            + _xtr("cs_country_source_value", cs_country_col, 8) + "\n"
             + "        if cs_country_source_value:\n"
             + "            # Look up concept ID from mapping dictionary\n"
             + "            _cs_cid = cs_country_concept_id_map.get(cs_country_source_value)\n"
@@ -380,26 +378,16 @@ def _generate_care_site_script(project) -> str:
         "        location_id = None\n"
     )
 
-    name_extraction = (
-        f"        _raw = row.get({repr(name_col)})\n"
-        f"        care_site_name = (str(_raw).strip() or None) if pd.notnull(_raw) else None\n"
-        f"        if care_site_name is None:\n"
-        f'            _info(f"INFO: care_site_name column {repr(name_col)} is empty for this row")\n'
-        if name_col else
-        _xtr_doc("care_site_name", "", 8) + "\n"
-    )
+    name_extraction = _xtr_v("care_site_name", name_col, 8) + "\n"
 
     pos_sv_extraction = (
-        f"        _raw = row.get({repr(pos_col)})\n"
-        f"        pos_source_value = (str(_raw).strip()[:50] or None) if pd.notnull(_raw) else None\n"
-        f"        place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
-        "        if pos_source_value is None:\n"
-        f'            _info(f"INFO: place_of_service column {repr(pos_col)} is empty for this row")\n'
-        "        elif place_of_service_concept_id is None:\n"
-        "            _info(f'INFO: place_of_service value {pos_source_value!r} not in map; place_of_service_concept_id set to NULL')\n"
+        _xtr_v("pos_source_value", pos_col, 8) + "\n"
+        + "        place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
+        + "        if place_of_service_concept_id is None and pos_source_value is not None:\n"
+        + "            _info(f'INFO: place_of_service value {pos_source_value!r} not in map; place_of_service_concept_id set to NULL')\n"
         if pos_col else
         _xtr_doc("pos_source_value", "", 8) + "\n"
-        "        place_of_service_concept_id = None\n"
+        + "        place_of_service_concept_id = None\n"
     )
 
     seen_set_init = "    _seen_source_values = set()\n"
@@ -514,8 +502,7 @@ def _generate_provider_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"        _raw_cs = row.get({repr(cs_name_col)})\n"
-            f"        raw_cs_name = (str(_raw_cs).strip() or None) if pd.notnull(_raw_cs) else None\n"
+            _xtr("raw_cs_name", cs_name_col, 8) + "\n"
             "        care_site_id = care_site_lookup.get(raw_cs_name) if raw_cs_name else None\n"
             "        if raw_cs_name and care_site_id is None:\n"
             "            _info(f'INFO: provider row — care_site {raw_cs_name!r} not found in care_site.csv; care_site_id set to NULL')\n"
@@ -526,8 +513,7 @@ def _generate_provider_script(project) -> str:
 
     if specialty_col:
         specialty_lines = (
-            f"        _raw_spec = row.get({repr(specialty_col)})\n"
-            f"        specialty_source_value = (str(_raw_spec).strip()[:50] or None) if pd.notnull(_raw_spec) else None\n"
+            _xtr("specialty_source_value", specialty_col, 8) + "\n"
             "        if specialty_source_value is None:\n"
             f'            _info(f"INFO: provider row — specialty column {repr(specialty_col)} is empty; specialty_concept_id set to 0")\n'
             "            specialty_concept_id = 0\n"
@@ -552,8 +538,7 @@ def _generate_provider_script(project) -> str:
 
     if gender_col:
         gender_lines = (
-            f"        _raw_gender = row.get({repr(gender_col)})\n"
-            f"        gender_source_value = (str(_raw_gender).strip()[:50] or None) if pd.notnull(_raw_gender) else None\n"
+            _xtr("gender_source_value", gender_col, 8) + "\n"
             "        if gender_source_value is None:\n"
             "            _info(f'INFO: provider row — gender column is empty; gender_concept_id set to {gender_default}')\n"
             "            gender_concept_id = gender_default\n"
@@ -569,24 +554,9 @@ def _generate_provider_script(project) -> str:
             "        gender_concept_id = gender_default\n"
         )
 
-    name_line = (
-        f"        _raw_name = row.get({repr(name_col)})\n"
-        f"        provider_name = (str(_raw_name).strip()[:255] or None) if pd.notnull(_raw_name) else None\n"
-        if name_col else
-        _xtr_doc("provider_name", "", 8) + "\n"
-    )
-    npi_line = (
-        f"        _raw_npi = row.get({repr(npi_col)})\n"
-        f"        npi = (str(_raw_npi).strip()[:20] or None) if pd.notnull(_raw_npi) else None\n"
-        if npi_col else
-        _xtr_doc("npi", "", 8) + "\n"
-    )
-    dea_line = (
-        f"        _raw_dea = row.get({repr(dea_col)})\n"
-        f"        dea = (str(_raw_dea).strip()[:20] or None) if pd.notnull(_raw_dea) else None\n"
-        if dea_col else
-        _xtr_doc("dea", "", 8) + "\n"
-    )
+    name_line = _xtr_doc("provider_name", name_col, 8) + "\n"
+    npi_line  = _xtr_doc("npi", npi_col, 8) + "\n"
+    dea_line  = _xtr_doc("dea", dea_col, 8) + "\n"
     yob_lines = (
         f"        _yob_raw = row.get({repr(yob_col)})\n"
         "        year_of_birth = _parse_year_of_birth(_yob_raw)\n"
@@ -660,17 +630,17 @@ def _generate_provider_script(project) -> str:
         + "\n"
         + "        rows.append({\n"
         + "            'provider_id':               None,\n"
-        + "            'provider_name':             provider_name,\n"
-        + "            'npi':                       npi,\n"
-        + "            'dea':                       dea,\n"
+        + "            'provider_name':             provider_name[:255] if provider_name else None,\n"
+        + "            'npi':                       npi[:20] if npi else None,\n"
+        + "            'dea':                       dea[:20] if dea else None,\n"
         + "            'specialty_concept_id':      specialty_concept_id,\n"
         + "            'care_site_id':              care_site_id,\n"
         + "            'year_of_birth':             year_of_birth,\n"
         + "            'gender_concept_id':         gender_concept_id,\n"
         + "            'provider_source_value':     provider_source_value,\n"
-        + "            'specialty_source_value':    specialty_source_value,\n"
+        + "            'specialty_source_value':    specialty_source_value[:50] if specialty_source_value else None,\n"
         + "            'specialty_source_concept_id': 0,\n"
-        + "            'gender_source_value':       gender_source_value,\n"
+        + "            'gender_source_value':       gender_source_value[:50] if gender_source_value else None,\n"
         + "            'gender_source_concept_id':  0,\n"
         + "        })\n"
         + "\n"
@@ -821,8 +791,7 @@ def _generate_person_script(project) -> str:
 
     if gender_col:
         gender_lines = (
-            f"            _gender_raw = row.get({repr(gender_col)})\n"
-            f"            gender_source_value = (str(_gender_raw).strip() or None) if pd.notnull(_gender_raw) else None\n"
+            _xtr("gender_source_value", gender_col, 12) + "\n"
             "            if gender_source_value is None:\n"
             "                _info(f'INFO: person {person_source_value} — gender column is empty; gender_concept_id set to {gender_default}')\n"
             "                gender_concept_id = gender_default\n"
@@ -840,8 +809,7 @@ def _generate_person_script(project) -> str:
 
     if race_mode == "column":
         race_lines = (
-            f"            _race_raw = row.get({repr(race_col)})\n"
-            f"            race_source_value = (str(_race_raw).strip() or None) if pd.notnull(_race_raw) else None\n"
+            _xtr("race_source_value", race_col, 12) + "\n"
             "            if race_source_value is None:\n"
             "                _info(f'INFO: person {person_source_value} — race column is empty; race_concept_id set to {race_default}')\n"
             "                race_concept_id = race_default\n"
@@ -864,8 +832,7 @@ def _generate_person_script(project) -> str:
 
     if eth_mode == "column":
         eth_lines = (
-            f"            _eth_raw = row.get({repr(eth_col)})\n"
-            f"            ethnicity_source_value = (str(_eth_raw).strip() or None) if pd.notnull(_eth_raw) else None\n"
+            _xtr("ethnicity_source_value", eth_col, 12) + "\n"
             "            if ethnicity_source_value is None:\n"
             "                _info(f'INFO: person {person_source_value} — ethnicity column is empty; ethnicity_concept_id set to {ethnicity_default}')\n"
             "                ethnicity_concept_id = ethnicity_default\n"
@@ -926,8 +893,7 @@ def _generate_person_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"            _cs_raw = row.get({repr(cs_name_col)})\n"
-            f"            _cs_name_raw = (str(_cs_raw).strip() or None) if pd.notnull(_cs_raw) else None\n"
+            _xtr("_cs_name_raw", cs_name_col, 12) + "\n"
             "            care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
             "            if _cs_name_raw and care_site_id is None:\n"
             "                _info(f'INFO: person {person_source_value} — care_site {_cs_name_raw!r} not found in care_site.csv; care_site_id set to NULL')\n"
@@ -948,7 +914,7 @@ def _generate_person_script(project) -> str:
             "            print(f'WARNING: could not load provider.csv: {e}')\n"
         )
         prov_lookup_line = (
-            f"            _prov_name_raw = (str(row.get({repr(prov_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(prov_name_col)})) else None\n"
+            _xtr("_prov_name_raw", prov_name_col, 12) + "\n"
             "            _prov_source_value = (str(care_site_id) + ' | ' + (_prov_name_raw or ''))[:50]\n"
             "            provider_id = provider_lookup.get(_prov_source_value)\n"
             "            if _prov_name_raw and provider_id is None:\n"
@@ -1127,8 +1093,7 @@ def _generate_visit_occurrence_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"            _cs_val = row.get({repr(cs_name_col)})\n"
-            "            _cs_name_raw = (str(_cs_val).strip() or None) if pd.notnull(_cs_val) else None\n"
+            _xtr("_cs_name_raw", cs_name_col, 12) + "\n"
             "            care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
             "            if _cs_name_raw and care_site_id is None:\n"
             "                _info(f'INFO: visit for person {person_source_value} — care_site {_cs_name_raw!r} not found in care_site.csv; care_site_id set to NULL')\n"
@@ -1149,8 +1114,7 @@ def _generate_visit_occurrence_script(project) -> str:
             "            print(f'WARNING: could not load provider.csv: {e}')\n"
         )
         prov_lookup_line = (
-            f"            _prov_val = row.get({repr(prov_name_col)})\n"
-            "            _prov_name_raw = (str(_prov_val).strip() or None) if pd.notnull(_prov_val) else None\n"
+            _xtr("_prov_name_raw", prov_name_col, 12) + "\n"
             "            _prov_source_value = (str(care_site_id) + ' | ' + (_prov_name_raw or ''))[:50]\n"
             "            provider_id = provider_lookup.get(_prov_source_value)\n"
             "            if _prov_name_raw and provider_id is None:\n"
@@ -1650,13 +1614,7 @@ def _generate_death_script(project) -> str:
             "            )\n"
         )
 
-    if cause_sv_col:
-        cause_sv_lines = (
-            f"            _csv_raw = row.get({repr(cause_sv_col)})\n"
-            "            cause_source_value = (str(_csv_raw).strip()[:50] or None) if pd.notnull(_csv_raw) else None\n"
-        )
-    else:
-        cause_sv_lines = _xtr_doc("cause_source_value", "", 12) + "\n"
+    cause_sv_lines = _xtr_doc("cause_source_value", cause_sv_col, 12) + "\n"
 
     return (
         "import os\n"
@@ -1729,7 +1687,7 @@ def _generate_death_script(project) -> str:
         + "                'death_datetime':          death_datetime,\n"
         f"                'death_type_concept_id':   {death_type_cid},\n"
         f"                'cause_concept_id':         {cause_cid_lit},\n"
-        + "                'cause_source_value':      cause_source_value,\n"
+        + "                'cause_source_value':      cause_source_value[:50] if cause_source_value else None,\n"
         f"                'cause_source_concept_id':  {cause_sc_cid_lit},\n"
         + "            })\n"
         + "        except Exception as e:\n"
