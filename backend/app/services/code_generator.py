@@ -416,7 +416,6 @@ def _generate_care_site_script(project) -> str:
         "import os\n"
         "import pandas as pd\n"
         "\n"
-        "# Auto-generated OMOP care_site ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"
@@ -599,7 +598,6 @@ def _generate_provider_script(project) -> str:
         "import os\n"
         "import pandas as pd\n"
         "\n"
-        "# Auto-generated OMOP provider ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"
@@ -721,6 +719,8 @@ def _generate_person_script(project) -> str:
     dob_cfg = mappings.get("year_of_birth") or {}
     dob_col = dob_cfg.get("source_col", "")
     date_format = dob_cfg.get("date_format", "%Y-%m-%d")
+    birth_time_col = person.get("birth_time_col", "")
+    birth_time_format = person.get("birth_time_format", "%H:%M:%S") or "%H:%M:%S"
 
     race_cfg = mappings.get("race_concept_id") or {}
     if "constant" in race_cfg:
@@ -786,6 +786,22 @@ def _generate_person_script(project) -> str:
         )
 
     if dob_col:
+        if birth_time_col:
+            _birth_time_lines = (
+                f"            _btv = row.get({repr(birth_time_col)})\n"
+                "            _bt_str = str(_btv).strip() if pd.notnull(_btv) else ''\n"
+                "            if _bt_str and _bt_str != 'nan':\n"
+                "                try:\n"
+                f"                    birth_datetime = datetime.combine(_dob, datetime.strptime(_bt_str, {repr(birth_time_format)}).time())\n"
+                "                except Exception:\n"
+                "                    _info(f'INFO: person {person_source_value} — could not parse birth time {_bt_str!r}; defaulting to midnight')\n"
+                "                    birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+                "            else:\n"
+                "                _info(f'INFO: person {person_source_value} — birth time column is empty; birth_datetime defaulting to midnight')\n"
+                "                birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+            )
+        else:
+            _birth_time_lines = "            birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
         dob_lines = (
             f"            _dob_raw = str(row.get({repr(dob_col)}, '')).strip()\n"
             "            if not _dob_raw or _dob_raw == 'nan':\n"
@@ -795,17 +811,18 @@ def _generate_person_script(project) -> str:
             "            year_of_birth = _dob.year\n"
             "            month_of_birth = _dob.month\n"
             "            day_of_birth = _dob.day\n"
+            + _birth_time_lines
         )
     else:
         dob_lines = (
-            "            year_of_birth = None\n"
-            "            month_of_birth = None\n"
-            "            day_of_birth = None\n"
+            f'            print(f"WARNING: skipping row {{_src_idx}} — no birth-date column configured; year_of_birth is required by OMOP CDM")\n'
+            "            continue\n"
         )
 
     if gender_col:
         gender_lines = (
-            f"            gender_source_value = (str(row.get({repr(gender_col)}, '')).strip() or None) if pd.notnull(row.get({repr(gender_col)})) else None\n"
+            f"            _gender_raw = row.get({repr(gender_col)})\n"
+            f"            gender_source_value = (str(_gender_raw).strip() or None) if pd.notnull(_gender_raw) else None\n"
             "            if gender_source_value is None:\n"
             "                _info(f'INFO: person {person_source_value} — gender column is empty; gender_concept_id set to {gender_default}')\n"
             "                gender_concept_id = gender_default\n"
@@ -823,7 +840,8 @@ def _generate_person_script(project) -> str:
 
     if race_mode == "column":
         race_lines = (
-            f"            race_source_value = (str(row.get({repr(race_col)}, '')).strip() or None) if pd.notnull(row.get({repr(race_col)})) else None\n"
+            f"            _race_raw = row.get({repr(race_col)})\n"
+            f"            race_source_value = (str(_race_raw).strip() or None) if pd.notnull(_race_raw) else None\n"
             "            if race_source_value is None:\n"
             "                _info(f'INFO: person {person_source_value} — race column is empty; race_concept_id set to {race_default}')\n"
             "                race_concept_id = race_default\n"
@@ -846,7 +864,8 @@ def _generate_person_script(project) -> str:
 
     if eth_mode == "column":
         eth_lines = (
-            f"            ethnicity_source_value = (str(row.get({repr(eth_col)}, '')).strip() or None) if pd.notnull(row.get({repr(eth_col)})) else None\n"
+            f"            _eth_raw = row.get({repr(eth_col)})\n"
+            f"            ethnicity_source_value = (str(_eth_raw).strip() or None) if pd.notnull(_eth_raw) else None\n"
             "            if ethnicity_source_value is None:\n"
             "                _info(f'INFO: person {person_source_value} — ethnicity column is empty; ethnicity_concept_id set to {ethnicity_default}')\n"
             "                ethnicity_concept_id = ethnicity_default\n"
@@ -907,7 +926,8 @@ def _generate_person_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"            _cs_name_raw = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
+            f"            _cs_raw = row.get({repr(cs_name_col)})\n"
+            f"            _cs_name_raw = (str(_cs_raw).strip() or None) if pd.notnull(_cs_raw) else None\n"
             "            care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
             "            if _cs_name_raw and care_site_id is None:\n"
             "                _info(f'INFO: person {person_source_value} — care_site {_cs_name_raw!r} not found in care_site.csv; care_site_id set to NULL')\n"
@@ -938,27 +958,37 @@ def _generate_person_script(project) -> str:
         prov_setup = "    provider_lookup = {}\n"
         prov_lookup_line = "            provider_id = None\n"
 
-    maps_header = (
+    gender_maps = (
+        "    # --- gender concept maps ---\n"
         f"    gender_map = {json.dumps(gender_map)}\n"
         f"    gender_default = {gender_default}\n"
     )
+    race_maps = ""
     if race_mode == "column":
-        maps_header += (
+        race_maps = (
+            "    # --- race concept maps ---\n"
             f"    race_map = {json.dumps(race_map)}\n"
             f"    race_default = {race_default}\n"
         )
+    eth_maps = ""
     if eth_mode == "column":
-        maps_header += (
+        eth_maps = (
+            "    # --- Ethnicity concept maps ---\n"
             f"    ethnicity_map = {json.dumps(eth_map)}\n"
             f"    ethnicity_default = {eth_default}\n"
         )
+    seen_init = "    seen_person_ids = set()\n" if multiple_rows_per_patient else ""
+    dedup_check = (
+        "            if person_source_value in seen_person_ids:\n"
+        "                continue\n"
+        "            seen_person_ids.add(person_source_value)\n"
+    ) if multiple_rows_per_patient else ""
 
     return (
         "import os\n"
         "import pandas as pd\n"
         "from datetime import datetime\n"
         "\n"
-        "# Auto-generated OMOP person ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"
@@ -969,20 +999,23 @@ def _generate_person_script(project) -> str:
         "\n"
         "\n"
         "def main():\n"
+        "    # Load environmental variables\n"
         "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
         f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
         "\n"
-        "    # --- Configuration ---\n"
-        + maps_header
+        + gender_maps
+        + race_maps
+        + eth_maps
         + "\n"
         + "    # --- Load lookup tables ---\n"
         + location_setup
         + cs_setup
         + prov_setup
         + counter_init
+        + seen_init
         + "\n"
         + "    # --- Process rows ---\n"
         + "    rows = []\n"
@@ -992,6 +1025,7 @@ def _generate_person_script(project) -> str:
         + "\n"
         + "            # Person identifier & DOB\n"
         + pid_lines
+        + dedup_check
         + dob_lines
         + "\n"
         + "            # Demographics\n"
@@ -999,7 +1033,6 @@ def _generate_person_script(project) -> str:
         + race_lines
         + eth_lines
         + "\n"
-        + "            # Foreign-key lookups\n"
         + loc_lookup_lines
         + cs_lookup_line
         + prov_lookup_line
@@ -1011,7 +1044,7 @@ def _generate_person_script(project) -> str:
         + "                'year_of_birth':              year_of_birth,\n"
         + "                'month_of_birth':             month_of_birth,\n"
         + "                'day_of_birth':               day_of_birth,\n"
-        + "                'birth_datetime':             None,\n"
+        + "                'birth_datetime':             birth_datetime,\n"
         + "                'race_concept_id':            race_concept_id,\n"
         + "                'ethnicity_concept_id':       ethnicity_concept_id,\n"
         + "                'location_id':                location_id,\n"
@@ -1031,13 +1064,6 @@ def _generate_person_script(project) -> str:
         + "    # --- Build output DataFrame ---\n"
         + "    df_out = pd.DataFrame(rows)\n"
         + "\n"
-        + (
-            "    # Deduplicate: multi-row datasets have one source row per (patient, visit).\n"
-            "    df_out = df_out.drop_duplicates(subset=['person_source_value'], keep='first').reset_index(drop=True)\n"
-            "    df_out['person_id'] = range(1, len(df_out) + 1)\n"
-            "\n"
-            if multiple_rows_per_patient else ""
-        )
         + "    # --- Write output ---\n"
         + "    output_file = os.path.join(output_dir, 'person.csv')\n"
         + "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
@@ -1101,7 +1127,8 @@ def _generate_visit_occurrence_script(project) -> str:
             "            print(f'WARNING: could not load care_site.csv: {e}')\n"
         )
         cs_lookup_line = (
-            f"            _cs_name_raw = (str(row.get({repr(cs_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(cs_name_col)})) else None\n"
+            f"            _cs_val = row.get({repr(cs_name_col)})\n"
+            "            _cs_name_raw = (str(_cs_val).strip() or None) if pd.notnull(_cs_val) else None\n"
             "            care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
             "            if _cs_name_raw and care_site_id is None:\n"
             "                _info(f'INFO: visit for person {person_source_value} — care_site {_cs_name_raw!r} not found in care_site.csv; care_site_id set to NULL')\n"
@@ -1122,7 +1149,8 @@ def _generate_visit_occurrence_script(project) -> str:
             "            print(f'WARNING: could not load provider.csv: {e}')\n"
         )
         prov_lookup_line = (
-            f"            _prov_name_raw = (str(row.get({repr(prov_name_col)}, '')).strip() or None) if pd.notnull(row.get({repr(prov_name_col)})) else None\n"
+            f"            _prov_val = row.get({repr(prov_name_col)})\n"
+            "            _prov_name_raw = (str(_prov_val).strip() or None) if pd.notnull(_prov_val) else None\n"
             "            _prov_source_value = (str(care_site_id) + ' | ' + (_prov_name_raw or ''))[:50]\n"
             "            provider_id = provider_lookup.get(_prov_source_value)\n"
             "            if _prov_name_raw and provider_id is None:\n"
@@ -1137,7 +1165,6 @@ def _generate_visit_occurrence_script(project) -> str:
         "import pandas as pd\n"
         "from datetime import datetime, date\n"
         "\n"
-        "# Auto-generated OMOP visit_occurrence ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"
@@ -1158,6 +1185,7 @@ def _generate_visit_occurrence_script(project) -> str:
         "\n"
         "\n"
         "def main():\n"
+        "    # Load environmental variables\n"
         "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
@@ -1264,14 +1292,16 @@ def _generate_visit_occurrence_script(project) -> str:
         "\n"
         "                    vcsc = vd.get('visit_concept_source_col') or ''\n"
         "                    if vcsc:\n"
-        "                        _vcv = (str(row.get(vcsc, '')).strip() or None) if pd.notnull(row.get(vcsc)) else None\n"
+        "                        _vcv_raw = row.get(vcsc)\n"
+        "                        _vcv = (str(_vcv_raw).strip() or None) if pd.notnull(_vcv_raw) else None\n"
         "                        visit_concept_id = (vd.get('visit_concept_value_map') or {}).get(_vcv, vd['visit_concept_id']) if _vcv else vd['visit_concept_id']\n"
         "                    else:\n"
         "                        visit_concept_id = vd['visit_concept_id']\n"
         "\n"
         "                    vtsc = vd.get('visit_type_source_col') or ''\n"
         "                    if vtsc:\n"
-        "                        _vtv = (str(row.get(vtsc, '')).strip() or None) if pd.notnull(row.get(vtsc)) else None\n"
+        "                        _vtv_raw = row.get(vtsc)\n"
+        "                        _vtv = (str(_vtv_raw).strip() or None) if pd.notnull(_vtv_raw) else None\n"
         "                        visit_type_concept_id = (vd.get('visit_type_value_map') or {}).get(_vtv, vd['type_concept_id']) if _vtv else vd['type_concept_id']\n"
         "                    else:\n"
         "                        visit_type_concept_id = vd['type_concept_id']\n"
@@ -1290,7 +1320,8 @@ def _generate_visit_occurrence_script(project) -> str:
         "\n"
         "                    afc_col = vd.get('admitted_from_source_col') or ''\n"
         "                    if afc_col:\n"
-        "                        _afv = (str(row.get(afc_col, '')).strip() or None) if pd.notnull(row.get(afc_col)) else None\n"
+        "                        _afv_raw = row.get(afc_col)\n"
+        "                        _afv = (str(_afv_raw).strip() or None) if pd.notnull(_afv_raw) else None\n"
         "                        admitted_from_source_value = _afv\n"
         "                        admitted_from_concept_id = (vd.get('admitted_from_value_map') or {}).get(_afv, vd.get('admitted_from_concept_id') or 0) if _afv else (vd.get('admitted_from_concept_id') or 0)\n"
         "                    else:\n"
@@ -1299,7 +1330,8 @@ def _generate_visit_occurrence_script(project) -> str:
         "\n"
         "                    dtc_col = vd.get('discharged_to_source_col') or ''\n"
         "                    if dtc_col:\n"
-        "                        _dtv = (str(row.get(dtc_col, '')).strip() or None) if pd.notnull(row.get(dtc_col)) else None\n"
+        "                        _dtv_raw = row.get(dtc_col)\n"
+        "                        _dtv = (str(_dtv_raw).strip() or None) if pd.notnull(_dtv_raw) else None\n"
         "                        discharged_to_source_value = _dtv\n"
         "                        discharged_to_concept_id = (vd.get('discharged_to_value_map') or {}).get(_dtv, vd.get('discharged_to_concept_id') or 0) if _dtv else (vd.get('discharged_to_concept_id') or 0)\n"
         "                    else:\n"
@@ -1413,7 +1445,6 @@ def _generate_observation_period_script(project) -> str:
         "import pandas as pd\n"
         "from datetime import datetime, date, timedelta\n"
         "\n"
-        "# Auto-generated OMOP observation_period ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"
@@ -1632,7 +1663,6 @@ def _generate_death_script(project) -> str:
         "import pandas as pd\n"
         "from datetime import datetime\n"
         "\n"
-        "# Auto-generated OMOP death ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"
@@ -1844,7 +1874,6 @@ def _generate_stem_table_script(project) -> str:
         "import pandas as pd\n"
         "from datetime import datetime\n"
         "\n"
-        "# Auto-generated OMOP stem_table ETL script — do not edit manually.\n"
         "\n"
         "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
         "\n"

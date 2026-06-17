@@ -42,6 +42,8 @@ export interface PersonConfig {
     ethnicity_concept_id?: RaceEthnicityMapping | ConstantMapping
     location_id?: RaceEthnicityMapping
   }
+  birth_time_col?: string
+  birth_time_format?: string
   required_source_cols: string[]
   // UI mode persistence
   gender_mode?: 'column' | 'default'

@@ -375,34 +375,57 @@ export default function Step2Person({ project, onUpdate }: Props) {
         <Card className="flex flex-col gap-5 p-6">
           <h3 className="font-semibold text-foreground">Date of Birth</h3>
 
-          <FieldMapper
-            label="Date of birth column"
-            sourceColumns={availCols(cfg.mappings.year_of_birth.source_col)}
-            value={cfg.mappings.year_of_birth.source_col}
-            onChange={v => {
-              setField(['mappings', 'year_of_birth', 'source_col'], v)
-              setField(['mappings', 'month_of_birth', 'source_col'], v)
-              setField(['mappings', 'day_of_birth', 'source_col'], v)
-            }}
-            required
-            hint="Single date column. Year, month, and day will be extracted from it."
-          />
-
-          <div>
-            <Label>Date format</Label>
-            <Input
-              type="text"
-              value={cfg.mappings.year_of_birth.date_format}
-              onChange={e => {
-                setField(['mappings', 'year_of_birth', 'date_format'], e.target.value)
-                setField(['mappings', 'month_of_birth', 'date_format'], e.target.value)
-                setField(['mappings', 'day_of_birth', 'date_format'], e.target.value)
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <FieldMapper
+              label="Date of birth column"
+              sourceColumns={availCols(cfg.mappings.year_of_birth.source_col)}
+              value={cfg.mappings.year_of_birth.source_col}
+              onChange={v => {
+                setField(['mappings', 'year_of_birth', 'source_col'], v)
+                setField(['mappings', 'month_of_birth', 'source_col'], v)
+                setField(['mappings', 'day_of_birth', 'source_col'], v)
               }}
-              placeholder="%Y-%m-%d"
-              className="mt-1 font-mono"
+              required
             />
-            <p className="mt-1 text-xs text-muted-foreground">Python strptime format, e.g. %Y-%m-%d or %d/%m/%Y</p>
+            <FieldMapper
+              label="Birth time column (optional)"
+              sourceColumns={availCols(cfg.birth_time_col ?? '')}
+              value={cfg.birth_time_col ?? ''}
+              onChange={v => setField(['birth_time_col'], v || undefined)}
+            />
           </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <Label>Date format</Label>
+              <Input
+                type="text"
+                value={cfg.mappings.year_of_birth.date_format}
+                onChange={e => {
+                  setField(['mappings', 'year_of_birth', 'date_format'], e.target.value)
+                  setField(['mappings', 'month_of_birth', 'date_format'], e.target.value)
+                  setField(['mappings', 'day_of_birth', 'date_format'], e.target.value)
+                }}
+                placeholder="%Y-%m-%d"
+                className="mt-1 font-mono"
+              />
+            </div>
+            <div>
+              <Label>Time format</Label>
+              <Input
+                type="text"
+                value={cfg.birth_time_format ?? '%H:%M:%S'}
+                onChange={e => setField(['birth_time_format'], e.target.value || '%H:%M:%S')}
+                placeholder="%H:%M:%S"
+                className="mt-1 font-mono"
+              />
+            </div>
+          </div>
+
+          <p className="text-xs text-muted-foreground -mt-1">
+            Python strptime formats. Missing or empty birth time → birth_datetime defaults to midnight (00:00:00).
+            Examples: <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>, <code className="bg-muted px-1 rounded">%H:%M</code>.
+          </p>
         </Card>
 
         {/* Race */}
