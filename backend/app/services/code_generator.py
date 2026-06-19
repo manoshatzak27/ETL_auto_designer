@@ -345,9 +345,10 @@ def _generate_care_site_script(project) -> str:
     cs_state_col = loc.get("cs_state_col", "")
     cs_zip_col = loc.get("cs_zip_col", "")
     cs_county_col = loc.get("cs_county_col", "")
+    cs_country_col = loc.get("cs_country_col", "")
     cs_country_sv = loc.get("cs_country_source_value", "")
 
-    has_location = any([cs_a1_col, cs_a2_col, cs_city_col, cs_state_col, cs_zip_col, cs_county_col, cs_country_sv])
+    has_location = any([cs_a1_col, cs_a2_col, cs_city_col, cs_state_col, cs_zip_col, cs_county_col, cs_country_col, cs_country_sv])
 
     location_block = (
         "    location_lookup = {}\n"
@@ -369,7 +370,11 @@ def _generate_care_site_script(project) -> str:
         + _xtr_v("cs_state", cs_state_col, 8) + "\n"
         + _xtr_v("cs_zip_code", cs_zip_col, 8) + "\n"
         + _xtr_v("cs_county", cs_county_col, 8) + "\n"
-        + f"        cs_country_source_value = {repr(cs_country_sv)}\n"
+        + (
+            _xtr_v("cs_country_source_value", cs_country_col, 8) + "\n"
+            if cs_country_col else
+            f"        cs_country_source_value = {repr(cs_country_sv) if cs_country_sv else 'None'}\n"
+        )
         + "        cs_location_source_value = ' | '.join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n"
         + "        location_id = location_lookup.get(cs_location_source_value)\n"
         + "        if location_id is None and cs_location_source_value:\n"
@@ -728,8 +733,9 @@ def _generate_person_script(project) -> str:
     state_col = loc.get("state_col", "")
     zip_col = loc.get("zip_col", "")
     county_col = loc.get("county_col", "")
+    country_col = loc.get("country_col", "")
     country_sv = loc.get("country_source_value", "")
-    has_location = any([a1_col, a2_col, city_col, state_col, zip_col])
+    has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
 
     cs_name_col = cs_cfg.get("care_site_name_col", "")
     prov_name_col = prov_cfg.get("provider_name_col", "")
@@ -871,7 +877,11 @@ def _generate_person_script(project) -> str:
             + _xtr("_state", state_col, 12) + "\n"
             + _xtr("_zip", zip_col, 12) + "\n"
             + _xtr("_county", county_col, 12) + "\n"
-            + f"            _country_sv = {repr(country_sv)}\n"
+            + (
+                _xtr("_country_sv", country_col, 12) + "\n"
+                if country_col else
+                f"            _country_sv = {repr(country_sv) if country_sv else 'None'}\n"
+            )
             + "            person_location_source_value = ' | '.join(filter(None, [_a1, _a2, _city, _state, _zip, _county, _country_sv]))[:255]\n"
             + "            location_id = location_lookup.get(person_location_source_value)\n"
             + "            if location_id is None and person_location_source_value:\n"
