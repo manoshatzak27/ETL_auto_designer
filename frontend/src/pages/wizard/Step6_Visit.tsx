@@ -124,9 +124,15 @@ export default function Step3Visit({ project, onUpdate }: Props) {
     i: number,
     mode: 'column' | 'default',
   ) => setter(prev => { const next = [...prev]; next[i] = mode; return next })
-  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'visit_occurrence'), [project.etl_config])
+  const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'visit_occurrence', ['observation_period']), [project.etl_config])
+  const visitSourceCol = cfg.visit_source_col
   const availCols = (currentValue: string) =>
-    cols.filter(c => c === currentValue || !crossUsed.has(c))
+    cols.filter(c => {
+      if (c === currentValue) return true
+      if (crossUsed.has(c)) return false
+      if (visitSourceCol && c === visitSourceCol) return false
+      return true
+    })
 
   const allVisitConceptIds = cfg.visit_definitions.flatMap((vd, i) =>
     getMode(conceptModes, i) === 'column' ? Object.values(vd.visit_concept_value_map ?? {}) : [],

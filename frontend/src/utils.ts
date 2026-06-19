@@ -24,7 +24,8 @@ export function getStructuralColumns(etlConfig: Record<string, unknown>): Set<st
     }
   }
 
-  const visitCfg = etlConfig['visit_occurrence'] as { visit_definitions?: Array<Record<string, unknown>> } | undefined
+  const visitCfg = etlConfig['visit_occurrence'] as { visit_definitions?: Array<Record<string, unknown>>; visit_source_col?: string } | undefined
+  if (visitCfg?.visit_source_col?.trim()) mapped.add(visitCfg.visit_source_col.trim())
   if (visitCfg?.visit_definitions) {
     const visitColFields = ['date_col', 'time_col', 'end_date_col', 'end_time_col', 'visit_concept_source_col', 'visit_type_source_col', 'admitted_from_source_col', 'discharged_to_source_col']
     for (const def of visitCfg.visit_definitions) {

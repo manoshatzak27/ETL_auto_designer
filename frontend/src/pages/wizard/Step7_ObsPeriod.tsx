@@ -42,8 +42,30 @@ export default function Step4ObsPeriod({ project, onUpdate }: Props) {
   )
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period', ['visit_occurrence']), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
+  // Exclude non-date visit columns (date_col/end_date_col remain available for reuse in obs period)
+  const visitNonDateCols = useMemo(() => {
+    const excluded = new Set<string>()
+    const visitCfg = project.etl_config?.visit_occurrence as {
+      visit_source_col?: string
+      visit_definitions?: Array<Record<string, unknown>>
+    } | undefined
+    if (!visitCfg) return excluded
+    if (visitCfg.visit_source_col) excluded.add(visitCfg.visit_source_col)
+    const nonDateFields = ['time_col', 'end_time_col', 'visit_concept_source_col', 'visit_type_source_col', 'admitted_from_source_col', 'discharged_to_source_col']
+    for (const def of visitCfg.visit_definitions ?? []) {
+      for (const field of nonDateFields) {
+        if (typeof def[field] === 'string' && def[field]) excluded.add(def[field] as string)
+      }
+    }
+    return excluded
+  }, [project.etl_config])
   const availCols = (currentValue: string) =>
-    cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
+    cols.filter(c => {
+      if (c === currentValue) return true
+      if (crossUsed.has(c) || stepUsed.has(c)) return false
+      if (visitNonDateCols.has(c)) return false
+      return true
+    })
 
   useEffect(() => {
     getTableConfig(project.id, 'observation_period').then((ex: ObservationPeriodConfig & { extra_instructions?: string }) => {
