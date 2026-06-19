@@ -30,7 +30,7 @@ const DEFAULTS: ObservationPeriodConfig = {
 }
 
 
-export default function Step4ObsPeriod({ project, onUpdate }: Props) {
+export default function ObsPeriodStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)

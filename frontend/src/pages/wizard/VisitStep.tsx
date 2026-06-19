@@ -101,7 +101,7 @@ function AthenaLink({ href }: { href: string }) {
   )
 }
 
-export default function Step3Visit({ project, onUpdate }: Props) {
+export default function VisitStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<VisitOccurrenceConfig>(DEFAULTS)

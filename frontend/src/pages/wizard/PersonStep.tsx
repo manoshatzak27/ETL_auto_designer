@@ -39,7 +39,7 @@ const DEFAULTS: PersonConfig = {
   required_source_cols: [],
 }
 
-export default function Step2Person({ project, onUpdate }: Props) {
+export default function PersonStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<PersonConfig>(DEFAULTS)

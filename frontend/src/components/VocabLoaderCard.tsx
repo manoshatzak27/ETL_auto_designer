@@ -1,7 +1,7 @@
 // Self-contained vocabulary-loader card. Detects the Athena bundle at
 // /vocab, displays Postgres + vocab-schema health, runs `loadVocabulary`,
 // and polls `getVocabStatus` for per-file progress. Originally lived
-// inside StepFinalize.tsx; lifted out so Step 1 (Source) can also offer
+// inside FinalizeStep.tsx; lifted out so SourceStep can also offer
 // the load so users can kick it off early and let it run while they
 // configure the rest of the wizard.
 

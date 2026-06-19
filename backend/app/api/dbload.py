@@ -73,7 +73,7 @@ def trigger_load_database(
     if project.last_execution_status != "success":
         raise HTTPException(
             status_code=400,
-            detail="ETL has not run successfully yet. Execute the pipeline on Step 11 first.",
+            detail="ETL has not run successfully yet. Execute the pipeline on the Finalize step first.",
         )
 
     output_dir = settings.get_output_path() / project_id

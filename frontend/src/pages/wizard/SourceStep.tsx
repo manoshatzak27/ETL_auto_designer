@@ -44,7 +44,7 @@ const PICKER_ENTRIES: { table: OptionalTable; label: string; description: string
   },
 ]
 
-export default function Step1Upload({ project, onUpdate }: Props) {
+export default function SourceStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)

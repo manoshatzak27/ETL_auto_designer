@@ -25,7 +25,7 @@ const DEFAULTS: StemTableConfig = {
   special_overrides: [],
 }
 
-export default function Step6StemTable({ project, onUpdate }: Props) {
+export default function StemTableStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const [rawDecisions, setRawDecisions] = useState<Record<string, { strategy: string; variable_concept: unknown; value_concepts: Record<string, unknown>; domain_id?: number | null }>>({})
   const [cfg, setCfg] = useState<StemTableConfig>(DEFAULTS)
@@ -158,12 +158,12 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
           <div className="text-sm">
             {hasMappings ? (
               <span className="text-green-800">
-                Concept mapping CSVs generated from Step 9 —{' '}
+                Concept mapping CSVs generated from the Concepts step —{' '}
                 {Object.keys(mappingFiles).join(', ').replace(/_/g, ' ')}
               </span>
             ) : (
               <span className="text-amber-700">
-                No mapping CSVs yet. Go back to Step 9 and complete concept mapping.
+                No mapping CSVs yet. Go back to the Concepts step and complete concept mapping.
               </span>
             )}
           </div>
@@ -194,7 +194,7 @@ export default function Step6StemTable({ project, onUpdate }: Props) {
         ) : visitLabels.length === 0 ? (
           <div className="flex items-center gap-3 px-4 py-3 rounded-lg border bg-amber-50 border-amber-200 text-sm text-amber-700">
             <AlertCircle className="w-5 h-5 flex-shrink-0" />
-            No visits configured. Go back to Step 6 (Visit Occurrence) and define at least one visit.
+            No visits configured. Go back to the Visit step and define at least one visit.
           </div>
         ) : (
           <div className="flex flex-col gap-3">

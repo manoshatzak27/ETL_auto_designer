@@ -98,17 +98,17 @@ const COMMON_CONCEPT_CLASSES = [
 
 // ── Shared per-page settings (avoid prop-drilling) ─────────────────────────
 
-interface Step9Settings {
+interface ConceptsSettings {
   rerankerAvailable: boolean
   customVocabularyId: string
 }
 
-const Step9Ctx = createContext<Step9Settings>({
+const ConceptsCtx = createContext<ConceptsSettings>({
   rerankerAvailable: false,
   customVocabularyId: 'CUSTOM',
 })
 
-const useStep9Settings = () => useContext(Step9Ctx)
+const useConceptsSettings = () => useContext(ConceptsCtx)
 
 interface ColumnInfo {
   distinct_values: string[]
@@ -380,7 +380,7 @@ function ConceptPicker({
   onSelect: (c: ConceptRef) => void
   onClear: () => void
 }) {
-  const { rerankerAvailable, customVocabularyId } = useStep9Settings()
+  const { rerankerAvailable, customVocabularyId } = useConceptsSettings()
   const cs = useConceptSearch(projectId)
   const [manualId, setManualId] = useState('')
   const [idLocked, setIdLocked] = useState(false)
@@ -1264,7 +1264,7 @@ function VariableRow({
                   <div>
                     <p className="font-semibold">Distinct values not loaded for this column.</p>
                     <p className="mt-0.5">
-                      The backend couldn't read the source CSV. Most likely the file was deleted (e.g., after a Docker volume reset). Go back to <strong>Step 1</strong> and re-upload your source.
+                      The backend couldn't read the source CSV. Most likely the file was deleted (e.g., after a Docker volume reset). Go back to <strong>Source upload</strong> and re-upload your source.
                     </p>
                   </div>
                 </div>
@@ -1442,9 +1442,7 @@ function BatchPanel({
 
 // ── Structural column extractor ────────────────────────────────────────────
 
-// ── Main Step 2 page ────────────────────────────────────────────────────────
-
-export default function Step2ConceptMapping({ project, onUpdate }: Props) {
+export default function ConceptsStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [decisions, setDecisions] = useState<Record<string, VariableDecision>>({})
@@ -1563,7 +1561,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
   })
 
   return (
-    <Step9Ctx.Provider value={{ rerankerAvailable: openaiConfigured, customVocabularyId: customVocab }}>
+    <ConceptsCtx.Provider value={{ rerankerAvailable: openaiConfigured, customVocabularyId: customVocab }}>
     <WizardLayout
       project={project}
       currentSlug="concepts"
@@ -1645,7 +1643,7 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
               <p className="font-semibold">Source CSV not available — value-mapping options won't render.</p>
               <p className="mt-0.5">
                 The project row still references a source file that no longer exists on disk (common after a Docker volume reset).
-                Go back to <strong>Step 1: Source upload</strong> and re-upload the same CSV to restore distinct-value detection.
+                Go back to <strong>Source upload</strong> and re-upload the same CSV to restore distinct-value detection.
               </p>
             </div>
           </div>
@@ -1746,6 +1744,6 @@ export default function Step2ConceptMapping({ project, onUpdate }: Props) {
         </div>
       </div>
     </WizardLayout>
-    </Step9Ctx.Provider>
+    </ConceptsCtx.Provider>
   )
 }

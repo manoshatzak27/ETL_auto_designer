@@ -38,7 +38,7 @@ const DEATH_TYPE_OPTIONS = [
   { value: 32823, label: '32823 — Primary Death Certificate' },
 ]
 
-export default function Step8Death({ project, onUpdate }: Props) {
+export default function DeathStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<DeathConfig>(DEFAULTS)

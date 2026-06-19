@@ -1,5 +1,5 @@
 """
-API routes for the concept mapping step (Step 2).
+API routes for the concept mapping step (Concepts step).
 
 Endpoints:
   GET  /projects/concept-lookup              → look up domain for a concept_id in CONCEPT.csv

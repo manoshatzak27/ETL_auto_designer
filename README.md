@@ -2,9 +2,9 @@
 
 A code-less, browser-based ETL builder that converts any flat source CSV into an
 OMOP CDM v5.4 compliant database. Users define all transformation logic through
-a 12-step wizard UI; OpenAI generates the per-table Python transformations; a
-bundled Postgres container with the full OMOP CDM v5.4 schema receives the
-loaded data.
+a wizard UI (7 required steps + up to 4 optional OMOP table steps); OpenAI
+generates the per-table Python transformations; a bundled Postgres container
+with the full OMOP CDM v5.4 schema receives the loaded data.
 
 ---
 
@@ -39,9 +39,9 @@ ETL_auto_designer/
 │   ├── Dockerfile
 │   └── requirements.txt
 │
-├── frontend/               React + Vite + TailwindCSS (12-step wizard)
+├── frontend/               React + Vite + TailwindCSS (slug-based wizard)
 │   ├── src/
-│   │   ├── pages/wizard/   Step1_Upload … Step12_LoadDB
+│   │   ├── pages/wizard/   SourceStep … FinalizeStep
 │   │   ├── components/     Shared UI (ConceptSearch, ErrorBanner, …)
 │   │   ├── hooks/          useTableConfig
 │   │   ├── api/client.ts   Axios client
@@ -101,7 +101,7 @@ npm install
 npm run dev
 ```
 
-The DB-load step (Step 12) is only fully functional when Postgres is reachable; you can still run Steps 1–11 without it.
+The DB-load card in the Finalize step is only fully functional when Postgres is reachable; you can still configure and generate all scripts without it.
 
 ---
 
@@ -129,20 +129,23 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 
 ## Wizard walkthrough
 
-| Step | Page                       | Purpose                                                                                                                          |
-|------|----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| 1    | Source upload              | Drop in your flat CSV — delimiter, encoding and columns are auto-detected.                                                       |
-| 2    | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings.         |
-| 3    | Care Site                  | Configure care_site name + place_of_service. Warns if Step 2 has no `cs_*` columns mapped (care_site would be empty otherwise).  |
-| 4    | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence.                  |
-| 5    | Person                     | Person ID, gender, DOB strategy (full date vs year-only), race/ethnicity. Shows the FK columns inherited from earlier steps.     |
-| 6    | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`.   |
-| 7    | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
-| 8    | Death                      | Optional. Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                  |
-| 9    | Concept mapping            | Per-column decision: map-with-AI, use defaults, or skip. Shared `ConceptSearch` picker. Gate-on-progress before next.            |
-| 10   | Stem table                 | Variable groups derived from the visit labels of Step 6. Structural FK columns hidden from the picker. Overrides have stable ids.|
-| 11   | Generate & Execute         | `Generate all` or per-table generate. Execution runs each script as its own subprocess in dependency order with per-table logs.  |
-| 12   | Build the OMOP DB          | Two cards. **Card 1** auto-detects an Athena bundle mounted at `/vocab`, builds the `vocab` schema and bulk-loads it. **Card 2** picks shared/project-scoped clinical schema, bulk-COPYs the project's output CSVs, and optionally applies indices + FK constraints. |
+Steps 2–4 and Death are optional (toggled from the Source step's table picker). All others are required.
+
+| Step (slug)       | Page                       | Purpose                                                                                                                          |
+|-------------------|----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
+| `source`          | Source upload              | Drop in your flat CSV — delimiter, encoding and columns are auto-detected. Toggle optional OMOP tables here.                     |
+| `location` *      | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings.         |
+| `care-site` *     | Care Site                  | Configure care_site name + place_of_service. Warns if Location has no `cs_*` columns mapped.                                    |
+| `provider` *      | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence.                  |
+| `person`          | Person                     | Person ID, gender, DOB strategy (full date vs year-only), race/ethnicity. Shows the FK columns inherited from earlier steps.     |
+| `visit`           | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`.   |
+| `obs-period`      | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
+| `death` *         | Death                      | Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                            |
+| `concepts`        | Concept mapping            | Per-column decision: map-with-AI, use defaults, or skip. Shared `ConceptSearch` picker. Gate-on-progress before next.            |
+| `stem-table`      | Stem table                 | Variable groups derived from the visit labels defined in the Visit step. Structural FK columns hidden from the picker.           |
+| `finalize`        | Generate + Load            | Generate all scripts (or per-table), execute them in dependency order with per-table logs, then load results into Postgres. Two cards: **Card 1** bulk-loads the Athena vocab bundle; **Card 2** bulk-COPYs the project's output CSVs and optionally applies indices + FK constraints. |
+
+\* optional — only shown when enabled from the Source step.
 
 ---
 
@@ -151,7 +154,7 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 `etl_executor.execute_etl_scripts` runs **one Python subprocess per generated table**, in the dependency order
 `location → care_site → provider → person → visit_occurrence → observation_period → stem_table → death`,
 sharing `ETL_OUTPUT_DIR` so each script can read its predecessors' output. The per-table status, log
-fragment, row count and elapsed time are returned to the UI and surfaced on Step 11.
+fragment, row count and elapsed time are returned to the UI and surfaced on the Finalize step.
 
 ---
 
@@ -166,17 +169,17 @@ separate schema:
 
 - Vocabulary tables (concept, vocabulary, …) → `${OMOP_VOCAB_SCHEMA}` (default `vocab`)
 - Clinical tables (person, visit_occurrence, …) → `${OMOP_SCHEMA}` (default `cdm`) or a
-  project-scoped schema picked in Step 12.
+  project-scoped schema picked in the Finalize step.
 
 Per-schema `__ddl_marker` rows make application idempotent. Indices and FK constraints are
-**not** applied by `omop-init`; they're triggered from Step 12 when the user ticks
+**not** applied by `omop-init`; they're triggered from the Finalize step when the user ticks
 "Apply indices and FK constraints after load".
 
 ---
 
-## Loading OMOP outputs into Postgres (Step 12)
+## Loading OMOP outputs into Postgres (Finalize step)
 
-Step 12 is split into two cards.
+The Finalize step is split into two cards.
 
 **Card 1 — Vocabulary** calls `POST /api/load-vocabulary` after auto-detecting an Athena
 bundle at `/vocab` (overridable via free-text). The backend ensures the `vocab` schema and
@@ -206,9 +209,9 @@ need from it:
 
 | Component | Files read | Mounted at | Mode |
 |---|---|---|---|
-| Step 12 / Card 1 — vocab loader | CONCEPT.csv, VOCABULARY.csv, DOMAIN.csv, CONCEPT_CLASS.csv, RELATIONSHIP.csv, CONCEPT_RELATIONSHIP.csv, CONCEPT_SYNONYM.csv, CONCEPT_ANCESTOR.csv, DRUG_STRENGTH.csv (all tab-delimited) | `/vocab` on `backend` | read-only |
-| Step 12 / Card 2 — ETL loader | (your project's generated CSVs in `outputs/<project_id>/`) | `/app/outputs` on `backend` | read-write |
-| Step 9 — EntityLinker concept search | CONCEPT.csv (tab-delimited) only | `/data` on `entitylinker` | read-write* |
+| Finalize / Card 1 — vocab loader | CONCEPT.csv, VOCABULARY.csv, DOMAIN.csv, CONCEPT_CLASS.csv, RELATIONSHIP.csv, CONCEPT_RELATIONSHIP.csv, CONCEPT_SYNONYM.csv, CONCEPT_ANCESTOR.csv, DRUG_STRENGTH.csv (all tab-delimited) | `/vocab` on `backend` | read-only |
+| Finalize / Card 2 — ETL loader | (your project's generated CSVs in `outputs/<project_id>/`) | `/app/outputs` on `backend` | read-write |
+| Concepts step — EntityLinker concept search | CONCEPT.csv (tab-delimited) only | `/data` on `entitylinker` | read-write* |
 
 *EntityLinker uses the same directory to cache its FAISS index and SapBERT embeddings
 (`embeddings_*.npy`, `lookup_*.csv`, `faiss_*.index`). These files are auto-created on first
@@ -217,7 +220,7 @@ them.
 
 **Concretely**: drop your unzipped Athena bundle anywhere on the host, set
 `ATHENA_BUNDLE_PATH=/your/absolute/path` in `.env`, then `docker compose up --build`.
-Card 1 of Step 12 auto-detects the bundle and shows "Detected 9 vocabulary files"; the
+Card 1 of the Finalize step auto-detects the bundle and shows "Detected 9 vocabulary files"; the
 EntityLinker container starts building its FAISS index on first request.
 
 If you don't want to bundle EntityLinker's caches with the same dir, mount them separately

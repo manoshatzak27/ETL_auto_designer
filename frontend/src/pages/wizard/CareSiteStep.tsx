@@ -27,7 +27,7 @@ const DEFAULTS: CareSiteConfig = {
   place_of_service_value_map: {},
 }
 
-export default function Step6CareSite({ project, onUpdate }: Props) {
+export default function CareSiteStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<CareSiteConfig>(DEFAULTS)

@@ -2,17 +2,17 @@ import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-
 import { useState, useEffect } from 'react'
 import { GenerationProvider } from './context/GenerationContext'
 import Dashboard from './pages/Dashboard'
-import Step1Upload from './pages/wizard/Step1_Upload'
-import LocationStep from './pages/wizard/Step2_Location'
-import CareSiteStep from './pages/wizard/Step3_CareSite'
-import ProviderStep from './pages/wizard/Step4_Provider'
-import PersonStep from './pages/wizard/Step5_Person'
-import VisitStep from './pages/wizard/Step6_Visit'
-import ObsPeriodStep from './pages/wizard/Step7_ObsPeriod'
-import ConceptMappingStep from './pages/wizard/Step9_ConceptMapping'
-import StemTableStep from './pages/wizard/Step10_StemTable'
-import DeathStep from './pages/wizard/Step8_Death'
-import StepFinalize from './pages/wizard/StepFinalize'
+import SourceStep from './pages/wizard/SourceStep'
+import LocationStep from './pages/wizard/LocationStep'
+import CareSiteStep from './pages/wizard/CareSiteStep'
+import ProviderStep from './pages/wizard/ProviderStep'
+import PersonStep from './pages/wizard/PersonStep'
+import VisitStep from './pages/wizard/VisitStep'
+import ObsPeriodStep from './pages/wizard/ObsPeriodStep'
+import ConceptsStep from './pages/wizard/ConceptsStep'
+import StemTableStep from './pages/wizard/StemTableStep'
+import DeathStep from './pages/wizard/DeathStep'
+import FinalizeStep from './pages/wizard/FinalizeStep'
 import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
@@ -21,7 +21,7 @@ import { LEGACY_NUMERIC_SLUGS, type WizardSlug } from './wizard/steps'
 // Map slugs → step components. Adding a new step? Register here and in
 // frontend/src/wizard/steps.ts (the ALL_STEPS registry).
 const STEP_COMPONENTS: Record<WizardSlug, React.ComponentType<{ project: Project; onUpdate: (p: Project) => void }>> = {
-  source:       Step1Upload,
+  source:       SourceStep,
   location:     LocationStep,
   'care-site':  CareSiteStep,
   provider:     ProviderStep,
@@ -29,9 +29,9 @@ const STEP_COMPONENTS: Record<WizardSlug, React.ComponentType<{ project: Project
   visit:        VisitStep,
   'obs-period': ObsPeriodStep,
   death:        DeathStep,
-  concepts:     ConceptMappingStep,
+  concepts:     ConceptsStep,
   'stem-table': StemTableStep,
-  finalize:     StepFinalize,
+  finalize:     FinalizeStep,
 }
 
 function ProjectWizard() {

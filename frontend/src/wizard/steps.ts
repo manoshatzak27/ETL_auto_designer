@@ -3,7 +3,7 @@
 // Optional OMOP tables (Location, Care Site, Provider, Death) are inserted
 // between Source and Person in FK-dependency order based on the project's
 // `etl_config[table].enabled` flag, which is toggled by the picker on the
-// Source step (Step1_Upload.tsx).
+// Source step (SourceStep.tsx).
 //
 // Domain-routed tables (measurement, observation, drug_exposure,
 // procedure_occurrence, condition_occurrence) are never their own step —

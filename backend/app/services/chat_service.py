@@ -142,10 +142,10 @@ def _build_system_prompt(project, table: str) -> str:
                 "",
             ]
 
-    # ── Concept decisions (variable-level concept mapping from Step 2) ────────
+    # ── Concept decisions (variable-level concept mapping from Concepts step) ──
     if concept_decisions:
         lines += [
-            "## Concept mapping decisions (Step 2)",
+            "## Concept mapping decisions (Concepts step)",
             "These are the per-variable concept mapping decisions made by the user.",
             "Each key is a source variable name; the value describes the mapping strategy",
             "and the selected OMOP concept IDs.",

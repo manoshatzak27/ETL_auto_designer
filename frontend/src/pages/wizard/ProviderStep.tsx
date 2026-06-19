@@ -38,7 +38,7 @@ const DEFAULTS: ProviderConfig = {
 
 interface ColumnInfo { distinct_values: string[] }
 
-export default function Step7Provider({ project, onUpdate }: Props) {
+export default function ProviderStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<ProviderConfig>(DEFAULTS)

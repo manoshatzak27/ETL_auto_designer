@@ -87,7 +87,7 @@ function AutoComputedBadge({ cfg, fields }: {
   )
 }
 
-export default function Step5Location({ project, onUpdate }: Props) {
+export default function LocationStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const cols = project.source_columns || []
   const [cfg, setCfg] = useState<LocationConfig>(DEFAULTS)

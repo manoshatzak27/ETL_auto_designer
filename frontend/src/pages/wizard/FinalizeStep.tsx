@@ -1,6 +1,6 @@
 // Merged final step: Generate → Execute → Load Vocab → Load DB.
 //
-// Lifted from the old Step11_Generate.tsx and Step12_LoadDB.tsx into one
+// Merged from the old Step11_Generate.tsx and Step12_LoadDB.tsx into one
 // scrollable page with sticky section headers. No new API calls — every
 // control here uses the same endpoints those two pages used.
 
@@ -41,7 +41,7 @@ interface Props {
 
 // Universe of OMOP tables this page can generate. The visible subset is
 // computed at render time from the project's etl_config so optional tables
-// the user didn't tick on Step 1 don't appear here either.
+// the user didn't tick on the Source step don't appear here either.
 const ALL_TABLES = [
   { key: 'location',           label: 'location.py',           description: 'Physical address / location records' },
   { key: 'care_site',          label: 'care_site.py',          description: 'Institutional care site records' },
@@ -105,7 +105,7 @@ function SectionHeader({ icon: Icon, n, title, subtitle }: { icon: React.Compone
   )
 }
 
-export default function StepFinalize({ project, onUpdate }: Props) {
+export default function FinalizeStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const { prev } = getAdjacentSlugs(project, 'finalize')
 
@@ -115,7 +115,7 @@ export default function StepFinalize({ project, onUpdate }: Props) {
   const [execError, setExecError] = useState('')
   const [outputMode, setOutputMode] = useState<'basic' | 'detailed'>('basic')
 
-  // Only count / regenerate the tables the user enabled in Step 1.
+  // Only count / regenerate the tables the user enabled on the Source step.
   const activeTables = getActiveTables(project)
   const scripts: Record<string, string> = project.generated_scripts || {}
   const generatedCount = activeTables.filter(t => scripts[t.key]).length

@@ -1141,7 +1141,7 @@ def _generate_visit_occurrence_script(project) -> str:
         "# --- Module-level constants ---\n"
         "INPATIENT_CONCEPT_IDS = {9201, 262, 42898160}  # concept IDs treated as inpatient\n"
         "\n"
-        f"VISIT_DEFS      = {vd_repr}  # visit definitions from Step 5\n"
+        f"VISIT_DEFS      = {vd_repr}  # visit definitions from the Visit step\n"
         "\n"
         f"SOURCE_STEM      = {repr(source_stem)}\n"
         f"VISIT_SOURCE_COL = {repr(visit_source_col)}  # column that carries visit label (multi-row mode)\n"
@@ -1706,10 +1706,10 @@ def _generate_death_script(project) -> str:
 
 
 def _infer_stem_overrides(project) -> list[dict]:
-    """Deterministically derive SPECIAL_OVERRIDES entries from Step 9 decisions.
+    """Deterministically derive SPECIAL_OVERRIDES entries from Concepts step decisions.
 
     The runtime stem_table.py already consumes unit_mapping.csv for per-row
-    unit lookups. This function covers the edge case where Step 9 captured
+    unit lookups. This function covers the edge case where the Concepts step captured
     a unit_mapping with a SINGLE concept_id and NO unit_col (a fixed unit
     for every row of that variable) — in which case unit_mapping.csv has
     nothing to look up on, and the unit must be hardcoded as an override.
@@ -1769,8 +1769,8 @@ def _generate_stem_table_script(project) -> str:
     pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
     pid_col = pid_cfg.get("source_col", "")
 
-    # Background-inferred overrides (Step 9 fixed-unit cases) come first;
-    # user-entered overrides (Step 10 UI) win on conflict because the
+    # Background-inferred overrides (Concepts step fixed-unit cases) come first;
+    # user-entered overrides (Stem Table step UI) win on conflict because the
     # generated OVERRIDE_MAP build uses dict overwrite (later entry wins).
     inferred_overrides = _infer_stem_overrides(project)
     user_overrides = stem_cfg.get("special_overrides", []) or []
@@ -1794,7 +1794,7 @@ def _generate_stem_table_script(project) -> str:
     default_date_col = first_vd.get("date_col", "") if visit_source_col else ""
     default_date_format = (first_vd.get("date_format") or "%Y-%m-%d") if visit_source_col else "%Y-%m-%d"
 
-    # variable → visit label, as configured by the user in Step 10.
+    # variable → visit label, as configured by the user in the Stem Table step.
     # Keys are normalised to lowercase to match the runtime _lc lookup.
     variable_visit_map = {
         k.lower(): v
@@ -1812,7 +1812,7 @@ def _generate_stem_table_script(project) -> str:
     else:
         psv_lines = "            person_source_value = str(_src_idx)\n"
 
-    # Universe of variables the user explicitly mapped in Step 9 (strategy != skip).
+    # Universe of variables the user explicitly mapped in the Concepts step (strategy != skip).
     # Structural columns already used by Person/Visit/Death/etc. are absent from
     # concept_decisions entirely, so this set automatically excludes them.
     mapped_variables = {
@@ -1855,12 +1855,12 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         f"VISIT_DATE_INFO = {vdi_repr}\n"
         "\n"
-        "# Maps each variable (lowercase) to its visit label as configured in Step 10.\n"
+        "# Maps each variable (lowercase) to its visit label as configured in the Stem Table step.\n"
         f"VARIABLE_VISIT_MAP = {vvm_repr}\n"
         "\n"
         f"SPECIAL_OVERRIDES = {so_repr}\n"
         "\n"
-        "# Variables the user explicitly mapped in Step 9 (strategy != 'skip').\n"
+        "# Variables the user explicitly mapped in the Concepts step (strategy != 'skip').\n"
         "# Source columns NOT in this set (structural fields already consumed by\n"
         "# Person/Visit/Death/etc.) are skipped — even if their name happens to\n"
         "# contain a visit-label substring like 'baseline'.\n"
@@ -2015,7 +2015,7 @@ def _generate_stem_table_script(project) -> str:
         "                try:\n"
         "                    _lc = variable.lower()\n"
         "                    # Only process columns the user explicitly mapped in\n"
-        "                    # Step 9. Structural fields (visit_*_date, patient_id,\n"
+        "                    # Concepts step. Structural fields (visit_*_date, patient_id,\n"
         "                    # death_date, gender, …) are absent from STEM_VARIABLES.\n"
         "                    if _lc not in STEM_VARIABLES:\n"
         "                        continue\n"
