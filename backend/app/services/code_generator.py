@@ -1358,8 +1358,6 @@ def _generate_visit_occurrence_script(project) -> str:
         "    df_out = pd.DataFrame(rows)\n"
         "\n"
         "    if not df_out.empty:\n"
-        "        # Sort by person and date, then chain preceding_visit_occurrence_id\n"
-        "        df_out = df_out.sort_values(['person_id', 'visit_start_date']).reset_index(drop=True)\n"
         "        for _pid, grp in df_out.groupby('person_id', sort=False):\n"
         "            idx_list = grp.index.tolist()\n"
         "            for k in range(1, len(idx_list)):\n"
