@@ -17,8 +17,8 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
-  Hash, List, Layers, SkipForward, Search, X,
-  AlertTriangle, Tag, Sparkles, Plus, Scale,
+  Hash, List, Layers, SkipForward, X,
+  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
@@ -970,8 +970,6 @@ function VariableRow({
   onCheck,
   onChange,
   batchMode,
-  allColumns,
-  allColumnInfos,
 }: {
   column: string
   info: ColumnInfo | null
@@ -981,8 +979,6 @@ function VariableRow({
   onCheck: (c: boolean) => void
   onChange: (d: VariableDecision) => void
   batchMode: boolean
-  allColumns: string[]
-  allColumnInfos: Record<string, ColumnInfo>
 }) {
   const [open, setOpen] = useState(false)
   const [domainMode, setDomainMode] = useState<'auto' | 'manual'>(() =>
@@ -1488,7 +1484,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     setEditingVocab(false)
   }
 
-  const { cols, filePicker, selectedFile } = useSourceFile(project, 'concepts')
+  const { cols, selectedFile, files, changeFile } = useSourceFile(project, 'concepts')
 
   const structuralCols = useMemo(
     () => getStructuralColumns((project.etl_config || {}) as Record<string, unknown>),
@@ -1605,7 +1601,6 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-5">
-        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Concept Mapping</h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -1652,6 +1647,45 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           </span>
         </div>
 
+        {/* File selector — shown only when project has multiple source files */}
+        {files.length > 1 && (
+          <div className="flex flex-col gap-2 rounded-lg border border-border bg-secondary/40 px-4 py-3">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">Source files</p>
+            <div className="flex flex-wrap gap-2">
+              {files.map((f, idx) => {
+                const isActive = f.filename === selectedFile?.filename
+                const fileCols = f.columns ?? []
+                const fileConceptCols = fileCols.filter(c => !structuralCols.has(c))
+                const fileMapped = fileConceptCols.filter(c => {
+                  const d = decisions[c]
+                  return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
+                }).length
+                return (
+                  <button
+                    key={f.filename}
+                    onClick={() => changeFile(idx)}
+                    className={clsx(
+                      'flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium transition-colors',
+                      isActive
+                        ? 'border-primary bg-primary/10 text-primary'
+                        : 'border-border bg-card text-muted-foreground hover:border-primary/50 hover:text-foreground',
+                    )}
+                  >
+                    <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                    <span>{f.filename}</span>
+                    <span className={clsx(
+                      'ml-1 rounded-full px-1.5 py-0.5 text-[10px] font-semibold',
+                      isActive ? 'bg-primary/20 text-primary' : 'bg-muted text-muted-foreground',
+                    )}>
+                      {fileMapped}/{fileConceptCols.length}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
           <div className="bg-card border border-border rounded-lg p-3 text-center">
@@ -1682,17 +1716,22 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           </div>
         )}
 
-        {/* Excluded structural columns */}
-        {structuralCols.size > 0 && (
+        {/* Excluded structural columns — scoped to the currently selected file */}
+        {(() => {
+          const fileColumns = selectedFile?.columns ?? (project.source_columns ?? [])
+          const fileStructuralCols = [...structuralCols].filter(c => fileColumns.includes(c))
+          if (fileStructuralCols.length === 0) return null
+          return (
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-border bg-secondary/60 text-xs text-secondary-foreground">
             <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-primary" />
             <span>
-              <span className="font-semibold">{structuralCols.size} structural column{structuralCols.size > 1 ? 's' : ''} excluded</span>
+              <span className="font-semibold">{fileStructuralCols.length} structural column{fileStructuralCols.length > 1 ? 's' : ''} excluded</span>
               {' '}— already mapped in Person, Visit, Obs. Period, Location, Care Site, Provider, or Death steps:{' '}
-              <span className="font-mono">{[...structuralCols].join(', ')}</span>
+              <span className="font-mono">{fileStructuralCols.join(', ')}</span>
             </span>
           </div>
-        )}
+          )
+        })()}
 
         {/* Toolbar */}
         <div className="flex items-center gap-3 flex-wrap">
@@ -1762,8 +1801,6 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 onCheck={c => toggleSelect(col, c)}
                 onChange={d => setDecision(col, d)}
                 batchMode={batchMode}
-                allColumns={cols}
-                allColumnInfos={columnInfos}
               />
             ))}
             {filteredCols.length === 0 && (

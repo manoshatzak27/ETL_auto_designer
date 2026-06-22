@@ -12,6 +12,8 @@ interface UseSourceFileResult {
   cols: string[]
   filePicker: React.ReactNode
   selectedFile: SourceFile | null
+  files: SourceFile[]
+  changeFile: (idx: number) => void
 }
 
 export function useSourceFile<T = unknown>(
@@ -24,15 +26,26 @@ export function useSourceFile<T = unknown>(
   const [selectedIndex, setSelectedIndex] = useState(() => store.current.indices[stepSlug] ?? 0)
 
   if (files.length === 0) {
-    return { cols: project.source_columns ?? [], filePicker: null, selectedFile: null }
+    return { cols: project.source_columns ?? [], filePicker: null, selectedFile: null, files: [], changeFile: () => {} }
   }
 
   if (files.length === 1) {
-    return { cols: files[0].columns, filePicker: null, selectedFile: files[0] }
+    return { cols: files[0].columns, filePicker: null, selectedFile: files[0], files, changeFile: () => {} }
   }
 
   const safeIndex = Math.min(selectedIndex, files.length - 1)
   const cols = files[safeIndex]?.columns ?? []
+
+  const changeFile = (idx: number) => {
+    if (idx === safeIndex) return
+    if (fileSwitch) {
+      if (!store.current.configs[stepSlug]) store.current.configs[stepSlug] = {}
+      store.current.configs[stepSlug][files[safeIndex].filename] = fileSwitch.getConfig()
+      fileSwitch.setConfig(store.current.configs[stepSlug]?.[files[idx].filename] as T | undefined)
+    }
+    store.current.indices[stepSlug] = idx
+    setSelectedIndex(idx)
+  }
 
   const filePicker = (
     <div className="flex flex-col gap-1.5">
@@ -41,17 +54,7 @@ export function useSourceFile<T = unknown>(
         {files.map((f, idx) => (
           <button
             key={f.filename}
-            onClick={() => {
-              if (idx === safeIndex) return
-              if (fileSwitch) {
-                // Persist the current file's config into the long-lived store
-                if (!store.current.configs[stepSlug]) store.current.configs[stepSlug] = {}
-                store.current.configs[stepSlug][files[safeIndex].filename] = fileSwitch.getConfig()
-                fileSwitch.setConfig(store.current.configs[stepSlug]?.[files[idx].filename] as T | undefined)
-              }
-              store.current.indices[stepSlug] = idx
-              setSelectedIndex(idx)
-            }}
+            onClick={() => changeFile(idx)}
             className={
               idx === safeIndex
                 ? 'flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 px-3 py-1 text-xs font-semibold text-primary transition-colors'
@@ -66,5 +69,5 @@ export function useSourceFile<T = unknown>(
     </div>
   )
 
-  return { cols, filePicker, selectedFile: files[safeIndex] ?? null }
+  return { cols, filePicker, selectedFile: files[safeIndex] ?? null, files, changeFile }
 }
