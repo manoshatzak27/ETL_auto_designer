@@ -21,10 +21,13 @@ export function getStructuralColFileMap(etlConfig: Record<string, unknown>): Map
     }
   }
 
-  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>>; source_filename?: string } | undefined
-  if (personCfg?.mappings) {
+  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>>; source_filename?: string } & Record<string, unknown> | undefined
+  if (personCfg) {
     const filename = personCfg.source_filename ?? null
-    for (const m of Object.values(personCfg.mappings)) {
+    for (const [key, value] of Object.entries(personCfg)) {
+      if (key.endsWith('_col')) add(value, filename)
+    }
+    for (const m of Object.values(personCfg.mappings ?? {})) {
       if (m && typeof m.source_col === 'string') add(m.source_col, filename)
     }
   }
@@ -59,12 +62,13 @@ export function getStructuralColumns(etlConfig: Record<string, unknown>): Set<st
     }
   }
 
-  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>> } | undefined
-  if (personCfg?.mappings) {
-    for (const m of Object.values(personCfg.mappings)) {
-      if (m && typeof m.source_col === 'string' && m.source_col.trim()) {
-        mapped.add(m.source_col.trim())
-      }
+  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>> } & Record<string, unknown> | undefined
+  if (personCfg) {
+    for (const [key, value] of Object.entries(personCfg)) {
+      if (key.endsWith('_col') && typeof value === 'string' && value.trim()) mapped.add(value.trim())
+    }
+    for (const m of Object.values(personCfg.mappings ?? {})) {
+      if (m && typeof m.source_col === 'string' && m.source_col.trim()) mapped.add(m.source_col.trim())
     }
   }
 

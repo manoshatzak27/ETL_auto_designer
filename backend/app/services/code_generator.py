@@ -113,14 +113,9 @@ def _source_file_params(project, table_cfg: dict) -> tuple[str, str, str]:
             path = entry.get("path", "")
             delim = repr(entry.get("delimiter", ","))
             enc = repr(entry.get("encoding", "utf-8"))
-            source_path_code = (
-                f"    source_path = r{repr(path)}\n"
-                "    if not os.path.exists(source_path):\n"
-                "        source_path = os.getenv('ETL_SOURCE_PATH')\n"
-            )
-            return source_path_code, delim, enc
+            return f"    source_path = r{repr(path)}\n", delim, enc
     return (
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n",
+        f"    source_path = r{repr(project.source_path or '')}\n",
         repr(project.source_delimiter or ","),
         repr(project.source_encoding or "utf-8"),
     )
@@ -1870,10 +1865,8 @@ def _generate_stem_table_script(project) -> str:
 
     # Fallback: single-file projects or projects where source_files metadata is absent.
     if not source_files_data:
-        fallback_path, fallback_delim, fallback_enc = _source_file_params(project, stem_cfg)
-        # fallback_path is a multi-line code block; store a sentinel so main() handles it.
         source_files_data = [{
-            "path": "__env__",
+            "path": project.source_path or "",
             "delimiter": project.source_delimiter or ",",
             "encoding": project.source_encoding or "utf-8",
             "variables": sorted(mapped_variables),
@@ -2191,8 +2184,6 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "    for _sf in SOURCE_FILES:\n"
         "        _sp = _sf['path']\n"
-        "        if not _sp or not os.path.exists(_sp):\n"
-        "            _sp = os.getenv('ETL_SOURCE_PATH')\n"
         "        STEM_VARIABLES = _sf['variables']\n"
         "        df = pd.read_csv(_sp, delimiter=_sf['delimiter'], encoding=_sf['encoding'])\n"
         "\n"
