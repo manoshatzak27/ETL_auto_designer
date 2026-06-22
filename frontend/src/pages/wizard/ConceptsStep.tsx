@@ -12,7 +12,7 @@ import {
   updateTableConfig,
 } from '../../api/client'
 import type { Project } from '../../types'
-import { getStructuralColumns } from '../../utils'
+import { getStructuralColumns, getStructuralColFileMap } from '../../utils'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import {
@@ -1490,7 +1490,20 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     () => getStructuralColumns((project.etl_config || {}) as Record<string, unknown>),
     [project.etl_config],
   )
-  const conceptCols = useMemo(() => cols.filter(c => !structuralCols.has(c)), [cols, structuralCols])
+  const structuralColFileMap = useMemo(
+    () => getStructuralColFileMap((project.etl_config || {}) as Record<string, unknown>),
+    [project.etl_config],
+  )
+
+  // Exclude a structural column only from the file it was configured in.
+  // If file attribution is unknown (null) fall back to global exclusion.
+  const conceptCols = useMemo(() => cols.filter(col => {
+    if (!structuralCols.has(col)) return true
+    const ownerFile = structuralColFileMap.get(col)
+    if (ownerFile === undefined) return true   // not in map at all → not structural
+    if (ownerFile === null) return false        // structural, file unknown → exclude globally
+    return ownerFile !== selectedFile?.filename // exclude only from the owning file
+  }), [cols, structuralCols, structuralColFileMap, selectedFile?.filename])
 
   useEffect(() => {
     Promise.all([
@@ -1504,10 +1517,14 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         const next: Record<string, VariableDecision> = { ...saved, ...prev }
         // Initialize columns from ALL source files so that every file's columns
         // are present in `decisions` even if the user never switches to that file.
-        const structCols = getStructuralColumns((project.etl_config || {}) as Record<string, unknown>)
+        const structColFileMap = getStructuralColFileMap((project.etl_config || {}) as Record<string, unknown>)
         for (const sf of (project.source_files || [])) {
           for (const col of (sf.columns || [])) {
-            if (!structCols.has(col) && !(col in next)) {
+            if (col in next) continue
+            const ownerFile = structColFileMap.get(col)
+            // Exclude only when this file is the owning file (or file is unknown → global exclusion)
+            const excludeHere = ownerFile !== undefined && (ownerFile === null || ownerFile === sf.filename)
+            if (!excludeHere) {
               next[col] = { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
             }
           }
@@ -1719,7 +1736,11 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         {/* Excluded structural columns — scoped to the currently selected file */}
         {(() => {
           const fileColumns = selectedFile?.columns ?? (project.source_columns ?? [])
-          const fileStructuralCols = [...structuralCols].filter(c => fileColumns.includes(c))
+          const fileStructuralCols = [...structuralCols].filter(c => {
+            if (!fileColumns.includes(c)) return false
+            const ownerFile = structuralColFileMap.get(c)
+            return ownerFile === null || ownerFile === (selectedFile?.filename ?? null)
+          })
           if (fileStructuralCols.length === 0) return null
           return (
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-border bg-secondary/60 text-xs text-secondary-foreground">

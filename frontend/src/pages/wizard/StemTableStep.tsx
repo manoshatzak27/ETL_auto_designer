@@ -60,11 +60,14 @@ export default function StemTableStep({ project, onUpdate }: Props) {
     })
   }, [project.id])
 
-  // Build col → filename from project.source_files (authoritative; no backend round-trip needed).
-  const colToFile = useMemo(() => {
-    const map: Record<string, string> = {}
+  // Build col → [filenames] — a column shared across files maps to all of them.
+  const colToFiles = useMemo(() => {
+    const map: Record<string, string[]> = {}
     for (const sf of (project.source_files || [])) {
-      for (const col of (sf.columns || [])) map[col] = sf.filename
+      for (const col of (sf.columns || [])) {
+        if (!map[col]) map[col] = []
+        map[col].push(sf.filename)
+      }
     }
     return map
   }, [project.source_files])
@@ -74,16 +77,22 @@ export default function StemTableStep({ project, onUpdate }: Props) {
     const structuralCols = getStructuralColumns((project.etl_config || {}) as Record<string, unknown>)
     const groups: Record<string, string[]> = {}
     for (const col of Object.keys(rawDecisions)) {
-      if (structuralCols.has(col)) continue
+      const files = colToFiles[col] ?? []
+      // Exclude structural columns only when they belong to exactly one file — if the
+      // same name exists in multiple files we can't tell which file it was mapped from,
+      // so we keep it visible in all of them.
+      if (structuralCols.has(col) && files.length <= 1) continue
       const d = rawDecisions[col]
       if (!d || d.strategy === 'skip') continue
       if (!d.variable_concept && Object.keys(d.value_concepts).length === 0) continue
-      const file = colToFile[col] ?? '__all__'
-      if (!groups[file]) groups[file] = []
-      groups[file].push(col)
+      const targetFiles = files.length > 0 ? files : ['__all__']
+      for (const file of targetFiles) {
+        if (!groups[file]) groups[file] = []
+        if (!groups[file].includes(col)) groups[file].push(col)
+      }
     }
     return groups
-  }, [rawDecisions, project.etl_config, colToFile])
+  }, [rawDecisions, project.etl_config, colToFiles])
 
   const mappedCols = useMemo(() => Object.values(mappedColsByFile).flat(), [mappedColsByFile])
 
