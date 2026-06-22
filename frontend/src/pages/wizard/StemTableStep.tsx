@@ -219,44 +219,53 @@ export default function StemTableStep({ project, onUpdate }: Props) {
           </div>
         ) : (
           <div className="flex flex-col gap-4">
-            {!isMultiRow && unassignedCount > 0 && (
+            {unassignedCount > 0 && (
               <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
                 {unassignedCount} variable{unassignedCount > 1 ? 's' : ''} not yet assigned to a visit — they will be skipped in the generated script.
               </p>
             )}
             {fileEntries.map(([filename, cols]) => (
-              <Card key={filename} className="flex flex-col gap-3 p-4">
+              <Card key={filename} className="flex flex-col gap-4 p-4">
                 <h3 className="text-sm font-semibold text-foreground font-mono">
                   {filename === '__all__' ? 'Variables' : filename}
                 </h3>
-                <div className="border border-border rounded-lg overflow-hidden">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted border-b border-border">
-                      <tr>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground w-1/2">Variable</th>
-                        <th className="text-left px-3 py-2 text-xs font-medium text-muted-foreground">Visit</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {cols.map((col, i) => (
-                        <tr key={col} className={i % 2 === 0 ? 'bg-card' : 'bg-muted/40'}>
-                          <td className="px-3 py-2 font-mono text-xs text-foreground">{col}</td>
-                          <td className="px-3 py-1.5">
-                            <Select
-                              value={variableVisitMap[col] ?? ''}
-                              onChange={e => setVisit(col, e.target.value)}
-                              className={`h-7 text-xs w-full ${!variableVisitMap[col] ? 'text-muted-foreground' : ''}`}
-                            >
-                              <option value="">— unassigned —</option>
-                              {visitLabels.map(label => (
-                                <option key={label} value={label}>{label}</option>
-                              ))}
-                            </Select>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {visitLabels.map(visitLabel => {
+                    const visibleCols = cols.filter(
+                      col => variableVisitMap[col] === undefined || variableVisitMap[col] === visitLabel
+                    )
+                    const assignedToThis = new Set(
+                      cols.filter(col => variableVisitMap[col] === visitLabel)
+                    )
+                    return (
+                      <div key={visitLabel} className="border border-border rounded-lg p-3 flex flex-col gap-2 bg-muted/20">
+                        <h4 className="text-xs font-semibold text-foreground">{visitLabel}</h4>
+                        <div className="flex flex-wrap gap-1.5 min-h-[2rem]">
+                          {visibleCols.length === 0 ? (
+                            <span className="text-xs text-muted-foreground italic">All columns assigned elsewhere</span>
+                          ) : (
+                            visibleCols.map(col => {
+                              const isAssigned = assignedToThis.has(col)
+                              return (
+                                <button
+                                  key={col}
+                                  type="button"
+                                  onClick={() => setVisit(col, isAssigned ? '' : visitLabel)}
+                                  className={`px-2 py-1 rounded text-xs font-mono border transition-colors cursor-pointer ${
+                                    isAssigned
+                                      ? 'bg-primary text-primary-foreground border-primary'
+                                      : 'bg-background text-foreground border-border hover:border-primary hover:text-primary'
+                                  }`}
+                                >
+                                  {col}
+                                </button>
+                              )
+                            })
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               </Card>
             ))}
