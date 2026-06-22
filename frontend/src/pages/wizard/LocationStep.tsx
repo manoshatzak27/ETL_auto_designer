@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
@@ -15,6 +15,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -89,7 +90,7 @@ function AutoComputedBadge({ cfg, fields }: {
 
 export default function LocationStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'location', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
   const [cfg, setCfg] = useState<LocationConfig>(DEFAULTS)
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'location'), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
@@ -102,6 +103,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
   const [csCountryValues, setCsCountryValues] = useState<string[]>([])
   const [countryMode, setCountryMode] = useState<'column' | 'default'>('column')
   const [csCountryMode, setCsCountryMode] = useState<'column' | 'default'>('column')
+  const colValuesLoaded = useRef(false)
 
   const personCountryIds = countryMode === 'column'
     ? Object.values(cfg.country_concept_id_map)
@@ -116,9 +118,10 @@ export default function LocationStep({ project, onUpdate }: Props) {
   useEffect(() => {
     Promise.all([
       getTableConfig(project.id, 'location'),
-      getColumnValues(project.id),
+      getColumnValues(project.id, selectedFile?.filename),
     ]).then(([ex, infos]: [LocationConfig & { extra_instructions?: string }, Record<string, ColumnInfo>]) => {
       setColumnInfos(infos)
+      colValuesLoaded.current = true
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
         const loaded: LocationConfig = {
@@ -164,12 +167,18 @@ export default function LocationStep({ project, onUpdate }: Props) {
     })
   }, [project.id])
 
+  useEffect(() => {
+    if (!colValuesLoaded.current) return
+    getColumnValues(project.id, selectedFile?.filename).then(setColumnInfos)
+  }, [project.id, selectedFile?.filename])
+
   const saveConfig = async () => {
     const p = await updateTableConfig(project.id, 'location', {
       ...cfg,
       extra_instructions: extraInstructions,
       country_mode: countryMode,
       cs_country_mode: csCountryMode,
+      source_filename: selectedFile?.filename ?? null,
     })
     onUpdate(p)
   }
@@ -244,6 +253,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Location Mapping</h2>
           <p className="text-sm text-muted-foreground mt-1">

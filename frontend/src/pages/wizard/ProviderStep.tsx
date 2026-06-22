@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
@@ -15,6 +15,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface Props {
   project: Project
@@ -40,13 +41,14 @@ interface ColumnInfo { distinct_values: string[] }
 
 export default function ProviderStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'provider', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
   const [cfg, setCfg] = useState<ProviderConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [specialtyMode, setSpecialtyMode] = useState<'column' | 'prefix'>('column')
   const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
+  const colValuesLoaded = useRef(false)
 
   const specialtyIds = specialtyMode === 'column'
     ? Object.values(cfg.specialty_concept_value_map ?? {})
@@ -77,8 +79,16 @@ export default function ProviderStep({ project, onUpdate }: Props) {
         else if (ex.gender_concept_id_default) setGenderMode('default')
       }
     })
-    getColumnValues(project.id).then(setColumnInfos)
+    getColumnValues(project.id, selectedFile?.filename).then(infos => {
+      setColumnInfos(infos)
+      colValuesLoaded.current = true
+    })
   }, [project.id])
+
+  useEffect(() => {
+    if (!colValuesLoaded.current) return
+    getColumnValues(project.id, selectedFile?.filename).then(setColumnInfos)
+  }, [project.id, selectedFile?.filename])
 
   const distinctVals = (col: string): string[] =>
     columnInfos[col]?.distinct_values ?? []
@@ -91,6 +101,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
       extra_instructions: extraInstructions,
       specialty_mode: specialtyMode,
       gender_mode: genderMode,
+      source_filename: selectedFile?.filename ?? null,
     })
     onUpdate(p)
   }
@@ -136,6 +147,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Provider Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">

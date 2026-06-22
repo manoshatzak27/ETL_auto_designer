@@ -1,5 +1,8 @@
+import io
 import shutil
+import zipfile
 from pathlib import Path
+from typing import List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -41,12 +44,25 @@ async def upload_source(
 
     schema = infer_schema(str(dest))
 
-    project.source_filename = safe_name
-    project.source_path = str(dest)
-    project.source_delimiter = schema["delimiter"]
-    project.source_encoding = schema["encoding"]
-    project.source_columns = schema["columns"]
-    project.source_row_count = schema["row_count"]
+    project.source_files = []
+    _sync_legacy_fields(project, [{
+        "filename": safe_name,
+        "path": str(dest),
+        "delimiter": schema["delimiter"],
+        "encoding": schema["encoding"],
+        "columns": schema["columns"],
+        "row_count": schema["row_count"],
+    }])
+    _reset_project_state(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+_SOURCE_EXTENSIONS = {".csv", ".tsv", ".txt"}
+
+
+def _reset_project_state(project: Project) -> None:
     project.concept_decisions = {}
     project.etl_config = {}
     project.generated_scripts = {}
@@ -55,6 +71,109 @@ async def upload_source(
     project.last_execution_log = ""
     project.last_execution_status = ""
     project.output_files = []
+
+
+def _sync_legacy_fields(project: Project, source_files: list[dict]) -> None:
+    """Keep the old single-file columns in sync with the first entry in source_files."""
+    if source_files:
+        first = source_files[0]
+        project.source_filename = first["filename"]
+        project.source_path = first["path"]
+        project.source_delimiter = first["delimiter"]
+        project.source_encoding = first["encoding"]
+        project.source_columns = first["columns"]
+        project.source_row_count = first["row_count"]
+    else:
+        project.source_filename = ""
+        project.source_path = ""
+        project.source_delimiter = ""
+        project.source_encoding = ""
+        project.source_columns = []
+        project.source_row_count = 0
+
+
+@router.post("/{project_id}/upload-sources", response_model=ProjectResponse)
+async def upload_sources(
+    project_id: str,
+    files: List[UploadFile] = File(...),
+    db: Session = Depends(get_db),
+):
+    """Accept one or more CSV/TSV files, OR a single ZIP containing CSV/TSV files."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    project_upload_dir = settings.get_upload_path() / project_id
+    project_upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Collect raw paths to process (extracts from ZIP when needed)
+    raw_paths: list[Path] = []
+    for upload in files:
+        safe_name = Path(upload.filename).name if upload.filename else "source.csv"
+        contents = await upload.read()
+
+        if Path(safe_name).suffix.lower() == ".zip":
+            with zipfile.ZipFile(io.BytesIO(contents)) as zf:
+                for member in zf.namelist():
+                    member_path = Path(member)
+                    if member_path.suffix.lower() in _SOURCE_EXTENSIONS and not member_path.name.startswith("__"):
+                        dest = project_upload_dir / member_path.name
+                        dest.write_bytes(zf.read(member))
+                        raw_paths.append(dest)
+        elif Path(safe_name).suffix.lower() in _SOURCE_EXTENSIONS:
+            dest = project_upload_dir / safe_name
+            dest.write_bytes(contents)
+            raw_paths.append(dest)
+
+    if not raw_paths:
+        raise HTTPException(status_code=400, detail="No CSV/TSV files found in the uploaded content.")
+
+    # Build a dict keyed by filename so re-uploading a file replaces its entry
+    existing: dict[str, dict] = {f["filename"]: f for f in (project.source_files or [])}
+    for path in raw_paths:
+        schema = infer_schema(str(path))
+        existing[path.name] = {
+            "filename": path.name,
+            "path": str(path),
+            "delimiter": schema["delimiter"],
+            "encoding": schema["encoding"],
+            "columns": schema["columns"],
+            "row_count": schema["row_count"],
+        }
+
+    merged = list(existing.values())
+    project.source_files = merged
+    _sync_legacy_fields(project, merged)
+    _reset_project_state(project)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+@router.delete("/{project_id}/source-files/{index}", response_model=ProjectResponse)
+def delete_source_file(
+    project_id: str,
+    index: int,
+    db: Session = Depends(get_db),
+):
+    """Remove a source file from source_files by index."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    files = list(project.source_files or [])
+    if index < 0 or index >= len(files):
+        raise HTTPException(status_code=400, detail="Invalid file index")
+
+    removed = files.pop(index)
+    # Best-effort: delete the file from disk
+    try:
+        Path(removed["path"]).unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    project.source_files = files
+    _sync_legacy_fields(project, files)
     db.commit()
     db.refresh(project)
     return project
@@ -154,10 +273,26 @@ def load_mappings_from_dir(
 
 
 @router.get("/{project_id}/detect-column-type")
-def detect_column_type(project_id: str, column: str, db: Session = Depends(get_db)):
+def detect_column_type(project_id: str, column: str, filename: str | None = None, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+
+    # Multi-file project: route to the specific file when filename is provided
+    if filename and project.source_files:
+        file_entry = next((f for f in project.source_files if f.get("filename") == filename), None)
+        if file_entry and Path(file_entry["path"]).exists():
+            if column not in file_entry.get("columns", []):
+                raise HTTPException(status_code=400, detail=f"Column '{column}' not found in '{filename}'")
+            transform = detect_pid_transform(
+                file_entry["path"],
+                file_entry.get("delimiter", ","),
+                file_entry.get("encoding", "utf-8"),
+                column,
+            )
+            return {"column": column, "transform": transform}
+
+    # Fallback: legacy single-file
     if not project.source_path or not Path(project.source_path).exists():
         raise HTTPException(status_code=404, detail="Source file not uploaded")
     if column not in (project.source_columns or []):

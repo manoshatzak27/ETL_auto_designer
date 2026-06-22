@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues, detectColumnType } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
@@ -16,6 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -41,7 +42,7 @@ const DEFAULTS: PersonConfig = {
 
 export default function PersonStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'person', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
   const [cfg, setCfg] = useState<PersonConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
@@ -57,6 +58,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const [raceMode, setRaceMode] = useState<'column' | 'default'>('column')
   const [ethnicityMode, setEthnicityMode] = useState<'column' | 'default'>('column')
   const [detectedTransform, setDetectedTransform] = useState<string | null>(null)
+  const configRestoredRef = useRef(false)
 
   const genderDefaultId = cfg.mappings.gender_concept_id.default ?? 0
   const genderConceptIds = genderMode === 'column'
@@ -84,7 +86,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
       setDetectedTransform(null)
       return
     }
-    detectColumnType(project.id, pidCol).then(res => {
+    detectColumnType(project.id, pidCol, selectedFile?.filename).then(res => {
       setDetectedTransform(res.transform)
       setCfg(prev => ({
         ...prev,
@@ -94,15 +96,16 @@ export default function PersonStep({ project, onUpdate }: Props) {
         },
       }))
     }).catch(() => setDetectedTransform(null))
-  }, [pidCol, project.id, cfg.mappings.person_id.auto_increment])
+  }, [pidCol, project.id, cfg.mappings.person_id.auto_increment, selectedFile?.filename])
 
   useEffect(() => {
     Promise.all([
       getTableConfig(project.id, 'person'),
-      getColumnValues(project.id),
+      getColumnValues(project.id, selectedFile?.filename),
     ]).then(([existing, infos]: [PersonConfig & { extra_instructions?: string }, Record<string, ColumnInfo>]) => {
       setColumnInfos(infos)
-      if (existing && Object.keys(existing).length > 0) {
+      if (!configRestoredRef.current && existing && Object.keys(existing).length > 0) {
+        configRestoredRef.current = true
         setExtraInstructions(existing.extra_instructions || '')
         const m = existing.mappings
         if (m.race_concept_id && 'constant' in m.race_concept_id)
@@ -147,7 +150,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
         })
       }
     })
-  }, [project.id])
+  }, [project.id, selectedFile?.filename])
 
   const setField = (path: string[], value: unknown) => {
     setCfg(prev => {
@@ -239,6 +242,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
       gender_mode: genderMode,
       race_mode: raceMode,
       ethnicity_mode: ethnicityMode,
+      source_filename: selectedFile?.filename ?? null,
     }
     const p = await updateTableConfig(project.id, 'person', updated)
     onUpdate(p)
@@ -264,6 +268,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Person Table Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">

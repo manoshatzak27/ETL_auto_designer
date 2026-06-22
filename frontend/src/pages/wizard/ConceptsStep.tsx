@@ -9,6 +9,7 @@ import {
   conceptSearch,
   getApiHealth,
   updateProjectSettings,
+  updateTableConfig,
 } from '../../api/client'
 import type { Project } from '../../types'
 import { getStructuralColumns } from '../../utils'
@@ -20,6 +21,7 @@ import {
   AlertTriangle, Tag, Sparkles, Plus, Scale,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface Props {
   project: Project
@@ -1446,6 +1448,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [decisions, setDecisions] = useState<Record<string, VariableDecision>>({})
+  const [colFileMap, setColFileMap] = useState<Record<string, string>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -1485,7 +1488,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     setEditingVocab(false)
   }
 
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'concepts')
 
   const structuralCols = useMemo(
     () => getStructuralColumns((project.etl_config || {}) as Record<string, unknown>),
@@ -1495,17 +1498,40 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   useEffect(() => {
     Promise.all([
-      getColumnValues(project.id),
+      getColumnValues(project.id, selectedFile?.filename),
       getConceptDecisions(project.id),
     ]).then(([infos, saved]: [Record<string, ColumnInfo>, Record<string, VariableDecision>]) => {
       setColumnInfos(infos)
-      const init: Record<string, VariableDecision> = {}
-      for (const col of conceptCols) {
-        init[col] = saved[col] ?? { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
-      }
-      setDecisions(init)
+      setDecisions(prev => {
+        // saved contains decisions from ALL files; prev contains in-memory changes.
+        // Merge so neither is lost: saved is the base, prev (unsaved changes) wins.
+        const next: Record<string, VariableDecision> = { ...saved, ...prev }
+        // Initialize columns from ALL source files so that every file's columns
+        // are present in `decisions` even if the user never switches to that file.
+        const structCols = getStructuralColumns((project.etl_config || {}) as Record<string, unknown>)
+        for (const sf of (project.source_files || [])) {
+          for (const col of (sf.columns || [])) {
+            if (!structCols.has(col) && !(col in next)) {
+              next[col] = { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
+            }
+          }
+        }
+        return next
+      })
     }).finally(() => setLoading(false))
-  }, [project.id])
+  }, [project.id, selectedFile?.filename])
+
+  // Track which source file each column was last active in, so StemTableStep
+  // can filter to only show variables belonging to its selected file.
+  useEffect(() => {
+    const fn = selectedFile?.filename
+    if (!fn) return
+    setColFileMap(prev => {
+      const next = { ...prev }
+      for (const col of conceptCols) next[col] = fn
+      return next
+    })
+  }, [selectedFile?.filename, conceptCols])
 
   const setDecision = useCallback((col: string, d: VariableDecision) => {
     setDecisions(prev => ({ ...prev, [col]: d }))
@@ -1522,7 +1548,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const { prev: prevSlug, next: nextSlug } = getAdjacentSlugs(project, 'concepts')
 
   const saveConfig = async () => {
-    const updated = await saveConceptDecisions(project.id, decisions as Record<string, unknown>)
+    const [updated] = await Promise.all([
+      saveConceptDecisions(project.id, decisions as Record<string, unknown>),
+      updateTableConfig(project.id, 'concepts', { col_file_map: colFileMap, source_filename: selectedFile?.filename ?? null }),
+    ])
     onUpdate(updated)
   }
 
@@ -1530,7 +1559,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     setSaving(true)
     setGenError('')
     try {
-      await saveConceptDecisions(project.id, decisions as Record<string, unknown>)
+      await Promise.all([
+        saveConceptDecisions(project.id, decisions as Record<string, unknown>),
+        updateTableConfig(project.id, 'concepts', { col_file_map: colFileMap, source_filename: selectedFile?.filename ?? null }),
+      ])
       setGenerating(true)
       const updated = await generateMappingCsvs(project.id)
       onUpdate(updated)
@@ -1573,6 +1605,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-5">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Concept Mapping</h2>
           <p className="text-sm text-muted-foreground mt-1">
@@ -1723,13 +1756,13 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 key={col}
                 column={col}
                 info={columnInfos[col] ?? null}
-                decision={decisions[col] ?? { strategy: 'map_variable', variable_concept: null, value_concepts: {}, domain_id: null }}
+                decision={decisions[col] ?? { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }}
                 projectId={project.id}
                 checked={selectedCols.includes(col)}
                 onCheck={c => toggleSelect(col, c)}
                 onChange={d => setDecision(col, d)}
                 batchMode={batchMode}
-                allColumns={project.source_columns ?? []}
+                allColumns={cols}
                 allColumnInfos={columnInfos}
               />
             ))}

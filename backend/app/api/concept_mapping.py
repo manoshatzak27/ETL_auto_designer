@@ -86,6 +86,7 @@ def concept_lookup(concept_id: int):
 def get_column_values(
     project_id: str,
     max_values: int = 200,
+    filename: str | None = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -96,16 +97,30 @@ def get_column_values(
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if not project.source_path or not Path(project.source_path).exists():
-        return {}
 
-    df = pd.read_csv(
-        project.source_path,
-        sep=project.source_delimiter or ",",
-        encoding=project.source_encoding or "utf-8",
-        dtype=str,
-        on_bad_lines="skip",
-    )
+    # Multi-file: read from the specified file when provided
+    if filename and project.source_files:
+        file_entry = next((f for f in project.source_files if f.get("filename") == filename), None)
+        if file_entry and Path(file_entry["path"]).exists():
+            df = pd.read_csv(
+                file_entry["path"],
+                sep=file_entry.get("delimiter", ","),
+                encoding=file_entry.get("encoding", "utf-8"),
+                dtype=str,
+                on_bad_lines="skip",
+            )
+        else:
+            return {}
+    else:
+        if not project.source_path or not Path(project.source_path).exists():
+            return {}
+        df = pd.read_csv(
+            project.source_path,
+            sep=project.source_delimiter or ",",
+            encoding=project.source_encoding or "utf-8",
+            dtype=str,
+            on_bad_lines="skip",
+        )
 
     total_rows = len(df)
     result: dict[str, dict] = {}

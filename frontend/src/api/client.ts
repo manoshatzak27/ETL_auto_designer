@@ -16,6 +16,15 @@ export const uploadSource = (projectId: string, file: File) => {
   return api.post(`/projects/${projectId}/upload-source`, fd).then(r => r.data)
 }
 
+export const uploadSources = (projectId: string, files: File[]) => {
+  const fd = new FormData()
+  for (const f of files) fd.append('files', f)
+  return api.post(`/projects/${projectId}/upload-sources`, fd).then(r => r.data)
+}
+
+export const deleteSourceFile = (projectId: string, index: number) =>
+  api.delete(`/projects/${projectId}/source-files/${index}`).then(r => r.data)
+
 export const uploadMappingCsv = (projectId: string, mappingType: string, file: File) => {
   const fd = new FormData()
   fd.append('file', file)
@@ -28,8 +37,8 @@ export const loadMappingsFromDir = (projectId: string, directory: string) =>
   api.post(`/projects/${projectId}/load-mappings-from-dir`, { directory }).then(r => r.data)
 
 // ---- Concept mapping (Concepts step) ----
-export const getColumnValues = (projectId: string) =>
-  api.get(`/projects/${projectId}/column-values`).then(r => r.data)
+export const getColumnValues = (projectId: string, filename?: string) =>
+  api.get(`/projects/${projectId}/column-values`, { params: { ...(filename ? { filename } : {}) } }).then(r => r.data)
 
 export const getConceptDecisions = (projectId: string) =>
   api.get(`/projects/${projectId}/concept-decisions`).then(r => r.data)
@@ -57,8 +66,8 @@ export const getOutputPreview = (projectId: string, filename: string, rows = 20)
     .get<OutputPreview>(`/projects/${projectId}/output-preview?filename=${encodeURIComponent(filename)}&rows=${rows}`)
     .then(r => r.data)
 
-export const detectColumnType = (projectId: string, column: string) =>
-  api.get(`/projects/${projectId}/detect-column-type?column=${encodeURIComponent(column)}`).then(r => r.data as { column: string; transform: string })
+export const detectColumnType = (projectId: string, column: string, filename?: string) =>
+  api.get(`/projects/${projectId}/detect-column-type`, { params: { column, ...(filename ? { filename } : {}) } }).then(r => r.data as { column: string; transform: string })
 
 // ---- ETL Config ----
 export const updateTableConfig = (projectId: string, table: string, config: unknown) =>

@@ -32,6 +32,7 @@ class ProjectResponse(BaseModel):
     output_files: list[str] = []
     mapping_files: dict[str, Any] = {}
     custom_vocabulary_id: str = "CUSTOM"
+    source_files: list[dict[str, Any]] = []
 
     model_config = {"from_attributes": True}
 
@@ -41,7 +42,7 @@ class ProjectResponse(BaseModel):
     def _dict_or_empty(cls, v: Any) -> dict:
         return v if isinstance(v, dict) else {}
 
-    @field_validator("source_columns", "output_files", mode="before")
+    @field_validator("source_columns", "output_files", "source_files", mode="before")
     @classmethod
     def _list_or_empty(cls, v: Any) -> list:
         return v if isinstance(v, list) else []

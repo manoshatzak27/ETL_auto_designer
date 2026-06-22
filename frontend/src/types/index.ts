@@ -1,3 +1,11 @@
+export interface SourceFile {
+  filename: string
+  delimiter: string
+  encoding: string
+  columns: string[]
+  row_count: number
+}
+
 export interface ProjectSummary {
   id: string
   name: string
@@ -26,6 +34,7 @@ export interface Project {
   output_files: string[]
   mapping_files: Record<string, string>
   custom_vocabulary_id?: string
+  source_files: SourceFile[]
 }
 
 // ---- Per-table config shapes ----

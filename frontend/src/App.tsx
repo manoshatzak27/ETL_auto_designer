@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { GenerationProvider } from './context/GenerationContext'
+import { StepFileSelectionContext } from './contexts/StepFileSelectionContext'
 import Dashboard from './pages/Dashboard'
 import SourceStep from './pages/wizard/SourceStep'
 import LocationStep from './pages/wizard/LocationStep'
@@ -38,6 +39,7 @@ function ProjectWizard() {
   const { projectId, step } = useParams<{ projectId: string; step: string }>()
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
+  const fileSelections = useRef({ indices: {} as Record<string, number>, configs: {} as Record<string, Record<string, unknown>> })
 
   useEffect(() => {
     if (!projectId) return
@@ -71,10 +73,12 @@ function ProjectWizard() {
   const update = (p: Project) => setProject(p)
 
   return (
-    <GenerationProvider>
-      <Comp project={project} onUpdate={update} />
-      <ChatPanel project={project} onUpdate={update} />
-    </GenerationProvider>
+    <StepFileSelectionContext.Provider value={fileSelections}>
+      <GenerationProvider>
+        <Comp project={project} onUpdate={update} />
+        <ChatPanel project={project} onUpdate={update} />
+      </GenerationProvider>
+    </StepFileSelectionContext.Provider>
   )
 }
 

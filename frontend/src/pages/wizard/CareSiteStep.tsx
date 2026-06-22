@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
@@ -12,6 +12,7 @@ import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -29,10 +30,11 @@ const DEFAULTS: CareSiteConfig = {
 
 export default function CareSiteStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'care-site', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
   const [cfg, setCfg] = useState<CareSiteConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
+  const colValuesLoaded = useRef(false)
   const [posValues, setPosValues] = useState<string[]>([])
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'care_site'), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
@@ -44,9 +46,10 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   useEffect(() => {
     Promise.all([
       getTableConfig(project.id, 'care_site'),
-      getColumnValues(project.id),
+      getColumnValues(project.id, selectedFile?.filename),
     ]).then(([existing, infos]: [CareSiteConfig & { extra_instructions?: string }, Record<string, ColumnInfo>]) => {
       setColumnInfos(infos)
+      colValuesLoaded.current = true
       if (existing && Object.keys(existing).length > 0) {
         setExtraInstructions(existing.extra_instructions || '')
         setCfg(existing)
@@ -59,8 +62,13 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
     })
   }, [project.id])
 
+  useEffect(() => {
+    if (!colValuesLoaded.current) return
+    getColumnValues(project.id, selectedFile?.filename).then(setColumnInfos)
+  }, [project.id, selectedFile?.filename])
+
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'care_site', { ...cfg, extra_instructions: extraInstructions })
+    const p = await updateTableConfig(project.id, 'care_site', { ...cfg, extra_instructions: extraInstructions, source_filename: selectedFile?.filename ?? null })
     onUpdate(p)
   }
 
@@ -89,6 +97,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Care Site Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">

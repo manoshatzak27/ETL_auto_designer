@@ -13,6 +13,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface Props {
   project: Project
@@ -40,7 +41,7 @@ const DEATH_TYPE_OPTIONS = [
 
 export default function DeathStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'death', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
   const [cfg, setCfg] = useState<DeathConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
@@ -59,7 +60,7 @@ export default function DeathStep({ project, onUpdate }: Props) {
   }, [project.id])
 
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'death', { ...cfg, extra_instructions: extraInstructions })
+    const p = await updateTableConfig(project.id, 'death', { ...cfg, extra_instructions: extraInstructions, source_filename: selectedFile?.filename ?? null })
     onUpdate(p)
   }
 
@@ -86,6 +87,7 @@ export default function DeathStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Death Table Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">

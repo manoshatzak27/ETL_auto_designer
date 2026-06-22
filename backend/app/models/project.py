@@ -45,6 +45,9 @@ class Project(Base):
     # Generated concept mapping CSVs (produced from concept_decisions)
     mapping_files: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Multiple source files  [{table_name, filename, path, delimiter, encoding, columns, row_count}]
+    source_files: Mapped[list] = mapped_column(JSON, default=list)
+
     # Per-table generated Python scripts  {table_name: python_source_code}
     generated_scripts: Mapped[dict] = mapped_column(JSON, default=dict)
 

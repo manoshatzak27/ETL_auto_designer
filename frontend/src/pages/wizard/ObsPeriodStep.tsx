@@ -15,6 +15,7 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
+import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface Props {
   project: Project
@@ -32,7 +33,7 @@ const DEFAULTS: ObservationPeriodConfig = {
 
 export default function ObsPeriodStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'obs-period', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
@@ -77,7 +78,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
   }, [project.id])
 
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'observation_period', { ...cfg, extra_instructions: extraInstructions })
+    const p = await updateTableConfig(project.id, 'observation_period', { ...cfg, extra_instructions: extraInstructions, source_filename: selectedFile?.filename ?? null })
     onUpdate(p)
   }
 
@@ -101,6 +102,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
+        {filePicker}
         <div>
           <h2 className="text-xl font-bold text-primary">Observation Period Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">

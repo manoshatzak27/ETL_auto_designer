@@ -99,11 +99,37 @@ def _xtr_doc(var: str, col: str, indent: int = 8) -> str:
     )
 
 
+def _source_file_params(project, table_cfg: dict) -> tuple[str, str, str]:
+    """Return (source_path_code, delim_repr, enc_repr) for a table's generated script.
+
+    When table_cfg contains source_filename that resolves to a project.source_files entry,
+    the generated script will embed that file's path and use its delimiter/encoding.
+    Falls back to ETL_SOURCE_PATH env var and project-level defaults otherwise.
+    """
+    filename = (table_cfg or {}).get("source_filename")
+    if filename and project.source_files:
+        entry = next((f for f in project.source_files if f.get("filename") == filename), None)
+        if entry:
+            path = entry.get("path", "")
+            delim = repr(entry.get("delimiter", ","))
+            enc = repr(entry.get("encoding", "utf-8"))
+            source_path_code = (
+                f"    source_path = r{repr(path)}\n"
+                "    if not os.path.exists(source_path):\n"
+                "        source_path = os.getenv('ETL_SOURCE_PATH')\n"
+            )
+            return source_path_code, delim, enc
+    return (
+        "    source_path = os.getenv('ETL_SOURCE_PATH')\n",
+        repr(project.source_delimiter or ","),
+        repr(project.source_encoding or "utf-8"),
+    )
+
+
 def _generate_location_script(project) -> str:
     """Deterministic template-based generator for the OMOP location script."""
     loc = (project.etl_config or {}).get("location", {})
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
+    source_path_code, delim, enc = _source_file_params(project, loc)
 
     a1_col = loc.get("address_1_col", "")
     a2_col = loc.get("address_2_col", "")
@@ -167,7 +193,7 @@ def _generate_location_script(project) -> str:
         "\n"
         "def main():\n"
         "   # Load environmental variables\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -332,8 +358,7 @@ def _generate_care_site_script(project) -> str:
     """Deterministic template-based generator for the OMOP care_site script."""
     cs_cfg = (project.etl_config or {}).get("care_site", {})
     loc = (project.etl_config or {}).get("location", {})
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
+    source_path_code, delim, enc = _source_file_params(project, cs_cfg)
 
     name_col = cs_cfg.get("care_site_name_col", "")
     pos_col = cs_cfg.get("place_of_service_col", "")
@@ -420,7 +445,7 @@ def _generate_care_site_script(project) -> str:
         "\n"
         "def main():\n"
         "    # Load environmental variables\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -479,8 +504,7 @@ def _generate_provider_script(project) -> str:
     """Deterministic template-based generator for the OMOP provider script."""
     prov = (project.etl_config or {}).get("provider", {})
     cs_cfg = (project.etl_config or {}).get("care_site", {})
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
+    source_path_code, delim, enc = _source_file_params(project, prov)
 
     name_col = prov.get("provider_name_col", "")
     npi_col = prov.get("npi_col", "")
@@ -592,7 +616,7 @@ def _generate_provider_script(project) -> str:
         "\n"
         "def main():\n"
         "    # Load environmental variables\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -676,8 +700,7 @@ def _generate_person_script(project) -> str:
     prov_cfg = (project.etl_config or {}).get("provider", {})
     dataset_options = (project.etl_config or {}).get("dataset_options", {})
     multiple_rows_per_patient = dataset_options.get("multiple_rows_per_patient", False)
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
+    source_path_code, delim, enc = _source_file_params(project, person)
 
     mappings = person.get("mappings", {})
 
@@ -976,7 +999,7 @@ def _generate_person_script(project) -> str:
         "\n"
         "def main():\n"
         "    # Load environmental variables\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -1057,9 +1080,8 @@ def _generate_visit_occurrence_script(project) -> str:
     cs_cfg = (project.etl_config or {}).get("care_site", {})
     prov_cfg = (project.etl_config or {}).get("provider", {})
 
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
-    source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
+    source_path_code, delim, enc = _source_file_params(project, visit_cfg)
+
 
     pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
     auto_increment = pid_cfg.get("auto_increment", False)
@@ -1153,14 +1175,13 @@ def _generate_visit_occurrence_script(project) -> str:
         "\n"
         f"VISIT_DEFS      = {vd_repr}  # visit definitions from the Visit step\n"
         "\n"
-        f"SOURCE_STEM      = {repr(source_stem)}\n"
         f"VISIT_SOURCE_COL = {repr(visit_source_col)}  # column that carries visit label (multi-row mode)\n"
         f"AUTO_NUMBER_VISITS = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
         "\n"
         "\n"
         "def main():\n"
         "    # Load environmental variables\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -1290,7 +1311,7 @@ def _generate_visit_occurrence_script(project) -> str:
         "                        label_norm = f'visit{_visit_counters[person_source_value]}'\n"
         "                    else:\n"
         "                        label_norm = vd['label'].lower().replace(' ', '_')\n"
-        "                    visit_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
+        "                    visit_source_value = f'{person_source_value}-{label_norm}'\n"
         "\n"
         "                    afc_col = vd.get('admitted_from_source_col') or ''\n"
         "                    if afc_col:\n"
@@ -1372,8 +1393,7 @@ def _generate_observation_period_script(project) -> str:
     obs = (project.etl_config or {}).get("observation_period", {})
     person_cfg = (project.etl_config or {}).get("person", {})
 
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
+    source_path_code, delim, enc = _source_file_params(project, obs)
 
     start_col = obs.get("start_date_col", "")
     end_col = obs.get("end_date_col", "")
@@ -1443,7 +1463,7 @@ def _generate_observation_period_script(project) -> str:
         "\n"
         "\n"
         "def main():\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -1530,8 +1550,7 @@ def _generate_death_script(project) -> str:
     death_cfg = (project.etl_config or {}).get("death", {})
     person_cfg = (project.etl_config or {}).get("person", {})
 
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
+    source_path_code, delim, enc = _source_file_params(project, death_cfg)
 
     pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
     pid_col = pid_cfg.get("source_col", "")
@@ -1648,7 +1667,7 @@ def _generate_death_script(project) -> str:
         "\n"
         "\n"
         "def main():\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
+        + source_path_code +
         "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load source data ---\n"
@@ -1772,10 +1791,6 @@ def _generate_stem_table_script(project) -> str:
     visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
     person_cfg = (project.etl_config or {}).get("person", {})
 
-    delim = repr(project.source_delimiter or ",")
-    enc = repr(project.source_encoding or "utf-8")
-    source_stem = Path(project.source_filename).stem if project.source_filename else "basedata"
-
     pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
     pid_col = pid_cfg.get("source_col", "")
 
@@ -1831,10 +1846,195 @@ def _generate_stem_table_script(project) -> str:
         if isinstance(v, dict) and v.get("strategy") != "skip"
     }
 
+    # Build per-source-file variable sets so the generated script can iterate
+    # each file independently and process only its own mapped columns.
+    col_to_file: dict[str, str] = {}
+    for sf in (project.source_files or []):
+        for col in (sf.get("columns") or []):
+            col_to_file[col.lower()] = sf.get("filename", "")
+
+    source_files_data: list[dict] = []
+    for sf in (project.source_files or []):
+        fn = sf.get("filename", "")
+        file_vars = sorted(
+            v for v in mapped_variables if col_to_file.get(v) == fn
+        )
+        if not file_vars:
+            continue
+        source_files_data.append({
+            "path": sf.get("path", ""),
+            "delimiter": sf.get("delimiter", ","),
+            "encoding": sf.get("encoding", "utf-8"),
+            "variables": file_vars,
+        })
+
+    # Fallback: single-file projects or projects where source_files metadata is absent.
+    if not source_files_data:
+        fallback_path, fallback_delim, fallback_enc = _source_file_params(project, stem_cfg)
+        # fallback_path is a multi-line code block; store a sentinel so main() handles it.
+        source_files_data = [{
+            "path": "__env__",
+            "delimiter": project.source_delimiter or ",",
+            "encoding": project.source_encoding or "utf-8",
+            "variables": sorted(mapped_variables),
+        }]
+
+    source_files_repr = repr(source_files_data)
+
     vdi_repr = repr(visit_date_info)
     vvm_repr = repr(variable_visit_map)
     so_repr = repr(special_overrides)
-    sv_repr = repr(sorted(mapped_variables))
+
+    # Inner per-row processing body — indented 8 spaces (inside the per-file for-loop).
+    inner_rows = (
+        "        for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+        "            try:\n"
+        "\n"
+        "                # Person identifier\n"
+        + "\n".join("    " + ln for ln in psv_lines.rstrip("\n").split("\n")) + "\n"
+        + "                person_id = person_lookup.get(person_source_value)\n"
+        "                if person_id is None:\n"
+        "                    print(f'WARNING: skipping row {_src_idx} — person \"{person_source_value}\" not found in person.csv')\n"
+        "                    continue\n"
+        "\n"
+        "                # Determine the visit label for this entire row (once, outside the variable loop)\n"
+        "                if VISIT_SOURCE_COL:\n"
+        "                    _row_vsv_raw = str(row.get(VISIT_SOURCE_COL, '')).strip()\n"
+        "                    _row_visit_label = _row_vsv_raw if (_row_vsv_raw and _row_vsv_raw != 'nan') else None\n"
+        "                    _row_date_col = DEFAULT_DATE_COL\n"
+        "                    _row_date_fmt = DEFAULT_DATE_FORMAT\n"
+        "                elif AUTO_NUMBER_VISITS:\n"
+        "                    _stem_visit_counters[person_source_value] = _stem_visit_counters.get(person_source_value, 0) + 1\n"
+        "                    _row_visit_label = f'visit{_stem_visit_counters[person_source_value]}'\n"
+        "                    _row_date_col = DEFAULT_DATE_COL\n"
+        "                    _row_date_fmt = DEFAULT_DATE_FORMAT\n"
+        "                else:\n"
+        "                    _row_visit_label = None  # resolved per-variable below\n"
+        "                    _row_date_col = None\n"
+        "                    _row_date_fmt = None\n"
+        "\n"
+        "                # Iterate over each clinical variable in this row\n"
+        "                for variable in df.columns:\n"
+        "                    try:\n"
+        "                        _lc = variable.lower()\n"
+        "                        # Only process columns the user explicitly mapped in\n"
+        "                        # Concepts step. Structural fields (visit_*_date, patient_id,\n"
+        "                        # death_date, gender, …) are absent from STEM_VARIABLES.\n"
+        "                        if _lc not in STEM_VARIABLES:\n"
+        "                            continue\n"
+        "                        if VISIT_SOURCE_COL or AUTO_NUMBER_VISITS:\n"
+        "                            if not _row_visit_label:\n"
+        "                                continue\n"
+        "                            visit_label = _row_visit_label\n"
+        "                            date_col = _row_date_col\n"
+        "                            date_fmt = _row_date_fmt\n"
+        "                        else:\n"
+        "                            visit_label = VARIABLE_VISIT_MAP.get(_lc)\n"
+        "                            if visit_label is None:\n"
+        "                                continue\n"
+        "                            date_info = VISIT_DATE_INFO.get(visit_label, {})\n"
+        "                            date_col = date_info.get('date_col', '')\n"
+        "                            date_fmt = date_info.get('date_format', '%Y-%m-%d')\n"
+        "\n"
+        "                        raw_value = row.get(variable)\n"
+        "                        if pd.isnull(raw_value) or str(raw_value).strip() in ('', 'nan'):\n"
+        "                            continue\n"
+        "\n"
+        "                        start_date = None\n"
+        "                        start_datetime = None\n"
+        "                        if date_col:\n"
+        "                            _raw_date = row.get(date_col)\n"
+        "                            _date_str = str(_raw_date).strip() if pd.notnull(_raw_date) else ''\n"
+        "                            if not _date_str or _date_str == 'nan':\n"
+        "                                continue\n"
+        "                            _dt = datetime.strptime(_date_str, date_fmt)\n"
+        "                            start_date = _dt.date()\n"
+        "                            start_datetime = _dt\n"
+        "\n"
+        "                        label_norm = visit_label.lower().replace(' ', '_')\n"
+        "                        visit_record_source_value = f'{person_source_value}-{label_norm}'\n"
+        "                        visit_occurrence_id = lookup_visit_occurrence_id(visit_record_source_value)\n"
+        "                        if visit_occurrence_id is None:\n"
+        "                            continue   # helper already logged the miss\n"
+        "\n"
+        "                        mapped = lookup_concept(variable, raw_value, var_map, val_map, var_val_map)\n"
+        "                        concept_id = mapped['concept_id']\n"
+        "                        # Skip when neither the variable nor the (variable, value) pair\n"
+        "                        # resolved to a concept — e.g. an unmapped value under a\n"
+        "                        # `map_values` strategy. No concept = no clinical event.\n"
+        "                        if not concept_id:\n"
+        "                            continue\n"
+        "                        value_as_concept_id = mapped['value_as_concept_id']\n"
+        "                        value_as_number = mapped['value_as_number']\n"
+        "                        unit_concept_id = mapped['unit_concept_id']\n"
+        "                        unit_source_value = None\n"
+        "                        _unit_col = unit_col_map.get(variable.lower())\n"
+        "                        if _unit_col:\n"
+        "                            _raw_unit = row.get(_unit_col)\n"
+        "                            if pd.notnull(_raw_unit) and str(_raw_unit).strip() not in ('', 'nan'):\n"
+        "                                unit_source_value = str(_raw_unit).strip()\n"
+        "                                _looked_up = unit_concept_map.get((variable.lower(), unit_source_value))\n"
+        "                                if _looked_up is not None:\n"
+        "                                    unit_concept_id = _looked_up\n"
+        "                                else:\n"
+        "                                    _info(f'INFO: variable {variable!r} — unit value {unit_source_value!r} not in unit_concept_map; unit_concept_id unchanged')\n"
+        "                        operator_concept_id = None\n"
+        "                        value_as_string = None\n"
+        "\n"
+        "                        override = OVERRIDE_MAP.get(variable.lower())\n"
+        "                        if override:\n"
+        "                            if override.get('field') == 'unit_concept_id' and override.get('value') is not None:\n"
+        "                                unit_concept_id = int(override['value'])\n"
+        "                            if override.get('value_as_string') is not None:\n"
+        "                                value_as_string = str(override['value_as_string'])\n"
+        "                            if override.get('value_map'):\n"
+        "                                vmap_entry = override['value_map'].get(str(raw_value))\n"
+        "                                if vmap_entry:\n"
+        "                                    for _k, _v in vmap_entry.items():\n"
+        "                                        if _k == 'operator_concept_id':\n"
+        "                                            operator_concept_id = int(_v)\n"
+        "                                        elif _k == 'value_as_number':\n"
+        "                                            value_as_number = float(_v)\n"
+        "                                        elif _k == 'value_as_string':\n"
+        "                                            value_as_string = str(_v)\n"
+        "                                        elif _k == 'unit_concept_id':\n"
+        "                                            unit_concept_id = int(_v)\n"
+        "\n"
+        "                        record_source_value = f'{person_source_value}-{variable}'\n"
+        "                        rows.append({\n"
+        "                            'id': stem_id,\n"
+        "                            'domain_id': domain_map.get(variable.lower(), ''),\n"
+        "                            'person_id': person_id,\n"
+        "                            'visit_occurrence_id': visit_occurrence_id,\n"
+        "                            'visit_detail_id': None,\n"
+        "                            'concept_id': concept_id if concept_id else 0,\n"
+        "                            'start_date': start_date,\n"
+        "                            'start_datetime': start_datetime,\n"
+        "                            'end_date': None,\n"
+        "                            'end_datetime': None,\n"
+        "                            'type_concept_id': 32879,\n"
+        "                            'operator_concept_id': operator_concept_id,\n"
+        "                            'value_as_number': value_as_number,\n"
+        "                            'value_as_string': value_as_string,\n"
+        "                            'value_as_concept_id': value_as_concept_id,\n"
+        "                            'unit_concept_id': unit_concept_id,\n"
+        "                            'unit_source_value': unit_source_value,\n"
+        "                            'range_low': None,\n"
+        "                            'range_high': None,\n"
+        "                            'provider_id': None,\n"
+        "                            'modifier_concept_id': None,\n"
+        "                            'quantity': None,\n"
+        "                            'value_source_value': str(raw_value),\n"
+        "                            'source_value': variable,\n"
+        "                            'source_concept_id': None,\n"
+        "                            'record_source_value': record_source_value,\n"
+        "                        })\n"
+        "                        stem_id += 1\n"
+        "                    except Exception as _var_exc:\n"
+        "                        print(f'WARNING: skipping variable {variable!r} for person {person_source_value} — {_var_exc}')\n"
+        "            except Exception as e:\n"
+        "                print(f'WARNING: skipping row — {e}')\n"
+    )
 
     return (
         "import os\n"
@@ -1857,7 +2057,6 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "\n"
         "# --- Module-level constants ---\n"
-        f"SOURCE_STEM          = {repr(source_stem)}\n"
         f"VISIT_SOURCE_COL     = {repr(visit_source_col)}   # column that carries visit label (multi-row mode)\n"
         f"AUTO_NUMBER_VISITS   = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
         f"DEFAULT_DATE_COL     = {repr(default_date_col)}\n"
@@ -1870,15 +2069,15 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         f"SPECIAL_OVERRIDES = {so_repr}\n"
         "\n"
-        "# Variables the user explicitly mapped in the Concepts step (strategy != 'skip').\n"
-        "# Source columns NOT in this set (structural fields already consumed by\n"
-        "# Person/Visit/Death/etc.) are skipped — even if their name happens to\n"
-        "# contain a visit-label substring like 'baseline'.\n"
-        f"STEM_VARIABLES = set({sv_repr})\n"
-        "\n"
         "OVERRIDE_MAP = {o['variable'].lower(): o for o in SPECIAL_OVERRIDES}\n"
         "\n"
         "visit_occurrence_id_lookup = None  # built lazily on first lookup call\n"
+        "\n"
+        "# Each entry: path, delimiter, encoding,\n"
+        "# variables (list → converted to set below for O(1) lookup).\n"
+        f"SOURCE_FILES = {source_files_repr}\n"
+        "for _sf in SOURCE_FILES:\n"
+        "    _sf['variables'] = set(_sf['variables'])\n"
         "\n"
         "\n"
         "def _load_csv(path):\n"
@@ -1938,11 +2137,7 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "\n"
         "def main():\n"
-        "    source_path = os.getenv('ETL_SOURCE_PATH')\n"
-        "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
-        "\n"
-        "    # --- Load source data ---\n"
-        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
         "\n"
         "    # --- Load lookup tables ---\n"
         "    person_lookup = {}\n"
@@ -1989,159 +2184,20 @@ def _generate_stem_table_script(project) -> str:
         "            unit_col_map[v]                               = str(r['unit_col'])\n"
         "            unit_concept_map[(v, str(r['unit_source_value']))] = int(r['unit_concept_id'])\n"
         "\n"
-        "    # --- Process rows ---\n"
+        "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
-        "    _stem_visit_counters = {}  # person_source_value -> int, for auto-numbering\n"
+        "    _stem_visit_counters = {}  # shared across files for consistent visit auto-numbering\n"
         "\n"
-        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
-        "        try:\n"
+        "    for _sf in SOURCE_FILES:\n"
+        "        _sp = _sf['path']\n"
+        "        if not _sp or not os.path.exists(_sp):\n"
+        "            _sp = os.getenv('ETL_SOURCE_PATH')\n"
+        "        STEM_VARIABLES = _sf['variables']\n"
+        "        df = pd.read_csv(_sp, delimiter=_sf['delimiter'], encoding=_sf['encoding'])\n"
         "\n"
-        "            # Person identifier\n"
-        + psv_lines
-        + "            person_id = person_lookup.get(person_source_value)\n"
-        "            if person_id is None:\n"
-        "                print(f'WARNING: skipping row {_src_idx} — person \"{person_source_value}\" not found in person.csv')\n"
-        "                continue\n"
-        "\n"
-        "            # Determine the visit label for this entire row (once, outside the variable loop)\n"
-        "            if VISIT_SOURCE_COL:\n"
-        "                _row_vsv_raw = str(row.get(VISIT_SOURCE_COL, '')).strip()\n"
-        "                _row_visit_label = _row_vsv_raw if (_row_vsv_raw and _row_vsv_raw != 'nan') else None\n"
-        "                _row_date_col = DEFAULT_DATE_COL\n"
-        "                _row_date_fmt = DEFAULT_DATE_FORMAT\n"
-        "            elif AUTO_NUMBER_VISITS:\n"
-        "                _stem_visit_counters[person_source_value] = _stem_visit_counters.get(person_source_value, 0) + 1\n"
-        "                _row_visit_label = f'visit{_stem_visit_counters[person_source_value]}'\n"
-        "                _row_date_col = DEFAULT_DATE_COL\n"
-        "                _row_date_fmt = DEFAULT_DATE_FORMAT\n"
-        "            else:\n"
-        "                _row_visit_label = None  # resolved per-variable below\n"
-        "                _row_date_col = None\n"
-        "                _row_date_fmt = None\n"
-        "\n"
-        "            # Iterate over each clinical variable in this row\n"
-        "            for variable in df.columns:\n"
-        "                try:\n"
-        "                    _lc = variable.lower()\n"
-        "                    # Only process columns the user explicitly mapped in\n"
-        "                    # Concepts step. Structural fields (visit_*_date, patient_id,\n"
-        "                    # death_date, gender, …) are absent from STEM_VARIABLES.\n"
-        "                    if _lc not in STEM_VARIABLES:\n"
-        "                        continue\n"
-        "                    if VISIT_SOURCE_COL or AUTO_NUMBER_VISITS:\n"
-        "                        if not _row_visit_label:\n"
-        "                            continue\n"
-        "                        visit_label = _row_visit_label\n"
-        "                        date_col = _row_date_col\n"
-        "                        date_fmt = _row_date_fmt\n"
-        "                    else:\n"
-        "                        visit_label = VARIABLE_VISIT_MAP.get(_lc)\n"
-        "                        if visit_label is None:\n"
-        "                            continue\n"
-        "                        date_info = VISIT_DATE_INFO.get(visit_label, {})\n"
-        "                        date_col = date_info.get('date_col', '')\n"
-        "                        date_fmt = date_info.get('date_format', '%Y-%m-%d')\n"
-        "\n"
-        "                    raw_value = row.get(variable)\n"
-        "                    if pd.isnull(raw_value) or str(raw_value).strip() in ('', 'nan'):\n"
-        "                        continue\n"
-        "\n"
-        "                    start_date = None\n"
-        "                    start_datetime = None\n"
-        "                    if date_col:\n"
-        "                        _raw_date = row.get(date_col)\n"
-        "                        _date_str = str(_raw_date).strip() if pd.notnull(_raw_date) else ''\n"
-        "                        if not _date_str or _date_str == 'nan':\n"
-        "                            continue\n"
-        "                        _dt = datetime.strptime(_date_str, date_fmt)\n"
-        "                        start_date = _dt.date()\n"
-        "                        start_datetime = _dt\n"
-        "\n"
-        "                    label_norm = visit_label.lower().replace(' ', '_')\n"
-        "                    visit_record_source_value = f'{person_source_value}-{SOURCE_STEM}-{label_norm}'\n"
-        "                    visit_occurrence_id = lookup_visit_occurrence_id(visit_record_source_value)\n"
-        "                    if visit_occurrence_id is None:\n"
-        "                        continue   # helper already logged the miss\n"
-        "\n"
-        "                    mapped = lookup_concept(variable, raw_value, var_map, val_map, var_val_map)\n"
-        "                    concept_id = mapped['concept_id']\n"
-        "                    # Skip when neither the variable nor the (variable, value) pair\n"
-        "                    # resolved to a concept — e.g. an unmapped value under a\n"
-        "                    # `map_values` strategy. No concept = no clinical event.\n"
-        "                    if not concept_id:\n"
-        "                        continue\n"
-        "                    value_as_concept_id = mapped['value_as_concept_id']\n"
-        "                    value_as_number = mapped['value_as_number']\n"
-        "                    unit_concept_id = mapped['unit_concept_id']\n"
-        "                    unit_source_value = None\n"
-        "                    _unit_col = unit_col_map.get(variable.lower())\n"
-        "                    if _unit_col:\n"
-        "                        _raw_unit = row.get(_unit_col)\n"
-        "                        if pd.notnull(_raw_unit) and str(_raw_unit).strip() not in ('', 'nan'):\n"
-        "                            unit_source_value = str(_raw_unit).strip()\n"
-        "                            _looked_up = unit_concept_map.get((variable.lower(), unit_source_value))\n"
-        "                            if _looked_up is not None:\n"
-        "                                unit_concept_id = _looked_up\n"
-        "                            else:\n"
-        "                                _info(f'INFO: variable {variable!r} — unit value {unit_source_value!r} not in unit_concept_map; unit_concept_id unchanged')\n"
-        "                    operator_concept_id = None\n"
-        "                    value_as_string = None\n"
-        "\n"
-        "                    override = OVERRIDE_MAP.get(variable.lower())\n"
-        "                    if override:\n"
-        "                        if override.get('field') == 'unit_concept_id' and override.get('value') is not None:\n"
-        "                            unit_concept_id = int(override['value'])\n"
-        "                        if override.get('value_as_string') is not None:\n"
-        "                            value_as_string = str(override['value_as_string'])\n"
-        "                        if override.get('value_map'):\n"
-        "                            vmap_entry = override['value_map'].get(str(raw_value))\n"
-        "                            if vmap_entry:\n"
-        "                                for _k, _v in vmap_entry.items():\n"
-        "                                    if _k == 'operator_concept_id':\n"
-        "                                        operator_concept_id = int(_v)\n"
-        "                                    elif _k == 'value_as_number':\n"
-        "                                        value_as_number = float(_v)\n"
-        "                                    elif _k == 'value_as_string':\n"
-        "                                        value_as_string = str(_v)\n"
-        "                                    elif _k == 'unit_concept_id':\n"
-        "                                        unit_concept_id = int(_v)\n"
-        "\n"
-        "                    record_source_value = f'{person_source_value}-{variable}'\n"
-        "                    rows.append({\n"
-        "                        'id': stem_id,\n"
-        "                        'domain_id': domain_map.get(variable.lower(), ''),\n"
-        "                        'person_id': person_id,\n"
-        "                        'visit_occurrence_id': visit_occurrence_id,\n"
-        "                        'visit_detail_id': None,\n"
-        "                        'concept_id': concept_id if concept_id else 0,\n"
-        "                        'start_date': start_date,\n"
-        "                        'start_datetime': start_datetime,\n"
-        "                        'end_date': None,\n"
-        "                        'end_datetime': None,\n"
-        "                        'type_concept_id': 32879,\n"
-        "                        'operator_concept_id': operator_concept_id,\n"
-        "                        'value_as_number': value_as_number,\n"
-        "                        'value_as_string': value_as_string,\n"
-        "                        'value_as_concept_id': value_as_concept_id,\n"
-        "                        'unit_concept_id': unit_concept_id,\n"
-        "                        'unit_source_value': unit_source_value,\n"
-        "                        'range_low': None,\n"
-        "                        'range_high': None,\n"
-        "                        'provider_id': None,\n"
-        "                        'modifier_concept_id': None,\n"
-        "                        'quantity': None,\n"
-        "                        'value_source_value': str(raw_value),\n"
-        "                        'source_value': variable,\n"
-        "                        'source_concept_id': None,\n"
-        "                        'record_source_value': record_source_value,\n"
-        "                    })\n"
-        "                    stem_id += 1\n"
-        "                except Exception as _var_exc:\n"
-        "                    print(f'WARNING: skipping variable {variable!r} for person {person_source_value} — {_var_exc}')\n"
-        "        except Exception as e:\n"
-        "            print(f'WARNING: skipping row — {e}')\n"
-        "\n"
+        + inner_rows
+        + "\n"
         "    # --- Write output ---\n"
         "    df_out = pd.DataFrame(rows)\n"
         "    output_file = os.path.join(output_dir, 'stem_table.csv')\n"
