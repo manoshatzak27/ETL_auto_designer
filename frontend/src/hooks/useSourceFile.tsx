@@ -20,6 +20,7 @@ export function useSourceFile<T = unknown>(
   project: Project,
   stepSlug: string,
   fileSwitch?: FileSwitch<T>,
+  pickerLabel = 'Source file for this step',
 ): UseSourceFileResult {
   const store = useStepFileSelection()
   const files = project.source_files ?? []
@@ -49,7 +50,7 @@ export function useSourceFile<T = unknown>(
 
   const filePicker = (
     <div className="flex flex-col gap-1.5">
-      <p className="text-xs text-muted-foreground font-medium">Source file for this step</p>
+      <p className="text-xs text-muted-foreground font-medium">{pickerLabel}</p>
       <div className="flex flex-wrap gap-2">
         {files.map((f, idx) => (
           <button

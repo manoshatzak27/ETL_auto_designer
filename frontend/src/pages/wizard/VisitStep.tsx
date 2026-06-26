@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import { getCrossStepUsedCols } from '../../utils/usedColumns'
-import type { Project, VisitOccurrenceConfig, VisitDefinition } from '../../types'
+import type { Project, VisitOccurrenceConfig, VisitDefinition, PerFileVisitConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
@@ -10,13 +10,12 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
-import { Plus, Trash2, ExternalLink } from 'lucide-react'
+import { Plus, Trash2, ExternalLink, FileText } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
-import { useSourceFile } from '../../hooks/useSourceFile'
 
 interface Props {
   project: Project
@@ -81,8 +80,8 @@ const DISCHARGED_TO_CONCEPTS = [
 ]
 
 const ATHENA = {
-  visit_concept_id:       'https://athena.ohdsi.org/search-terms/terms?domain=Visit&standardConcept=Standard&page=1&pageSize=15&query=',
-  visit_type_concept_id:  'https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query=',
+  visit_concept_id:          'https://athena.ohdsi.org/search-terms/terms?domain=Visit&standardConcept=Standard&page=1&pageSize=15&query=',
+  visit_type_concept_id:     'https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query=',
   admitted_from_concept_id:  'https://athena.ohdsi.org/search-terms/terms?domain=Visit&standardConcept=Standard&page=1&pageSize=15&query=',
   discharged_to_concept_id:  'https://athena.ohdsi.org/search-terms/terms?domain=Visit&standardConcept=Standard&page=1&pageSize=15&query=',
 }
@@ -91,12 +90,8 @@ const INPATIENT_CONCEPT_IDS = new Set([9201, 262, 42898160])
 
 function AthenaLink({ href }: { href: string }) {
   return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="inline-flex items-center gap-1 text-xs text-primary hover:underline"
-    >
+    <a href={href} target="_blank" rel="noopener noreferrer"
+      className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
       Find on Athena <ExternalLink className="w-3 h-3" />
     </a>
   )
@@ -104,27 +99,32 @@ function AthenaLink({ href }: { href: string }) {
 
 export default function VisitStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const { cols, filePicker, selectedFile } = useSourceFile(project, 'visit', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
+  const allFiles = project.source_files ?? []
+  const isMultiFileProject = allFiles.length > 1
+
+  // ── File selection ────────────────────────────────────────────────────────
+  const [selectedFiles, setSelectedFiles] = useState<string[]>([])
+  const [activeFilename, setActiveFilename] = useState<string>('')
+  const [fileConfigs, setFileConfigs] = useState<Record<string, PerFileVisitConfig>>({})
+
+  // ── Active file config state ──────────────────────────────────────────────
   const [cfg, setCfg] = useState<VisitOccurrenceConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
-  const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>(
-    () => DEFAULTS.visit_definitions.map(() => 'column' as const),
-  )
-  const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>(
-    () => DEFAULTS.visit_definitions.map(() => 'column' as const),
-  )
+  const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>(['column'])
+  const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>(['column'])
 
   const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
 
-  const getMode = (arr: Array<'column' | 'default'>, i: number): 'column' | 'default' => arr[i] ?? 'column'
+  // Columns for whichever file is active
+  const activeFile = allFiles.find(f => f.filename === activeFilename)
+  const cols = activeFile?.columns ?? project.source_columns ?? []
 
-  const setMode = (
-    setter: Dispatch<SetStateAction<Array<'column' | 'default'>>>,
-    i: number,
-    mode: 'column' | 'default',
-  ) => setter(prev => { const next = [...prev]; next[i] = mode; return next })
+  const getMode = (arr: Array<'column' | 'default'>, i: number): 'column' | 'default' => arr[i] ?? 'column'
+  const setMode = (setter: Dispatch<SetStateAction<Array<'column' | 'default'>>>, i: number, mode: 'column' | 'default') =>
+    setter(prev => { const next = [...prev]; next[i] = mode; return next })
+
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'visit_occurrence', ['observation_period']), [project.etl_config])
   const visitSourceCol = cfg.visit_source_col
   const availCols = (currentValue: string) =>
@@ -145,37 +145,123 @@ export default function VisitStep({ project, onUpdate }: Props) {
   )
   const typeConceptViolations = useDomainValidation(allTypeConceptIds, 'Type Concept')
 
+  // ── Apply a saved per-file config to UI state ─────────────────────────────
+  const applyFileConfig = (fc: PerFileVisitConfig | undefined) => {
+    const vds = fc?.visit_definitions ?? DEFAULTS.visit_definitions
+    setCfg(prev => ({
+      ...prev,
+      visit_definitions: vds,
+      visit_source_col: fc?.visit_source_col,
+      auto_number_visits: fc?.auto_number_visits,
+    }))
+    setConceptModes(vds.map(vd => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
+    setTypeModes(vds.map(vd => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
+  }
+
+  // ── Initial load ──────────────────────────────────────────────────────────
   useEffect(() => {
     getTableConfig(project.id, 'visit_occurrence').then((ex: VisitOccurrenceConfig & { extra_instructions?: string }) => {
-      if (ex && Object.keys(ex).length > 0) {
-        setExtraInstructions(ex.extra_instructions || '')
-        setCfg(ex)
-        const vds = ex.visit_definitions ?? []
-        setConceptModes(vds.map((vd: VisitDefinition) => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
-        setTypeModes(vds.map((vd: VisitDefinition) => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
+      setExtraInstructions(ex?.extra_instructions || '')
+
+      if (ex?.file_configs && ex.file_configs.length > 0) {
+        // Multi-file config saved
+        const configs: Record<string, PerFileVisitConfig> = {}
+        for (const fc of ex.file_configs) configs[fc.source_filename] = fc
+        setFileConfigs(configs)
+        const selected = ex.file_configs.map(fc => fc.source_filename)
+        setSelectedFiles(selected)
+        const first = selected[0] ?? ''
+        setActiveFilename(first)
+        applyFileConfig(configs[first])
+      } else if (ex && Object.keys(ex).length > 0) {
+        // Legacy single-file or brand-new single-file config
+        const vds = ex.visit_definitions ?? DEFAULTS.visit_definitions
+        setCfg({ ...DEFAULTS, ...ex })
+        setConceptModes(vds.map(vd => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
+        setTypeModes(vds.map(vd => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
+        const first = allFiles[0]?.filename ?? ''
+        setSelectedFiles(allFiles.map(f => f.filename))
+        setActiveFilename(first)
+      } else {
+        // Nothing saved yet — select all files by default
+        const initial = allFiles.map(f => f.filename)
+        setSelectedFiles(initial)
+        setActiveFilename(initial[0] ?? '')
+        applyFileConfig(undefined)  // first file gets the Baseline default
+        // Pre-populate subsequent files with a blank (unlabelled) template
+        if (initial.length > 1) {
+          const blankConfigs: Record<string, PerFileVisitConfig> = {}
+          for (const fname of initial.slice(1)) {
+            blankConfigs[fname] = { source_filename: fname, visit_definitions: [{ ...DEFAULT_VISIT }] }
+          }
+          setFileConfigs(blankConfigs)
+        }
       }
     })
     getColumnValues(project.id).then(setColumnInfos)
   }, [project.id])
 
-  const distinctVals = (col: string): string[] =>
-    columnInfos[col]?.distinct_values ?? []
+  const distinctVals = (col: string): string[] => columnInfos[col]?.distinct_values ?? []
 
-  const updateVisit = (i: number, field: keyof VisitDefinition, value: unknown) => {
+  // ── Per-file switch ───────────────────────────────────────────────────────
+  const buildCurrentFileConfig = (): PerFileVisitConfig => ({
+    source_filename: activeFilename,
+    visit_definitions: cfg.visit_definitions.map((vd, i) => ({
+      ...vd,
+      visit_concept_mode: getMode(conceptModes, i),
+      visit_type_mode: getMode(typeModes, i),
+    })),
+    visit_source_col: cfg.visit_source_col,
+    auto_number_visits: cfg.auto_number_visits,
+  })
+
+  const switchActiveFile = (newFilename: string) => {
+    if (newFilename === activeFilename) return
+    const updatedConfigs = { ...fileConfigs, [activeFilename]: buildCurrentFileConfig() }
+    setFileConfigs(updatedConfigs)
+    applyFileConfig(updatedConfigs[newFilename])
+    setActiveFilename(newFilename)
+  }
+
+  const toggleFile = (filename: string, checked: boolean) => {
+    if (checked) {
+      const isFirst = selectedFiles.length === 0
+      // Non-first files get a blank template if they have no saved config yet
+      if (!isFirst && !fileConfigs[filename]) {
+        setFileConfigs(prev => ({
+          ...prev,
+          [filename]: { source_filename: filename, visit_definitions: [{ ...DEFAULT_VISIT }] },
+        }))
+      }
+      setSelectedFiles(prev => prev.includes(filename) ? prev : [...prev, filename])
+      if (!activeFilename) setActiveFilename(filename)
+    } else {
+      const newSelected = selectedFiles.filter(f => f !== filename)
+      setSelectedFiles(newSelected)
+      if (activeFilename === filename) {
+        const updatedConfigs = { ...fileConfigs, [activeFilename]: buildCurrentFileConfig() }
+        setFileConfigs(updatedConfigs)
+        const fallback = newSelected[0]
+        applyFileConfig(fallback ? updatedConfigs[fallback] : undefined)
+        setActiveFilename(fallback ?? '')
+      }
+    }
+  }
+
+  // ── Visit definition helpers ──────────────────────────────────────────────
+  const updateVisit = (i: number, field: keyof VisitDefinition, value: unknown) =>
     setCfg(prev => {
       const defs = [...prev.visit_definitions]
       defs[i] = { ...defs[i], [field]: value }
       return { ...prev, visit_definitions: defs }
     })
-  }
 
-  const updateVisitFields = (i: number, fields: Partial<VisitDefinition>) => {
+  const updateVisitFields = (i: number, fields: Partial<VisitDefinition>) =>
     setCfg(prev => {
       const defs = [...prev.visit_definitions]
       defs[i] = { ...defs[i], ...fields }
       return { ...prev, visit_definitions: defs }
     })
-  }
 
   const addVisit = () => {
     setCfg(prev => ({ ...prev, visit_definitions: [...prev.visit_definitions, { ...DEFAULT_VISIT }] }))
@@ -191,32 +277,33 @@ export default function VisitStep({ project, onUpdate }: Props) {
 
   const switchConceptMode = (i: number, mode: 'column' | 'default') => {
     setMode(setConceptModes, i, mode)
-    if (mode === 'default') {
-      updateVisitFields(i, { visit_concept_mode: mode, visit_concept_source_col: undefined, visit_concept_value_map: undefined })
-    } else {
-      updateVisit(i, 'visit_concept_mode', mode)
-    }
+    if (mode === 'default') updateVisitFields(i, { visit_concept_mode: mode, visit_concept_source_col: undefined, visit_concept_value_map: undefined })
+    else updateVisit(i, 'visit_concept_mode', mode)
   }
 
   const switchTypeMode = (i: number, mode: 'column' | 'default') => {
     setMode(setTypeModes, i, mode)
-    if (mode === 'default') {
-      updateVisitFields(i, { visit_type_mode: mode, visit_type_source_col: undefined, visit_type_value_map: undefined })
-    } else {
-      updateVisit(i, 'visit_type_mode', mode)
-    }
+    if (mode === 'default') updateVisitFields(i, { visit_type_mode: mode, visit_type_source_col: undefined, visit_type_value_map: undefined })
+    else updateVisit(i, 'visit_type_mode', mode)
   }
 
+  // ── Save ──────────────────────────────────────────────────────────────────
   const saveConfig = async () => {
-    const cfgToSave = {
+    const currentFc = buildCurrentFileConfig()
+    const updatedConfigs = activeFilename ? { ...fileConfigs, [activeFilename]: currentFc } : fileConfigs
+
+    const fileConfigsArr = isMultiFileProject
+      ? selectedFiles
+          .filter(fname => allFiles.some(f => f.filename === fname))
+          .map(fname => updatedConfigs[fname] ?? { source_filename: fname, visit_definitions: [{ ...DEFAULT_VISIT }] })
+      : undefined
+
+    const cfgToSave: VisitOccurrenceConfig & { extra_instructions: string; source_filename: string | null; file_configs?: PerFileVisitConfig[] } = {
       ...cfg,
-      visit_definitions: cfg.visit_definitions.map((vd, i) => ({
-        ...vd,
-        visit_concept_mode: getMode(conceptModes, i),
-        visit_type_mode: getMode(typeModes, i),
-      })),
+      visit_definitions: currentFc.visit_definitions,
       extra_instructions: extraInstructions,
-      source_filename: selectedFile?.filename ?? null,
+      source_filename: activeFilename || null,
+      file_configs: fileConfigsArr,
     }
     const p = await updateTableConfig(project.id, 'visit_occurrence', cfgToSave)
     onUpdate(p)
@@ -242,7 +329,85 @@ export default function VisitStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
-        {filePicker}
+
+        {/* ── Multi-file instructions ────────────────────────────────────── */}
+        {isMultiFileProject && (
+          <div className="rounded-lg border border-border bg-secondary/40 px-4 py-3 text-sm text-muted-foreground space-y-1">
+            <p className="font-medium text-foreground">Building the visit table from multiple files</p>
+            <ul className="list-disc list-inside text-xs space-y-0.5">
+              <li>Select which files contribute visits using the checkboxes below.</li>
+              <li>Each file has its own set of visit definitions — configure them independently using the file tabs.</li>
+              <li>All visits across all files are written into a single <span className="font-medium text-foreground">visit_occurrence.csv</span>; IDs are assigned in file order.</li>
+              <li>Duplicate <span className="font-medium text-foreground">record_source_value</span> entries (same patient + same visit label) are skipped with a warning.</li>
+            </ul>
+          </div>
+        )}
+
+        {/* ── File selection card ─────────────────────────────────────────── */}
+        {isMultiFileProject && (
+          <Card className="flex flex-col gap-4 p-6">
+            <div>
+              <h3 className="font-semibold text-foreground">Source Files</h3>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Select which files contribute to the visit table. Each file has its own visit definitions configured independently.
+              </p>
+            </div>
+            <div className="flex flex-col gap-2">
+              {allFiles.map(f => {
+                const orderIdx = selectedFiles.indexOf(f.filename)
+                const isSelected = orderIdx !== -1
+                return (
+                  <label key={f.filename} className="flex items-center gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={e => toggleFile(f.filename, e.target.checked)}
+                      className="w-4 h-4 accent-primary rounded"
+                    />
+                    <FileText className="size-4 shrink-0 text-muted-foreground" />
+                    <span className="text-sm text-foreground">{f.filename}</span>
+                    {isSelected && orderIdx === 0 && (
+                      <span className="text-xs font-semibold bg-primary text-primary-foreground px-2 py-0.5 rounded-full">Primary</span>
+                    )}
+                    {isSelected && orderIdx > 0 && (
+                      <span className="text-xs text-muted-foreground">File #{orderIdx + 1}</span>
+                    )}
+                  </label>
+                )
+              })}
+            </div>
+            {selectedFiles.length === 0 && (
+              <p className="text-sm text-amber-600 dark:text-amber-400">Select at least one file to configure visit definitions.</p>
+            )}
+          </Card>
+        )}
+
+        {/* ── File config tabs (outside the card, like PersonStep) ─────────── */}
+        {selectedFiles.length > 1 && (
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs text-muted-foreground font-medium">Configure visit definitions per file</p>
+            <div className="flex flex-wrap gap-2">
+              {selectedFiles.map(fname => (
+                <button
+                  key={fname}
+                  onClick={() => switchActiveFile(fname)}
+                  className={
+                    fname === activeFilename
+                      ? 'flex items-center gap-1.5 rounded-full border border-primary bg-primary/10 px-3 py-1 text-xs font-semibold text-primary transition-colors'
+                      : 'flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground hover:border-primary/50 hover:text-foreground transition-colors'
+                  }
+                >
+                  <FileText className="size-3 flex-shrink-0" />
+                  {fname}
+                  {selectedFiles.indexOf(fname) === 0 && (
+                    <span className="ml-0.5 opacity-60">(Primary)</span>
+                  )}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div>
           <h2 className="text-xl font-bold text-primary">Visit Occurrence Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">
@@ -310,310 +475,288 @@ export default function VisitStep({ project, onUpdate }: Props) {
               [...typeConceptViolations.entries()].filter(([id]) => vdTypeIds.includes(id)),
             )
             return (
-            <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
-              {/* Visit header */}
-              <div className="flex items-center justify-between">
-                <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">
-                  {isMultiRow ? 'Visit Template' : `Visit ${i + 1}`}
-                </p>
-                {cfg.visit_definitions.length > 1 && (
-                  <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive">
-                    <Trash2 className="w-4 h-4" />
-                  </button>
-                )}
-              </div>
-
-              {/* ── Group 1: Identity & dates ─────────────────────────────── */}
-              <Card className="flex flex-col gap-3 p-4">
-                <h3 className="font-semibold text-foreground">Visit identity &amp; dates</h3>
-
-                <div>
-                  <Label>Visit label</Label>
-                  {isMultiRow ? (
-                    <p className="mt-1 text-xs text-muted-foreground italic">
-                      Label is derived from the visit identifier column at runtime.
-                    </p>
-                  ) : (
-                    <Input
-                      type="text"
-                      value={vd.label}
-                      onChange={e => updateVisit(i, 'label', e.target.value)}
-                      placeholder="e.g. Onset, Baseline, 10y Follow-up"
-                      className="mt-1"
-                    />
+              <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
+                {/* Visit header */}
+                <div className="flex items-center justify-between">
+                  <p className="text-base font-bold uppercase tracking-wide text-muted-foreground">
+                    {isMultiRow ? 'Visit Template' : `Visit ${i + 1}`}
+                  </p>
+                  {cfg.visit_definitions.length > 1 && (
+                    <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive">
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   )}
                 </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <FieldMapper
-                    label="Start date"
-                    sourceColumns={availCols(vd.date_col)}
-                    value={vd.date_col}
-                    onChange={v => updateVisit(i, 'date_col', v)}
-                    required={!vd.optional}
-                  />
-                  <FieldMapper
-                    label="Start time (optional)"
-                    sourceColumns={availCols(vd.time_col ?? '')}
-                    value={vd.time_col ?? ''}
-                    onChange={v => updateVisit(i, 'time_col', v || undefined)}
-                  />
-                  <FieldMapper
-                    label="End date (optional)"
-                    sourceColumns={availCols(vd.end_date_col ?? '')}
-                    value={vd.end_date_col ?? ''}
-                    onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
-                  />
-                  <FieldMapper
-                    label="End time (optional)"
-                    sourceColumns={availCols(vd.end_time_col ?? '')}
-                    value={vd.end_time_col ?? ''}
-                    onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
-                  />
-                </div>
+                {/* ── Group 1: Identity & dates ───────────────────────────── */}
+                <Card className="flex flex-col gap-3 p-4">
+                  <h3 className="font-semibold text-foreground">Visit identity &amp; dates</h3>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div>
-                    <Label>Date format</Label>
-                    <Input
-                      type="text"
-                      value={vd.date_format ?? '%Y-%m-%d'}
-                      onChange={e => updateVisit(i, 'date_format', e.target.value || '%Y-%m-%d')}
-                      placeholder="%Y-%m-%d"
-                      className="mt-1 font-mono"
-                    />
-                  </div>
-                  <div>
-                    <Label>Time format</Label>
-                    <Input
-                      type="text"
-                      value={vd.time_format ?? '%H:%M:%S'}
-                      onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
-                      placeholder="%H:%M:%S"
-                      className="mt-1 font-mono"
-                    />
-                  </div>
-                </div>
-
-                <p className="text-xs text-muted-foreground -mt-1">
-                  Python strptime formats. End date blank → same as start date. Missing time → midnight (00:00:00).
-                  Examples: <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>, <code className="bg-muted px-1 rounded">%H:%M</code>.
-                </p>
-              </Card>
-
-              {/* ── Group 2: visit_concept_id ──────────────────────────────── */}
-              <Card className="flex flex-col gap-4 p-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-foreground">visit_concept_id</h3>
-                  <AthenaLink href={ATHENA.visit_concept_id} />
-                </div>
-
-                <div className="flex gap-2">
-                  <button onClick={() => switchConceptMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => switchConceptMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
-                </div>
-
-                {getMode(conceptModes, i) === 'column' ? (
-                  <div className="flex flex-col gap-3">
-                    <FieldMapper
-                      label="visit_concept_id column"
-                      sourceColumns={availCols(vd.visit_concept_source_col ?? '')}
-                      value={vd.visit_concept_source_col ?? ''}
-                      onChange={v => updateVisit(i, 'visit_concept_source_col', v || undefined)}
-                      required={false}
-                      hint="Values will be mapped to OMOP Visit concept IDs using the table below."
-                    />
-                    {vd.visit_concept_source_col && (
-                      <ValueConceptMapper
-                        label="Source value → Visit concept ID"
-                        sourceValues={distinctVals(vd.visit_concept_source_col)}
-                        mapping={vd.visit_concept_value_map ?? {}}
-                        onChange={m => updateVisit(i, 'visit_concept_value_map', m)}
-                        hint="Assign an OMOP Visit concept ID to each source value."
+                    <Label>Visit label</Label>
+                    {isMultiRow ? (
+                      <p className="mt-1 text-xs text-muted-foreground italic">
+                        Label is derived from the visit identifier column at runtime.
+                      </p>
+                    ) : (
+                      <Input
+                        type="text"
+                        value={vd.label}
+                        onChange={e => updateVisit(i, 'label', e.target.value)}
+                        placeholder="e.g. Onset, Baseline, 10y Follow-up"
+                        className="mt-1"
                       />
                     )}
                   </div>
-                ) : (
-                  <div>
-                    <label className="text-xs text-muted-foreground">Concept ID</label>
-                    <Select
-                      value={vd.visit_concept_id}
-                      onChange={e => updateVisit(i, 'visit_concept_id', parseInt(e.target.value))}
-                      className="mt-1"
-                    >
-                      {VISIT_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                    </Select>
-                  </div>
-                )}
-                <DomainWarning violations={vdVisitViolations} expectedDomain="Visit" />
-              </Card>
 
-              {/* ── Group 4: visit_type_concept_id ────────────────────────── */}
-              <Card className="flex flex-col gap-4 p-6">
-                <div className="flex items-center justify-between">
-                  <h3 className="font-semibold text-foreground">visit_type_concept_id</h3>
-                  <AthenaLink href={ATHENA.visit_type_concept_id} />
-                </div>
-
-                <div className="flex gap-2">
-                  <button onClick={() => switchTypeMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
-                  <button onClick={() => switchTypeMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
-                </div>
-
-                {getMode(typeModes, i) === 'column' ? (
-                  <div className="flex flex-col gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <FieldMapper
-                      label="visit_type_concept_id column"
-                      sourceColumns={availCols(vd.visit_type_source_col ?? '')}
-                      value={vd.visit_type_source_col ?? ''}
-                      onChange={v => updateVisit(i, 'visit_type_source_col', v || undefined)}
-                      required={false}
-                      hint="Values will be mapped to OMOP Type concept IDs using the table below."
+                      label="Start date"
+                      sourceColumns={availCols(vd.date_col)}
+                      value={vd.date_col}
+                      onChange={v => updateVisit(i, 'date_col', v)}
+                      required={!vd.optional}
                     />
-                    {vd.visit_type_source_col && (
-                      <ValueConceptMapper
-                        label="Source value → Type concept ID"
-                        sourceValues={distinctVals(vd.visit_type_source_col)}
-                        mapping={vd.visit_type_value_map ?? {}}
-                        onChange={m => updateVisit(i, 'visit_type_value_map', m)}
-                        hint="Assign an OMOP Type concept ID to each source value."
-                      />
-                    )}
-                  </div>
-                ) : (
-                  <div>
-                    <label className="text-xs text-muted-foreground">Concept ID</label>
-                    <Select
-                      value={vd.type_concept_id}
-                      onChange={e => updateVisit(i, 'type_concept_id', parseInt(e.target.value))}
-                      className="mt-1"
-                    >
-                      {TYPE_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                    </Select>
-                  </div>
-                )}
-                <DomainWarning violations={vdTypeViolations} expectedDomain="Type Concept" />
-              </Card>
-
-              {/* Inpatient fields */}
-              {INPATIENT_CONCEPT_IDS.has(vd.visit_concept_id) && (
-                <Card className="flex flex-col gap-5 p-6">
-                  <h3 className="font-semibold text-foreground">Inpatient / multi-day visit fields</h3>
-
-                  {/* admitted_from_concept_id */}
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <Label>admitted_from_concept_id</Label>
-                      <AthenaLink href={ATHENA.admitted_from_concept_id} />
-                    </div>
                     <FieldMapper
-                      label="Map from source column (optional)"
-                      sourceColumns={availCols(vd.admitted_from_source_col ?? '')}
-                      value={vd.admitted_from_source_col ?? ''}
-                      onChange={v => updateVisit(i, 'admitted_from_source_col', v || undefined)}
-                      required={false}
-                      hint="Column whose values will be mapped to admitted_from_concept_id and admitted_from_source_value."
+                      label="Start time (optional)"
+                      sourceColumns={availCols(vd.time_col ?? '')}
+                      value={vd.time_col ?? ''}
+                      onChange={v => updateVisit(i, 'time_col', v || undefined)}
                     />
-                    {vd.admitted_from_source_col && (
-                      <ValueConceptMapper
-                        label="Source value → admitted_from concept ID"
-                        sourceValues={distinctVals(vd.admitted_from_source_col)}
-                        mapping={vd.admitted_from_value_map ?? {}}
-                        onChange={m => updateVisit(i, 'admitted_from_value_map', m)}
-                        hint="Assign an OMOP Visit concept ID. Use 0 for home / self-referred."
+                    <FieldMapper
+                      label="End date (optional)"
+                      sourceColumns={availCols(vd.end_date_col ?? '')}
+                      value={vd.end_date_col ?? ''}
+                      onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
+                    />
+                    <FieldMapper
+                      label="End time (optional)"
+                      sourceColumns={availCols(vd.end_time_col ?? '')}
+                      value={vd.end_time_col ?? ''}
+                      onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
+                    />
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <Label>Date format</Label>
+                      <Input
+                        type="text"
+                        value={vd.date_format ?? '%Y-%m-%d'}
+                        onChange={e => updateVisit(i, 'date_format', e.target.value || '%Y-%m-%d')}
+                        placeholder="%Y-%m-%d"
+                        className="mt-1 font-mono"
                       />
-                    )}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-xs text-muted-foreground">
-                          {vd.admitted_from_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
-                        </label>
-                        <Select
-                          value={vd.admitted_from_concept_id ?? 0}
-                          onChange={e => updateVisit(i, 'admitted_from_concept_id', parseInt(e.target.value))}
-                          className="mt-1"
-                        >
-                          {ADMITTED_FROM_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </Select>
-                      </div>
-                      {!vd.admitted_from_source_col && (
-                        <div>
-                          <Label>admitted_from_source_value</Label>
-                          <Input
-                            type="text"
-                            value={vd.admitted_from_source_value ?? ''}
-                            onChange={e => updateVisit(i, 'admitted_from_source_value', e.target.value || undefined)}
-                            placeholder="e.g. HOME, ER, LTC"
-                            className="mt-1"
-                          />
-                        </div>
-                      )}
+                    </div>
+                    <div>
+                      <Label>Time format</Label>
+                      <Input
+                        type="text"
+                        value={vd.time_format ?? '%H:%M:%S'}
+                        onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
+                        placeholder="%H:%M:%S"
+                        className="mt-1 font-mono"
+                      />
                     </div>
                   </div>
 
-                  {/* discharged_to_concept_id */}
-                  <div className="flex flex-col gap-2">
-                    <div className="flex items-center justify-between">
-                      <Label>discharged_to_concept_id</Label>
-                      <AthenaLink href={ATHENA.discharged_to_concept_id} />
-                    </div>
-                    <FieldMapper
-                      label="Map from source column (optional)"
-                      sourceColumns={availCols(vd.discharged_to_source_col ?? '')}
-                      value={vd.discharged_to_source_col ?? ''}
-                      onChange={v => updateVisit(i, 'discharged_to_source_col', v || undefined)}
-                      required={false}
-                      hint="Column whose values will be mapped to discharged_to_concept_id and discharged_to_source_value."
-                    />
-                    {vd.discharged_to_source_col && (
-                      <ValueConceptMapper
-                        label="Source value → discharged_to concept ID"
-                        sourceValues={distinctVals(vd.discharged_to_source_col)}
-                        mapping={vd.discharged_to_value_map ?? {}}
-                        onChange={m => updateVisit(i, 'discharged_to_value_map', m)}
-                        hint="Assign an OMOP Visit concept ID. Use 0 for home."
-                      />
-                    )}
-                    <div className="grid grid-cols-2 gap-4">
-                      <div>
-                        <label className="text-xs text-muted-foreground">
-                          {vd.discharged_to_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
-                        </label>
-                        <Select
-                          value={vd.discharged_to_concept_id ?? 0}
-                          onChange={e => updateVisit(i, 'discharged_to_concept_id', parseInt(e.target.value))}
-                          className="mt-1"
-                        >
-                          {DISCHARGED_TO_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
-                        </Select>
-                      </div>
-                      {!vd.discharged_to_source_col && (
-                        <div>
-                          <Label>discharged_to_source_value</Label>
-                          <Input
-                            type="text"
-                            value={vd.discharged_to_source_value ?? ''}
-                            onChange={e => updateVisit(i, 'discharged_to_source_value', e.target.value || undefined)}
-                            placeholder="e.g. HOME, SNF, TRANSFER"
-                            className="mt-1"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
+                  <p className="text-xs text-muted-foreground -mt-1">
+                    Python strptime formats. End date blank → same as start date. Missing time → midnight (00:00:00).
+                    Examples: <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>, <code className="bg-muted px-1 rounded">%H:%M</code>.
+                  </p>
                 </Card>
-              )}
 
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={vd.optional}
-                  onChange={e => updateVisit(i, 'optional', e.target.checked)}
-                  className="rounded accent-primary"
-                />
-                Optional (skip if date column is empty)
-              </label>
-            </div>
+                {/* ── Group 2: visit_concept_id ───────────────────────────── */}
+                <Card className="flex flex-col gap-4 p-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-foreground">visit_concept_id</h3>
+                    <AthenaLink href={ATHENA.visit_concept_id} />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button onClick={() => switchConceptMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+                    <button onClick={() => switchConceptMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(conceptModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+                  </div>
+
+                  {getMode(conceptModes, i) === 'column' ? (
+                    <div className="flex flex-col gap-3">
+                      <FieldMapper
+                        label="visit_concept_id column"
+                        sourceColumns={availCols(vd.visit_concept_source_col ?? '')}
+                        value={vd.visit_concept_source_col ?? ''}
+                        onChange={v => updateVisit(i, 'visit_concept_source_col', v || undefined)}
+                        hint="Values will be mapped to OMOP Visit concept IDs using the table below."
+                      />
+                      {vd.visit_concept_source_col && (
+                        <ValueConceptMapper
+                          label="Source value → Visit concept ID"
+                          sourceValues={distinctVals(vd.visit_concept_source_col)}
+                          mapping={vd.visit_concept_value_map ?? {}}
+                          onChange={m => updateVisit(i, 'visit_concept_value_map', m)}
+                          hint="Assign an OMOP Visit concept ID to each source value."
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-xs text-muted-foreground">Concept ID</label>
+                      <Select value={vd.visit_concept_id} onChange={e => updateVisit(i, 'visit_concept_id', parseInt(e.target.value))} className="mt-1">
+                        {VISIT_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                      </Select>
+                    </div>
+                  )}
+                  <DomainWarning violations={vdVisitViolations} expectedDomain="Visit" />
+                </Card>
+
+                {/* ── Group 3: visit_type_concept_id ─────────────────────── */}
+                <Card className="flex flex-col gap-4 p-6">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-foreground">visit_type_concept_id</h3>
+                    <AthenaLink href={ATHENA.visit_type_concept_id} />
+                  </div>
+
+                  <div className="flex gap-2">
+                    <button onClick={() => switchTypeMode(i, 'column')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'column' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Map a column</button>
+                    <button onClick={() => switchTypeMode(i, 'default')} className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${getMode(typeModes, i) === 'default' ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-secondary/80'}`}>Set default</button>
+                  </div>
+
+                  {getMode(typeModes, i) === 'column' ? (
+                    <div className="flex flex-col gap-3">
+                      <FieldMapper
+                        label="visit_type_concept_id column"
+                        sourceColumns={availCols(vd.visit_type_source_col ?? '')}
+                        value={vd.visit_type_source_col ?? ''}
+                        onChange={v => updateVisit(i, 'visit_type_source_col', v || undefined)}
+                        hint="Values will be mapped to OMOP Type concept IDs using the table below."
+                      />
+                      {vd.visit_type_source_col && (
+                        <ValueConceptMapper
+                          label="Source value → Type concept ID"
+                          sourceValues={distinctVals(vd.visit_type_source_col)}
+                          mapping={vd.visit_type_value_map ?? {}}
+                          onChange={m => updateVisit(i, 'visit_type_value_map', m)}
+                          hint="Assign an OMOP Type concept ID to each source value."
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <label className="text-xs text-muted-foreground">Concept ID</label>
+                      <Select value={vd.type_concept_id} onChange={e => updateVisit(i, 'type_concept_id', parseInt(e.target.value))} className="mt-1">
+                        {TYPE_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                      </Select>
+                    </div>
+                  )}
+                  <DomainWarning violations={vdTypeViolations} expectedDomain="Type Concept" />
+                </Card>
+
+                {/* Inpatient fields */}
+                {INPATIENT_CONCEPT_IDS.has(vd.visit_concept_id) && (
+                  <Card className="flex flex-col gap-5 p-6">
+                    <h3 className="font-semibold text-foreground">Inpatient / multi-day visit fields</h3>
+
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <Label>admitted_from_concept_id</Label>
+                        <AthenaLink href={ATHENA.admitted_from_concept_id} />
+                      </div>
+                      <FieldMapper
+                        label="Map from source column (optional)"
+                        sourceColumns={availCols(vd.admitted_from_source_col ?? '')}
+                        value={vd.admitted_from_source_col ?? ''}
+                        onChange={v => updateVisit(i, 'admitted_from_source_col', v || undefined)}
+                        hint="Column whose values will be mapped to admitted_from_concept_id and admitted_from_source_value."
+                      />
+                      {vd.admitted_from_source_col && (
+                        <ValueConceptMapper
+                          label="Source value → admitted_from concept ID"
+                          sourceValues={distinctVals(vd.admitted_from_source_col)}
+                          mapping={vd.admitted_from_value_map ?? {}}
+                          onChange={m => updateVisit(i, 'admitted_from_value_map', m)}
+                          hint="Assign an OMOP Visit concept ID. Use 0 for home / self-referred."
+                        />
+                      )}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs text-muted-foreground">
+                            {vd.admitted_from_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
+                          </label>
+                          <Select value={vd.admitted_from_concept_id ?? 0} onChange={e => updateVisit(i, 'admitted_from_concept_id', parseInt(e.target.value))} className="mt-1">
+                            {ADMITTED_FROM_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                          </Select>
+                        </div>
+                        {!vd.admitted_from_source_col && (
+                          <div>
+                            <Label>admitted_from_source_value</Label>
+                            <Input
+                              type="text"
+                              value={vd.admitted_from_source_value ?? ''}
+                              onChange={e => updateVisit(i, 'admitted_from_source_value', e.target.value || undefined)}
+                              placeholder="e.g. HOME, ER, LTC"
+                              className="mt-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2">
+                      <div className="flex items-center justify-between">
+                        <Label>discharged_to_concept_id</Label>
+                        <AthenaLink href={ATHENA.discharged_to_concept_id} />
+                      </div>
+                      <FieldMapper
+                        label="Map from source column (optional)"
+                        sourceColumns={availCols(vd.discharged_to_source_col ?? '')}
+                        value={vd.discharged_to_source_col ?? ''}
+                        onChange={v => updateVisit(i, 'discharged_to_source_col', v || undefined)}
+                        hint="Column whose values will be mapped to discharged_to_concept_id and discharged_to_source_value."
+                      />
+                      {vd.discharged_to_source_col && (
+                        <ValueConceptMapper
+                          label="Source value → discharged_to concept ID"
+                          sourceValues={distinctVals(vd.discharged_to_source_col)}
+                          mapping={vd.discharged_to_value_map ?? {}}
+                          onChange={m => updateVisit(i, 'discharged_to_value_map', m)}
+                          hint="Assign an OMOP Visit concept ID. Use 0 for home."
+                        />
+                      )}
+                      <div className="grid grid-cols-2 gap-4">
+                        <div>
+                          <label className="text-xs text-muted-foreground">
+                            {vd.discharged_to_source_col ? 'Default / fallback concept ID' : 'Concept ID'}
+                          </label>
+                          <Select value={vd.discharged_to_concept_id ?? 0} onChange={e => updateVisit(i, 'discharged_to_concept_id', parseInt(e.target.value))} className="mt-1">
+                            {DISCHARGED_TO_CONCEPTS.map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+                          </Select>
+                        </div>
+                        {!vd.discharged_to_source_col && (
+                          <div>
+                            <Label>discharged_to_source_value</Label>
+                            <Input
+                              type="text"
+                              value={vd.discharged_to_source_value ?? ''}
+                              onChange={e => updateVisit(i, 'discharged_to_source_value', e.target.value || undefined)}
+                              placeholder="e.g. HOME, SNF, TRANSFER"
+                              className="mt-1"
+                            />
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </Card>
+                )}
+
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-muted-foreground">
+                  <input
+                    type="checkbox"
+                    checked={vd.optional}
+                    onChange={e => updateVisit(i, 'optional', e.target.checked)}
+                    className="rounded accent-primary"
+                  />
+                  Optional (skip if date column is empty)
+                </label>
+              </div>
             )
           })}
         </div>

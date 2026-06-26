@@ -39,8 +39,7 @@ export interface Project {
 
 // ---- Per-table config shapes ----
 
-export interface PersonConfig {
-  enabled: boolean
+export interface PersonFileConfig {
   mappings: {
     person_id: FieldMapping
     gender_concept_id: FieldMappingWithValueMap
@@ -53,8 +52,25 @@ export interface PersonConfig {
   }
   birth_time_col?: string
   birth_time_format?: string
-  required_source_cols: string[]
+  required_source_cols?: string[]
   // UI mode persistence
+  gender_mode?: 'column' | 'default'
+  race_mode?: 'column' | 'default'
+  ethnicity_mode?: 'column' | 'default'
+}
+
+export interface PersonConfig {
+  enabled: boolean
+  // Ordered list of selected source files; first = primary
+  source_files: string[]
+  // Per-file column mappings
+  file_configs: Record<string, PersonFileConfig>
+  required_source_cols: string[]
+  // Legacy single-file fields kept for migration of old saved configs
+  mappings?: PersonFileConfig['mappings']
+  source_filename?: string
+  birth_time_col?: string
+  birth_time_format?: string
   gender_mode?: 'column' | 'default'
   race_mode?: 'column' | 'default'
   ethnicity_mode?: 'column' | 'default'
@@ -118,8 +134,17 @@ export interface VisitDefinition {
   discharged_to_source_value?: string
 }
 
+export interface PerFileVisitConfig {
+  source_filename: string
+  visit_definitions: VisitDefinition[]
+  visit_source_col?: string
+  auto_number_visits?: boolean
+}
+
 export interface VisitOccurrenceConfig {
   enabled: boolean
+  file_configs?: PerFileVisitConfig[]
+  // Legacy single-file fields (preserved for backward compat):
   visit_definitions: VisitDefinition[]
   visit_source_col?: string
   auto_number_visits?: boolean

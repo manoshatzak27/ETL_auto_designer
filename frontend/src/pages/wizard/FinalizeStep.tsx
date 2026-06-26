@@ -130,6 +130,9 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
       const result = await executeProject(project.id, outputMode)
       setExecResult(result)
       onUpdate({ ...project, last_execution_status: result.status, output_files: result.output_files })
+      // Bust cached previews so re-execution shows fresh data
+      setPreviewCache({})
+      setActivePreviewTab(null)
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } }
       const msg = err?.response?.data?.detail || 'Execution failed.'

@@ -693,6 +693,721 @@ def _generate_provider_script(project) -> str:
     )
 
 
+def _person_pid_cfg(person_cfg: dict) -> dict:
+    """Return the person_id FieldMapping from either new (file_configs) or legacy (mappings) format."""
+    file_configs = person_cfg.get("file_configs", {})
+    source_files = person_cfg.get("source_files", [])
+    if file_configs and source_files:
+        primary_fc = file_configs.get(source_files[0], {})
+        return (primary_fc.get("mappings") or {}).get("person_id") or {}
+    return (person_cfg.get("mappings") or {}).get("person_id") or {}
+
+
+def _person_parse_file_cfg(fc: dict) -> dict:
+    """Parse a PersonFileConfig dict into a flat vars dict for code generation."""
+    mappings = fc.get("mappings", {})
+    pid_cfg = mappings.get("person_id") or {}
+    gender_cfg = mappings.get("gender_concept_id") or {}
+    dob_cfg = mappings.get("year_of_birth") or {}
+    race_cfg = mappings.get("race_concept_id") or {}
+    eth_cfg = mappings.get("ethnicity_concept_id") or {}
+
+    auto_increment = pid_cfg.get("auto_increment", False)
+    pid_col = pid_cfg.get("source_col", "")
+    pid_transform = pid_cfg.get("transform", "int_float")
+
+    gender_col = gender_cfg.get("source_col", "")
+    gender_map = gender_cfg.get("value_map") or {}
+    gender_default = int(gender_cfg.get("default") or 0)
+
+    dob_col = dob_cfg.get("source_col", "")
+    date_format = dob_cfg.get("date_format", "%Y-%m-%d")
+    birth_time_col = fc.get("birth_time_col", "")
+    birth_time_format = fc.get("birth_time_format", "%H:%M:%S") or "%H:%M:%S"
+
+    if "constant" in race_cfg:
+        race_mode, race_constant = "constant", int(race_cfg["constant"])
+        race_col, race_map, race_default = "", {}, 0
+    elif race_cfg.get("source_col"):
+        race_mode = "column"
+        race_col = race_cfg["source_col"]
+        race_map = race_cfg.get("value_map") or {}
+        race_default = int(race_cfg.get("default") or 0)
+        race_constant = 0
+    else:
+        race_mode = "default"
+        race_default = int(race_cfg.get("default") or 0)
+        race_col, race_map, race_constant = "", {}, 0
+
+    if "constant" in eth_cfg:
+        eth_mode, eth_constant = "constant", int(eth_cfg["constant"])
+        eth_col, eth_map, eth_default = "", {}, 0
+    elif eth_cfg.get("source_col"):
+        eth_mode = "column"
+        eth_col = eth_cfg["source_col"]
+        eth_map = eth_cfg.get("value_map") or {}
+        eth_default = int(eth_cfg.get("default") or 0)
+        eth_constant = 0
+    else:
+        eth_mode = "default"
+        eth_default = int(eth_cfg.get("default") or 0)
+        eth_col, eth_map, eth_constant = "", {}, 0
+
+    return dict(
+        auto_increment=auto_increment, pid_col=pid_col, pid_transform=pid_transform,
+        gender_col=gender_col, gender_map=gender_map, gender_default=gender_default,
+        dob_col=dob_col, date_format=date_format,
+        birth_time_col=birth_time_col, birth_time_format=birth_time_format,
+        race_mode=race_mode, race_col=race_col, race_map=race_map,
+        race_default=race_default, race_constant=race_constant if "constant" in race_cfg or not race_cfg.get("source_col") else 0,
+        eth_mode=eth_mode, eth_col=eth_col, eth_map=eth_map,
+        eth_default=eth_default, eth_constant=eth_constant if "constant" in eth_cfg or not eth_cfg.get("source_col") else 0,
+    )
+
+
+def _person_concept_map_code(v: dict, indent: str = "    ") -> str:
+    """Generate concept-map variable initialisation lines for a single file block."""
+    out = f"{indent}gender_map = {json.dumps(v['gender_map'])}\n"
+    out += f"{indent}gender_default = {v['gender_default']}\n"
+    if v["race_mode"] == "column":
+        out += f"{indent}race_map = {json.dumps(v['race_map'])}\n"
+        out += f"{indent}race_default = {v['race_default']}\n"
+    if v["eth_mode"] == "column":
+        out += f"{indent}ethnicity_map = {json.dumps(v['eth_map'])}\n"
+        out += f"{indent}ethnicity_default = {v['eth_default']}\n"
+    return out
+
+
+def _person_row_body(v: dict, loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "            ") -> str:
+    """Generate the per-row extraction body (pid, dob, demographics, lookups)."""
+    pid_col = v["pid_col"]
+    auto_increment = v["auto_increment"]
+    dob_col = v["dob_col"]
+    date_format = v["date_format"]
+    birth_time_col = v["birth_time_col"]
+    birth_time_format = v["birth_time_format"]
+    gender_col = v["gender_col"]
+    gender_default = v["gender_default"]
+    race_mode = v["race_mode"]
+    race_col = v["race_col"]
+    race_default = v["race_default"]
+    race_constant = v["race_constant"]
+    eth_mode = v["eth_mode"]
+    eth_col = v["eth_col"]
+    eth_default = v["eth_default"]
+    eth_constant = v["eth_constant"]
+
+    # --- pid ---
+    if pid_col:
+        pid_lines = (
+            f"{indent}_pid_raw = row.get({repr(pid_col)})\n"
+            f"{indent}if pd.isnull(_pid_raw):\n"
+            f'{indent}    print(f"WARNING: skipping row {{_src_idx}} — person_id column {repr(pid_col)} is null or missing")\n'
+            f"{indent}    continue\n"
+            f"{indent}person_source_value = str(_pid_raw)\n"
+        )
+    else:
+        pid_lines = f"{indent}person_source_value = str(_src_idx)\n"
+
+    # --- dob ---
+    if birth_time_col:
+        birth_time_lines = (
+            f"{indent}_btv = row.get({repr(birth_time_col)})\n"
+            f"{indent}_bt_str = str(_btv).strip() if pd.notnull(_btv) else ''\n"
+            f"{indent}if _bt_str and _bt_str != 'nan':\n"
+            f"{indent}    try:\n"
+            f"{indent}        birth_datetime = datetime.combine(_dob, datetime.strptime(_bt_str, {repr(birth_time_format)}).time())\n"
+            f"{indent}    except Exception:\n"
+            f"{indent}        _info(f'INFO: person {{person_source_value}} — could not parse birth time {{_bt_str!r}}; defaulting to midnight')\n"
+            f"{indent}        birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+            f"{indent}else:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — birth time column is empty; birth_datetime defaulting to midnight')\n"
+            f"{indent}    birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+        )
+    else:
+        birth_time_lines = f"{indent}birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+
+    if dob_col:
+        dob_lines = (
+            f"{indent}_dob_raw = str(row.get({repr(dob_col)}, '')).strip()\n"
+            f"{indent}if not _dob_raw or _dob_raw == 'nan':\n"
+            f'{indent}    print(f"WARNING: skipping row {{_src_idx}} — birth-date column {repr(dob_col)} is empty or null")\n'
+            f"{indent}    continue\n"
+            f"{indent}_dob = datetime.strptime(_dob_raw, {repr(date_format)})\n"
+            f"{indent}year_of_birth = _dob.year\n"
+            f"{indent}month_of_birth = _dob.month\n"
+            f"{indent}day_of_birth = _dob.day\n"
+            + birth_time_lines
+        )
+    else:
+        dob_lines = (
+            f'{indent}print(f"WARNING: skipping row {{_src_idx}} — no birth-date column configured; year_of_birth is required by OMOP CDM")\n'
+            f"{indent}continue\n"
+        )
+
+    # --- gender ---
+    if gender_col:
+        gender_lines = (
+            _xtr("gender_source_value", gender_col, len(indent)) + "\n"
+            f"{indent}if gender_source_value is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — gender column is empty; gender_concept_id set to {{gender_default}}')\n"
+            f"{indent}    gender_concept_id = gender_default\n"
+            f"{indent}elif gender_source_value not in gender_map:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — gender value {{gender_source_value!r}} not in map; gender_concept_id set to {{gender_default}}')\n"
+            f"{indent}    gender_concept_id = gender_default\n"
+            f"{indent}else:\n"
+            f"{indent}    gender_concept_id = gender_map[gender_source_value]\n"
+        )
+    else:
+        gender_lines = (
+            _xtr_doc("gender_source_value", "", len(indent)) + "\n"
+            f"{indent}gender_concept_id = {gender_default}\n"
+        )
+
+    # --- race ---
+    if race_mode == "column":
+        race_lines = (
+            _xtr("race_source_value", race_col, len(indent)) + "\n"
+            f"{indent}if race_source_value is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — race column is empty; race_concept_id set to {{race_default}}')\n"
+            f"{indent}    race_concept_id = race_default\n"
+            f"{indent}elif race_source_value not in race_map:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — race value {{race_source_value!r}} not in map; race_concept_id set to {{race_default}}')\n"
+            f"{indent}    race_concept_id = race_default\n"
+            f"{indent}else:\n"
+            f"{indent}    race_concept_id = race_map[race_source_value]\n"
+        )
+    elif race_mode == "constant":
+        race_lines = f"{indent}race_concept_id = {race_constant}\n{indent}race_source_value = None\n"
+    else:
+        race_lines = f"{indent}race_concept_id = {race_default}\n" + _xtr_doc("race_source_value", "", len(indent)) + "\n"
+
+    # --- ethnicity ---
+    if eth_mode == "column":
+        eth_lines = (
+            _xtr("ethnicity_source_value", eth_col, len(indent)) + "\n"
+            f"{indent}if ethnicity_source_value is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — ethnicity column is empty; ethnicity_concept_id set to {{eth_default}}')\n"
+            f"{indent}    ethnicity_concept_id = eth_default\n"
+            f"{indent}elif ethnicity_source_value not in ethnicity_map:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — ethnicity value {{ethnicity_source_value!r}} not in map; ethnicity_concept_id set to {{eth_default}}')\n"
+            f"{indent}    ethnicity_concept_id = eth_default\n"
+            f"{indent}else:\n"
+            f"{indent}    ethnicity_concept_id = ethnicity_map[ethnicity_source_value]\n"
+        )
+    elif eth_mode == "constant":
+        eth_lines = f"{indent}ethnicity_concept_id = {eth_constant}\n{indent}ethnicity_source_value = None\n"
+    else:
+        eth_lines = f"{indent}ethnicity_concept_id = {eth_default}\n" + _xtr_doc("ethnicity_source_value", "", len(indent)) + "\n"
+
+    # --- location / care_site / provider ---
+    a1_col = loc.get("address_1_col", "")
+    a2_col = loc.get("address_2_col", "")
+    city_col = loc.get("city_col", "")
+    state_col = loc.get("state_col", "")
+    zip_col = loc.get("zip_col", "")
+    county_col = loc.get("county_col", "")
+    country_col = loc.get("country_col", "")
+    country_sv = loc.get("country_source_value", "")
+    has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
+
+    cs_name_col = cs_cfg.get("care_site_name_col", "")
+    prov_name_col = prov_cfg.get("provider_name_col", "")
+
+    if has_location:
+        loc_lines = (
+            _xtr("_a1", a1_col, len(indent)) + "\n"
+            + _xtr("_a2", a2_col, len(indent)) + "\n"
+            + _xtr("_city", city_col, len(indent)) + "\n"
+            + _xtr("_state", state_col, len(indent)) + "\n"
+            + _xtr("_zip", zip_col, len(indent)) + "\n"
+            + _xtr("_county", county_col, len(indent)) + "\n"
+            + (
+                _xtr("_country_sv", country_col, len(indent)) + "\n"
+                if country_col else
+                f"{indent}_country_sv = {repr(country_sv) if country_sv else 'None'}\n"
+            )
+            + f"{indent}person_location_source_value = ' | '.join(filter(None, [_a1, _a2, _city, _state, _zip, _county, _country_sv]))[:255]\n"
+            + f"{indent}location_id = location_lookup.get(person_location_source_value)\n"
+            + f"{indent}if location_id is None and person_location_source_value:\n"
+            + f"{indent}    _info(f'INFO: person {{person_source_value}} — location {{person_location_source_value!r}} not found in location.csv; location_id set to NULL')\n"
+        )
+    else:
+        loc_lines = _xtr_doc("location_id", "", len(indent)) + "\n"
+
+    if cs_name_col:
+        cs_lines = (
+            _xtr("_cs_name_raw", cs_name_col, len(indent)) + "\n"
+            f"{indent}care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
+            f"{indent}if _cs_name_raw and care_site_id is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — care_site {{_cs_name_raw!r}} not found in care_site.csv; care_site_id set to NULL')\n"
+        )
+    else:
+        cs_lines = _xtr_doc("care_site_id", "", len(indent)) + "\n"
+
+    if prov_name_col:
+        prov_lines = (
+            _xtr("_prov_name_raw", prov_name_col, len(indent)) + "\n"
+            f"{indent}_prov_source_value = (str(care_site_id) + ' | ' + (_prov_name_raw or ''))[:50]\n"
+            f"{indent}provider_id = provider_lookup.get(_prov_source_value)\n"
+            f"{indent}if _prov_name_raw and provider_id is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — provider {{_prov_name_raw!r}} not found in provider.csv; provider_id set to NULL')\n"
+        )
+    else:
+        prov_lines = _xtr_doc("provider_id", "", len(indent)) + "\n"
+
+    return pid_lines + dob_lines + "\n" + gender_lines + race_lines + eth_lines + "\n" + loc_lines + cs_lines + prov_lines
+
+
+def _person_lookup_setup(loc: dict, cs_cfg: dict, prov_cfg: dict) -> str:
+    """Generate lookup-table loading code (location, care_site, provider) for the person script."""
+    a1_col = loc.get("address_1_col", "")
+    a2_col = loc.get("address_2_col", "")
+    city_col = loc.get("city_col", "")
+    state_col = loc.get("state_col", "")
+    zip_col = loc.get("zip_col", "")
+    county_col = loc.get("county_col", "")
+    country_col = loc.get("country_col", "")
+    country_sv = loc.get("country_source_value", "")
+    has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
+
+    cs_name_col = cs_cfg.get("care_site_name_col", "")
+    prov_name_col = prov_cfg.get("provider_name_col", "")
+
+    if has_location:
+        loc_setup = (
+            "    location_lookup = {}\n"
+            "    location_file = os.path.join(output_dir, 'location.csv')\n"
+            "    if os.path.exists(location_file):\n"
+            "        try:\n"
+            "            loc_df = pd.read_csv(location_file, delimiter=';', encoding='utf-8')\n"
+            "            location_lookup = dict(zip(loc_df['location_source_value'], loc_df['location_id']))\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load location.csv: {e}')\n"
+        )
+    else:
+        loc_setup = "    location_lookup = {}\n"
+
+    if cs_name_col:
+        cs_setup = (
+            "    care_site_lookup = {}\n"
+            "    care_site_file = os.path.join(output_dir, 'care_site.csv')\n"
+            "    if os.path.exists(care_site_file):\n"
+            "        try:\n"
+            "            cs_df = pd.read_csv(care_site_file, delimiter=';', encoding='utf-8')\n"
+            "            care_site_lookup = {str(r['care_site_name']): int(r['care_site_id']) for _, r in cs_df.iterrows()}\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load care_site.csv: {e}')\n"
+        )
+    else:
+        cs_setup = "    care_site_lookup = {}\n"
+
+    if prov_name_col:
+        prov_setup = (
+            "    provider_lookup = {}\n"
+            "    provider_file = os.path.join(output_dir, 'provider.csv')\n"
+            "    if os.path.exists(provider_file):\n"
+            "        try:\n"
+            "            prov_df = pd.read_csv(provider_file, delimiter=';', encoding='utf-8')\n"
+            "            provider_lookup = {str(r['provider_source_value']): int(r['provider_id']) for _, r in prov_df.iterrows()}\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load provider.csv: {e}')\n"
+        )
+    else:
+        prov_setup = "    provider_lookup = {}\n"
+
+    return loc_setup + cs_setup + prov_setup
+
+
+_PERSON_RECORD_APPEND = (
+    "                'person_id':                  person_id,\n"
+    "                'gender_concept_id':          gender_concept_id,\n"
+    "                'year_of_birth':              year_of_birth,\n"
+    "                'month_of_birth':             month_of_birth,\n"
+    "                'day_of_birth':               day_of_birth,\n"
+    "                'birth_datetime':             birth_datetime,\n"
+    "                'race_concept_id':            race_concept_id,\n"
+    "                'ethnicity_concept_id':       ethnicity_concept_id,\n"
+    "                'location_id':                location_id,\n"
+    "                'provider_id':                provider_id,\n"
+    "                'care_site_id':               care_site_id,\n"
+    "                'person_source_value':        person_source_value,\n"
+    "                'gender_source_value':        gender_source_value,\n"
+    "                'race_source_value':          race_source_value,\n"
+    "                'race_source_concept_id':     0,\n"
+    "                'ethnicity_source_value':     ethnicity_source_value,\n"
+    "                'ethnicity_source_concept_id': 0,\n"
+    "                'gender_source_concept_id':   0,\n"
+)
+
+_PERSON_MERGE_FIELDS = [
+    "gender_concept_id", "year_of_birth", "month_of_birth", "day_of_birth",
+    "birth_datetime", "race_concept_id", "ethnicity_concept_id",
+    "location_id", "provider_id", "care_site_id",
+    "gender_source_value", "race_source_value", "ethnicity_source_value",
+]
+
+
+def _generate_person_script_multi(project, source_files: list, file_configs: dict,
+                                   loc: dict, cs_cfg: dict, prov_cfg: dict) -> str:
+    """Generate a multi-file person script that merges patients across sources."""
+
+    lookup_setup = _person_lookup_setup(loc, cs_cfg, prov_cfg)
+
+    # Build per-file blocks
+    file_blocks = ""
+    for file_idx, filename in enumerate(source_files):
+        fc = file_configs.get(filename, {})
+        v = _person_parse_file_cfg(fc)
+        is_primary = (file_idx == 0)
+
+        # Find source file entry for path/delim/enc
+        sf_entry = next(
+            (f for f in (project.source_files or []) if f.get("filename") == filename),
+            None,
+        )
+        if sf_entry:
+            path = sf_entry.get("path", "")
+            delim = repr(sf_entry.get("delimiter", ","))
+            enc = repr(sf_entry.get("encoding", "utf-8"))
+            path_line = f"    df = pd.read_csv(r{repr(path)}, delimiter={delim}, encoding={enc})\n"
+        else:
+            path_line = f"    # WARNING: source file entry not found for {repr(filename)}\n    df = pd.DataFrame()\n"
+
+        label_comment = f"    # ── {'Primary' if is_primary else 'Merge'} file: {filename} {'─' * max(0, 50 - len(filename))}\n"
+        map_code = _person_concept_map_code(v)
+        pid_col = v["pid_col"]
+        pid_repr = repr(pid_col) if pid_col else None
+
+        if is_primary:
+            # Primary: simple insert; skip duplicates within the file
+            store_block = (
+                "            person_id = person_id_counter\n"
+                "            if person_source_value in person_dict:\n"
+                "                continue\n"
+                "            person_dict[person_source_value] = {\n"
+                + _PERSON_RECORD_APPEND
+                + "            }\n"
+                "            person_id_counter += 1\n"
+            )
+            post_loop = f"    print(f'Primary file ({filename}): {{len(person_dict)}} patients loaded')\n"
+        else:
+            # Merge: new patient → append; existing → merge or drop on conflict
+            store_block = (
+                "            if person_source_value in conflicted_ids:\n"
+                "                continue\n"
+                "            if person_source_value in _seen_in_file:\n"
+                "                continue\n"
+                "            _seen_in_file.add(person_source_value)\n"
+                "\n"
+                "            _new_rec = {\n"
+                "                'gender_concept_id':          gender_concept_id,\n"
+                "                'year_of_birth':              year_of_birth,\n"
+                "                'month_of_birth':             month_of_birth,\n"
+                "                'day_of_birth':               day_of_birth,\n"
+                "                'birth_datetime':             birth_datetime,\n"
+                "                'race_concept_id':            race_concept_id,\n"
+                "                'ethnicity_concept_id':       ethnicity_concept_id,\n"
+                "                'location_id':                location_id,\n"
+                "                'provider_id':                provider_id,\n"
+                "                'care_site_id':               care_site_id,\n"
+                "                'gender_source_value':        gender_source_value,\n"
+                "                'race_source_value':          race_source_value,\n"
+                "                'ethnicity_source_value':     ethnicity_source_value,\n"
+                "            }\n"
+                "\n"
+                "            if person_source_value not in person_dict:\n"
+                "                _new_rec['person_id'] = person_id_counter\n"
+                "                _new_rec['person_source_value'] = person_source_value\n"
+                "                _new_rec['race_source_concept_id'] = 0\n"
+                "                _new_rec['ethnicity_source_concept_id'] = 0\n"
+                "                _new_rec['gender_source_concept_id'] = 0\n"
+                "                person_dict[person_source_value] = _new_rec\n"
+                "                person_id_counter += 1\n"
+                "                _new_count += 1\n"
+                "            else:\n"
+                "                _existing = person_dict[person_source_value]\n"
+                "                _conflict = False\n"
+                f"                for _field, _new_val in _new_rec.items():\n"
+                "                    if not _is_meaningful(_new_val):\n"
+                "                        continue\n"
+                "                    _existing_val = _existing.get(_field)\n"
+                "                    if not _is_meaningful(_existing_val):\n"
+                "                        _existing[_field] = _new_val\n"
+                "                    elif _existing_val != _new_val:\n"
+                f'                        print(f"WARNING: patient {{person_source_value!r}} — conflicting {{_field!r}} from {repr(filename)} vs earlier data; patient dropped")\n'
+                "                        _conflict = True\n"
+                "                        break\n"
+                "                if _conflict:\n"
+                "                    del person_dict[person_source_value]\n"
+                "                    conflicted_ids.add(person_source_value)\n"
+                "                    _conflict_count += 1\n"
+            )
+            post_loop = (
+                f"    print(f'Merge file ({filename}): +{{_new_count}} new, {{_conflict_count}} conflicts dropped, "
+                f"total {{len(person_dict)}} patients')\n"
+            )
+
+        pid_extract = (
+            f"            _pid_raw = row.get({pid_repr})\n"
+            f"            if pd.isnull(_pid_raw):\n"
+            f'                print(f"WARNING: skipping row {{_src_idx}} — person_id column {pid_repr} is null or missing")\n'
+            f"                continue\n"
+            f"            person_source_value = str(_pid_raw)\n"
+        ) if pid_col else (
+            "            person_source_value = str(_src_idx)\n"
+        )
+
+        pre_loop = ""
+        if not is_primary:
+            pre_loop = (
+                "    _new_count = 0\n"
+                "    _conflict_count = 0\n"
+                "    _seen_in_file = set()\n"
+            )
+
+        file_blocks += (
+            "\n"
+            + label_comment
+            + map_code
+            + path_line
+            + pre_loop
+            + "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+            "        try:\n"
+            "\n"
+            + pid_extract
+            + "            # Date of birth\n"
+            + _person_dob_lines(v)
+            + "\n"
+            "            # Demographics\n"
+            + _person_gender_lines(v)
+            + _person_race_lines(v)
+            + _person_eth_lines(v)
+            + "\n"
+            + _person_loc_lines(loc, cs_cfg, prov_cfg)
+            + "\n"
+            + store_block
+            + "        except Exception as e:\n"
+            "            print(f'WARNING: skipping row — {e}')\n"
+            + post_loop
+        )
+
+    return (
+        "import os\n"
+        "import pandas as pd\n"
+        "from datetime import datetime\n"
+        "\n"
+        "\n"
+        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
+        "\n"
+        "def _info(msg):\n"
+        '    """Print diagnostic message only in detailed output mode."""\n'
+        "    if VERBOSE:\n"
+        "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _is_meaningful(val):\n"
+        '    """Return True if val carries real information (not null/unknown)."""\n'
+        "    if val is None:\n"
+        "        return False\n"
+        "    if isinstance(val, (int, float)) and val == 0:\n"
+        "        return False\n"
+        "    return True\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        "    # --- Load lookup tables ---\n"
+        + lookup_setup
+        + "\n"
+        "    person_dict = {}        # keyed by person_source_value\n"
+        "    conflicted_ids = set()  # dropped due to cross-file conflicts\n"
+        "    person_id_counter = 1\n"
+        + file_blocks
+        + "\n"
+        "    # --- Build output DataFrame ---\n"
+        "    PERSON_COLUMNS = [\n"
+        "        'person_id', 'gender_concept_id', 'year_of_birth', 'month_of_birth',\n"
+        "        'day_of_birth', 'birth_datetime', 'race_concept_id', 'ethnicity_concept_id',\n"
+        "        'location_id', 'provider_id', 'care_site_id', 'person_source_value',\n"
+        "        'gender_source_value', 'race_source_value', 'race_source_concept_id',\n"
+        "        'ethnicity_source_value', 'ethnicity_source_concept_id', 'gender_source_concept_id',\n"
+        "    ]\n"
+        "    rows = sorted(person_dict.values(), key=lambda r: r['person_id'])\n"
+        "    df_out = pd.DataFrame(rows, columns=PERSON_COLUMNS)\n"
+        "\n"
+        "    # --- Write output ---\n"
+        "    output_file = os.path.join(output_dir, 'person.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    if conflicted_ids:\n"
+        "        print(f'NOTE: {len(conflicted_ids)} patient(s) dropped due to cross-file conflicts.')\n"
+        "    print(f'Writing person.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+
+def _person_dob_lines(v: dict, indent: str = "            ") -> str:
+    dob_col = v["dob_col"]
+    date_format = v["date_format"]
+    birth_time_col = v["birth_time_col"]
+    birth_time_format = v["birth_time_format"]
+    if birth_time_col:
+        bt = (
+            f"{indent}_btv = row.get({repr(birth_time_col)})\n"
+            f"{indent}_bt_str = str(_btv).strip() if pd.notnull(_btv) else ''\n"
+            f"{indent}if _bt_str and _bt_str != 'nan':\n"
+            f"{indent}    try:\n"
+            f"{indent}        birth_datetime = datetime.combine(_dob, datetime.strptime(_bt_str, {repr(birth_time_format)}).time())\n"
+            f"{indent}    except Exception:\n"
+            f"{indent}        _info(f'INFO: person {{person_source_value}} — could not parse birth time {{_bt_str!r}}; defaulting to midnight')\n"
+            f"{indent}        birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+            f"{indent}else:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — birth time column is empty; birth_datetime defaulting to midnight')\n"
+            f"{indent}    birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+        )
+    else:
+        bt = f"{indent}birth_datetime = datetime.combine(_dob, datetime.min.time())\n"
+    if dob_col:
+        return (
+            f"{indent}_dob_raw = str(row.get({repr(dob_col)}, '')).strip()\n"
+            f"{indent}if not _dob_raw or _dob_raw == 'nan':\n"
+            f'{indent}    print(f"WARNING: skipping row {{_src_idx}} — birth-date column {repr(dob_col)} is empty or null")\n'
+            f"{indent}    continue\n"
+            f"{indent}_dob = datetime.strptime(_dob_raw, {repr(date_format)})\n"
+            f"{indent}year_of_birth = _dob.year\n"
+            f"{indent}month_of_birth = _dob.month\n"
+            f"{indent}day_of_birth = _dob.day\n"
+            + bt
+        )
+    return (
+        f'{indent}print(f"WARNING: skipping row {{_src_idx}} — no birth-date column configured; year_of_birth is required by OMOP CDM")\n'
+        f"{indent}continue\n"
+    )
+
+
+def _person_gender_lines(v: dict, indent: str = "            ") -> str:
+    gender_col = v["gender_col"]
+    gender_default = v["gender_default"]
+    if gender_col:
+        return (
+            _xtr("gender_source_value", gender_col, len(indent)) + "\n"
+            f"{indent}if gender_source_value is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — gender column is empty; gender_concept_id set to {{gender_default}}')\n"
+            f"{indent}    gender_concept_id = gender_default\n"
+            f"{indent}elif gender_source_value not in gender_map:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — gender value {{gender_source_value!r}} not in map; gender_concept_id set to {{gender_default}}')\n"
+            f"{indent}    gender_concept_id = gender_default\n"
+            f"{indent}else:\n"
+            f"{indent}    gender_concept_id = gender_map[gender_source_value]\n"
+        )
+    return _xtr_doc("gender_source_value", "", len(indent)) + "\n" + f"{indent}gender_concept_id = {gender_default}\n"
+
+
+def _person_race_lines(v: dict, indent: str = "            ") -> str:
+    race_mode = v["race_mode"]
+    race_col = v["race_col"]
+    race_default = v["race_default"]
+    race_constant = v["race_constant"]
+    if race_mode == "column":
+        return (
+            _xtr("race_source_value", race_col, len(indent)) + "\n"
+            f"{indent}if race_source_value is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — race column is empty; race_concept_id set to {{race_default}}')\n"
+            f"{indent}    race_concept_id = race_default\n"
+            f"{indent}elif race_source_value not in race_map:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — race value {{race_source_value!r}} not in map; race_concept_id set to {{race_default}}')\n"
+            f"{indent}    race_concept_id = race_default\n"
+            f"{indent}else:\n"
+            f"{indent}    race_concept_id = race_map[race_source_value]\n"
+        )
+    if race_mode == "constant":
+        return f"{indent}race_concept_id = {race_constant}\n{indent}race_source_value = None\n"
+    return f"{indent}race_concept_id = {race_default}\n" + _xtr_doc("race_source_value", "", len(indent)) + "\n"
+
+
+def _person_eth_lines(v: dict, indent: str = "            ") -> str:
+    eth_mode = v["eth_mode"]
+    eth_col = v["eth_col"]
+    eth_default = v["eth_default"]
+    eth_constant = v["eth_constant"]
+    if eth_mode == "column":
+        return (
+            _xtr("ethnicity_source_value", eth_col, len(indent)) + "\n"
+            f"{indent}if ethnicity_source_value is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — ethnicity column is empty; ethnicity_concept_id set to {{eth_default}}')\n"
+            f"{indent}    ethnicity_concept_id = eth_default\n"
+            f"{indent}elif ethnicity_source_value not in ethnicity_map:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — ethnicity value {{ethnicity_source_value!r}} not in map; ethnicity_concept_id set to {{eth_default}}')\n"
+            f"{indent}    ethnicity_concept_id = eth_default\n"
+            f"{indent}else:\n"
+            f"{indent}    ethnicity_concept_id = ethnicity_map[ethnicity_source_value]\n"
+        )
+    if eth_mode == "constant":
+        return f"{indent}ethnicity_concept_id = {eth_constant}\n{indent}ethnicity_source_value = None\n"
+    return f"{indent}ethnicity_concept_id = {eth_default}\n" + _xtr_doc("ethnicity_source_value", "", len(indent)) + "\n"
+
+
+def _person_loc_lines(loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "            ") -> str:
+    a1_col = loc.get("address_1_col", "")
+    a2_col = loc.get("address_2_col", "")
+    city_col = loc.get("city_col", "")
+    state_col = loc.get("state_col", "")
+    zip_col = loc.get("zip_col", "")
+    county_col = loc.get("county_col", "")
+    country_col = loc.get("country_col", "")
+    country_sv = loc.get("country_source_value", "")
+    has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
+    cs_name_col = cs_cfg.get("care_site_name_col", "")
+    prov_name_col = prov_cfg.get("provider_name_col", "")
+
+    if has_location:
+        loc_lines = (
+            _xtr("_a1", a1_col, len(indent)) + "\n"
+            + _xtr("_a2", a2_col, len(indent)) + "\n"
+            + _xtr("_city", city_col, len(indent)) + "\n"
+            + _xtr("_state", state_col, len(indent)) + "\n"
+            + _xtr("_zip", zip_col, len(indent)) + "\n"
+            + _xtr("_county", county_col, len(indent)) + "\n"
+            + (
+                _xtr("_country_sv", country_col, len(indent)) + "\n"
+                if country_col else
+                f"{indent}_country_sv = {repr(country_sv) if country_sv else 'None'}\n"
+            )
+            + f"{indent}person_location_source_value = ' | '.join(filter(None, [_a1, _a2, _city, _state, _zip, _county, _country_sv]))[:255]\n"
+            + f"{indent}location_id = location_lookup.get(person_location_source_value)\n"
+            + f"{indent}if location_id is None and person_location_source_value:\n"
+            + f"{indent}    _info(f'INFO: person {{person_source_value}} — location {{person_location_source_value!r}} not found in location.csv; location_id set to NULL')\n"
+        )
+    else:
+        loc_lines = _xtr_doc("location_id", "", len(indent)) + "\n"
+
+    if cs_name_col:
+        cs_lines = (
+            _xtr("_cs_name_raw", cs_name_col, len(indent)) + "\n"
+            f"{indent}care_site_id = care_site_lookup.get(_cs_name_raw) if _cs_name_raw else None\n"
+            f"{indent}if _cs_name_raw and care_site_id is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — care_site {{_cs_name_raw!r}} not found in care_site.csv; care_site_id set to NULL')\n"
+        )
+    else:
+        cs_lines = _xtr_doc("care_site_id", "", len(indent)) + "\n"
+
+    if prov_name_col:
+        prov_lines = (
+            _xtr("_prov_name_raw", prov_name_col, len(indent)) + "\n"
+            f"{indent}_prov_source_value = (str(care_site_id) + ' | ' + (_prov_name_raw or ''))[:50]\n"
+            f"{indent}provider_id = provider_lookup.get(_prov_source_value)\n"
+            f"{indent}if _prov_name_raw and provider_id is None:\n"
+            f"{indent}    _info(f'INFO: person {{person_source_value}} — provider {{_prov_name_raw!r}} not found in provider.csv; provider_id set to NULL')\n"
+        )
+    else:
+        prov_lines = _xtr_doc("provider_id", "", len(indent)) + "\n"
+
+    return loc_lines + cs_lines + prov_lines
+
+
 def _generate_person_script(project) -> str:
     """Deterministic template-based generator for the OMOP person script."""
     person = (project.etl_config or {}).get("person", {})
@@ -701,6 +1416,25 @@ def _generate_person_script(project) -> str:
     prov_cfg = (project.etl_config or {}).get("provider", {})
     dataset_options = (project.etl_config or {}).get("dataset_options", {})
     multiple_rows_per_patient = dataset_options.get("multiple_rows_per_patient", False)
+
+    # ── Multi-file path ───────────────────────────────────────────────────
+    source_files = person.get("source_files", [])
+    file_configs = person.get("file_configs", {})
+    if file_configs and len(source_files) > 1:
+        return _generate_person_script_multi(project, source_files, file_configs, loc, cs_cfg, prov_cfg)
+
+    # ── Single-file path (new format or legacy) ───────────────────────────
+    # Normalise new single-file format → legacy-compatible dict so the rest of
+    # this function can stay unchanged.
+    if file_configs and source_files:
+        first_file = source_files[0]
+        fc = file_configs.get(first_file, {})
+        person = {
+            **fc,
+            "source_filename": first_file,
+            "enabled": person.get("enabled", True),
+        }
+
     source_path_code, delim, enc = _source_file_params(project, person)
 
     mappings = person.get("mappings", {})
@@ -1088,23 +1822,18 @@ def _generate_visit_occurrence_script(project) -> str:
     cs_cfg = (project.etl_config or {}).get("care_site", {})
     prov_cfg = (project.etl_config or {}).get("provider", {})
 
-    source_path_code, delim, enc = _source_file_params(project, visit_cfg)
+    file_configs = visit_cfg.get("file_configs") or []
+    is_multi_file = len(file_configs) > 1
 
-
-    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_cfg = _person_pid_cfg(person_cfg)
     auto_increment = pid_cfg.get("auto_increment", False)
     pid_col = pid_cfg.get("source_col", "")
     pid_transform = pid_cfg.get("transform", "int_float")
 
-    visit_defs = visit_cfg.get("visit_definitions", [])
-    vd_repr = repr(visit_defs)
-    visit_source_col = visit_cfg.get("visit_source_col", "")
-    auto_number_visits = bool(visit_cfg.get("auto_number_visits", False))
-
     # person_source_value in visit_occurrence must match what person.csv stores —
     # which is always str(_pid_raw) with no type casting.
+    psv_setup = ""
     if pid_col:
-        psv_setup = ""
         psv_lines = (
             f"            _pid_raw = row.get({repr(pid_col)})\n"
             "            if pd.isnull(_pid_raw):\n"
@@ -1113,10 +1842,19 @@ def _generate_visit_occurrence_script(project) -> str:
             "            person_source_value = str(_pid_raw)\n"
         )
     else:
-        psv_setup = ""
-        psv_lines = (
-            "            person_source_value = str(_src_idx)\n"
-        )
+        psv_lines = "            person_source_value = str(_src_idx)\n"
+
+    # Multi-file: pid_col is resolved per-file at runtime from _CUR_PID_COL
+    psv_lines_multi = (
+        "            if _CUR_PID_COL:\n"
+        "                _pid_raw = row.get(_CUR_PID_COL)\n"
+        "                if pd.isnull(_pid_raw):\n"
+        "                    print(f'WARNING: skipping row {_src_idx} in {_CUR_FILE} — pid column {_CUR_PID_COL!r} is null or missing')\n"
+        "                    continue\n"
+        "                person_source_value = str(_pid_raw)\n"
+        "            else:\n"
+        "                person_source_value = str(_src_idx)\n"
+    )
 
     cs_name_col = cs_cfg.get("care_site_name_col", "")
     prov_name_col = prov_cfg.get("provider_name_col", "")
@@ -1164,7 +1902,7 @@ def _generate_visit_occurrence_script(project) -> str:
         prov_setup = "    provider_lookup = {}\n"
         prov_lookup_line = _xtr_doc("provider_id", "", 12) + "\n"
 
-    return (
+    script_header = (
         "import os\n"
         "import pandas as pd\n"
         "from datetime import datetime, date\n"
@@ -1181,20 +1919,9 @@ def _generate_visit_occurrence_script(project) -> str:
         "# --- Module-level constants ---\n"
         "INPATIENT_CONCEPT_IDS = {9201, 262, 42898160}  # concept IDs treated as inpatient\n"
         "\n"
-        f"VISIT_DEFS      = {vd_repr}  # visit definitions from the Visit step\n"
-        "\n"
-        f"VISIT_SOURCE_COL = {repr(visit_source_col)}  # column that carries visit label (multi-row mode)\n"
-        f"AUTO_NUMBER_VISITS = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
-        "\n"
-        "\n"
-        "def main():\n"
-        "    # Load environmental variables\n"
-        + source_path_code +
-        "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
-        "\n"
-        "    # --- Load source data ---\n"
-        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
-        "\n"
+    )
+
+    lookup_setup = (
         "    # --- Load lookup tables ---\n"
         "    person_lookup = {}\n"
         "    person_file = os.path.join(output_dir, 'person.csv')\n"
@@ -1210,18 +1937,28 @@ def _generate_visit_occurrence_script(project) -> str:
         + prov_setup
         + "\n"
         + psv_setup
-        + "\n"
-        + "    # --- Process rows ---\n"
-        + "    visit_id_counter = 1\n"
-        + "    rows = []\n"
-        + "    _visit_counters = {}  # person_source_value -> int, used for auto-numbering\n"
-        + "\n"
-        + "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
-        + "        try:\n"
-        + "\n"
-        + "            # Person identifier\n"
-        + psv_lines
-        + "            person_id = person_lookup.get(person_source_value)\n"
+    )
+
+    rows_init = (
+        "    # --- Process rows ---\n"
+        "    visit_id_counter = 1\n"
+        "    rows = []\n"
+        "    _visit_counters = {}  # person_source_value -> int, used for auto-numbering\n"
+        "    _seen_visits = set()  # record_source_value dedup guard\n"
+        "\n"
+    )
+
+    def _make_row_loop_body(pid_lines: str) -> str:
+        return (
+            "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+            "        try:\n"
+            "\n"
+            "            # Person identifier\n"
+            + pid_lines
+            + "            person_id = person_lookup.get(person_source_value)\n"
+        )
+
+    row_loop_body = _make_row_loop_body(psv_lines) + (
         "            if person_id is None:\n"
         "                print(f'WARNING: skipping row {_src_idx} — person \"{person_source_value}\" not found in person.csv')\n"
         "                continue\n"
@@ -1341,6 +2078,10 @@ def _generate_visit_occurrence_script(project) -> str:
         "                        discharged_to_source_value = vd.get('discharged_to_source_value')\n"
         "                        discharged_to_concept_id = vd.get('discharged_to_concept_id') or 0\n"
         "\n"
+        "                    if visit_source_value in _seen_visits:\n"
+        "                        print(f'WARNING: duplicate visit skipped — record_source_value {visit_source_value!r} already exists')\n"
+        "                        continue\n"
+        "                    _seen_visits.add(visit_source_value)\n"
         "                    rows.append({\n"
         "                        'visit_occurrence_id': visit_id_counter,\n"
         "                        'person_id': person_id,\n"
@@ -1366,6 +2107,9 @@ def _generate_visit_occurrence_script(project) -> str:
         "                    print(f'WARNING: skipping visit for {person_source_value} — {e}')\n"
         "        except Exception as e:\n"
         "            print(f'WARNING: skipping row — {e}')\n"
+    )
+
+    output_section = (
         "\n"
         "    # --- Build output DataFrame ---\n"
         "    VISIT_OCCURRENCE_COLUMNS = [\n"
@@ -1396,10 +2140,103 @@ def _generate_visit_occurrence_script(project) -> str:
         "    output_file = os.path.join(output_dir, 'visit_occurrence.csv')\n"
         "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
         "    print(f'Writing visit_occurrence.csv ... done ({len(df_out)} records)')\n"
-        "\n"
-        "\n"
-        "if __name__ == '__main__':\n"
-        "    main()\n"
+    )
+
+    if is_multi_file:
+        # Resolve pid_col per visit file from PersonConfig's file_configs
+        person_file_cfgs = person_cfg.get("file_configs", {})
+
+        def _visit_pid_col_for(fname: str) -> str:
+            pfc = person_file_cfgs.get(fname, {})
+            if pfc:
+                return pfc.get("mappings", {}).get("person_id", {}).get("source_col", "") or pid_col
+            return pid_col
+
+        sf_lookup = {sf.get("filename", ""): sf for sf in (project.source_files or [])}
+        fc_list = []
+        for fc in file_configs:
+            fname = fc.get("source_filename", "")
+            sf = sf_lookup.get(fname, {})
+            fc_list.append({
+                "filename": fname,
+                "path": sf.get("path", ""),
+                "delimiter": sf.get("delimiter", ","),
+                "encoding": sf.get("encoding", "utf-8"),
+                "visit_defs": fc.get("visit_definitions", []),
+                "visit_source_col": fc.get("visit_source_col", "") or "",
+                "auto_number_visits": bool(fc.get("auto_number_visits", False)),
+                "pid_col": _visit_pid_col_for(fname),
+            })
+        fc_repr = repr(fc_list)
+
+        # Multi-file row loop: pid_col comes from fc['pid_col'] via _CUR_PID_COL
+        row_loop_body_multi = _make_row_loop_body(psv_lines_multi) + (
+            "            if person_id is None:\n"
+            "                print(f'WARNING: skipping row {_src_idx} in {_CUR_FILE} — person \"{person_source_value}\" not found in person.csv')\n"
+            "                continue\n"
+            "\n"
+            "            # Foreign-key lookups\n"
+        ) + cs_lookup_line + prov_lookup_line + row_loop_body[row_loop_body.index("            # Iterate over visit definitions"):]
+
+        # Add 4 extra spaces to every non-empty line so the row loop sits inside `for fc in FILE_CONFIGS:`
+        indented_row_loop = "".join(
+            ("    " + line) if line.rstrip() else line
+            for line in row_loop_body_multi.splitlines(keepends=True)
+        )
+        return (
+            script_header
+            + f"FILE_CONFIGS = {fc_repr}\n"
+            + "\n\n"
+            + "def main():\n"
+            + "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
+            + "\n"
+            + lookup_setup
+            + "\n"
+            + rows_init
+            + "    for fc in FILE_CONFIGS:\n"
+            + "        VISIT_DEFS         = fc['visit_defs']\n"
+            + "        VISIT_SOURCE_COL   = fc['visit_source_col']\n"
+            + "        AUTO_NUMBER_VISITS = fc['auto_number_visits']\n"
+            + "        _CUR_PID_COL       = fc.get('pid_col', '')\n"
+            + "        _CUR_FILE          = fc.get('filename', '')\n"
+            + "        df = pd.read_csv(fc['path'], delimiter=fc['delimiter'], encoding=fc['encoding'])\n"
+            + "\n"
+            + indented_row_loop
+            + output_section
+            + "\n\n"
+            + "if __name__ == '__main__':\n"
+            + "    main()\n"
+        )
+
+    # --- Single-file path (original behaviour, unchanged) ---
+    source_path_code, delim, enc = _source_file_params(project, visit_cfg)
+    visit_defs = visit_cfg.get("visit_definitions", [])
+    vd_repr = repr(visit_defs)
+    visit_source_col = visit_cfg.get("visit_source_col", "")
+    auto_number_visits = bool(visit_cfg.get("auto_number_visits", False))
+
+    return (
+        script_header
+        + f"VISIT_DEFS      = {vd_repr}  # visit definitions from the Visit step\n"
+        + f"\nVISIT_SOURCE_COL = {repr(visit_source_col)}  # column that carries visit label (multi-row mode)\n"
+        + f"AUTO_NUMBER_VISITS = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
+        + "\n\n"
+        + "def main():\n"
+        + "    # Load environmental variables\n"
+        + source_path_code
+        + "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
+        + "\n"
+        + "    # --- Load source data ---\n"
+        + f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        + "\n"
+        + lookup_setup
+        + "\n"
+        + rows_init
+        + row_loop_body
+        + output_section
+        + "\n\n"
+        + "if __name__ == '__main__':\n"
+        + "    main()\n"
     )
 
 
@@ -1416,7 +2253,7 @@ def _generate_observation_period_script(project) -> str:
     type_concept_id = int(obs.get("period_type_concept_id") or 32879)
     date_fmt = obs.get("date_format") or "%Y-%m-%d"
 
-    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_cfg = _person_pid_cfg(person_cfg)
     pid_col = pid_cfg.get("source_col", "")
 
     if pid_col:
@@ -1572,7 +2409,7 @@ def _generate_death_script(project) -> str:
 
     source_path_code, delim, enc = _source_file_params(project, death_cfg)
 
-    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_cfg = _person_pid_cfg(person_cfg)
     pid_col = pid_cfg.get("source_col", "")
 
     filter_col = death_cfg.get("filter_col", "")
@@ -1811,7 +2648,7 @@ def _generate_stem_table_script(project) -> str:
     visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
     person_cfg = (project.etl_config or {}).get("person", {})
 
-    pid_cfg = (person_cfg.get("mappings") or {}).get("person_id") or {}
+    pid_cfg = _person_pid_cfg(person_cfg)
     pid_col = pid_cfg.get("source_col", "")
 
     # Background-inferred overrides (Concepts step fixed-unit cases) come first;

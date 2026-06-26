@@ -22,7 +22,7 @@ export default function FieldMapper({ label, sourceColumns, value, onChange, req
     <div className="flex flex-col gap-1">
       <Label>
         {label}
-        {required && <span className="ml-1 text-destructive">*</span>}
+        {required && <span className="ml-1 text-destructive text-base font-bold leading-none">*</span>}
       </Label>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
       <Select value={sourceColumns.includes(value) ? value : ''} onChange={e => onChange(e.target.value)}>
