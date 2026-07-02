@@ -150,11 +150,20 @@ export interface VisitOccurrenceConfig {
   auto_number_visits?: boolean
 }
 
+export interface ObsPeriodFallbackEntry {
+  type: 'column' | 'start_date' | 'today'
+  col?: string
+  source_filename?: string
+}
+
 export interface ObservationPeriodConfig {
   enabled: boolean
   start_date_col: string
+  start_date_file?: string
   end_date_col: string
-  end_date_fallback: 'start_date' | 'today'
+  end_date_file?: string
+  end_date_fallbacks?: ObsPeriodFallbackEntry[]
+  end_date_fallback?: 'start_date' | 'today'
   period_type_concept_id: number
   date_format?: string
 }

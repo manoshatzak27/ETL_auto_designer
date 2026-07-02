@@ -3568,52 +3568,55 @@ def _generate_visit_occurrence_script(project) -> str:
     )
 
 
-def _generate_observation_period_script(project) -> str:
-    """Deterministic template-based generator for the OMOP observation_period script."""
-    obs = (project.etl_config or {}).get("observation_period", {})
-    person_cfg = (project.etl_config or {}).get("person", {})
+def _obs_period_end_date_lines(end_col: str, fallbacks: list, date_fmt: str) -> str:
+    """Generate end_date assignment code for single-file obs period (inside try block, 16-space indent)."""
+    i16 = "                "
+    i20 = "                    "
 
-    source_path_code, delim, enc = _source_file_params(project, obs)
+    def terminal_line(indent: str) -> str:
+        for fb in fallbacks:
+            if fb.get("type") == "today":
+                return f"{indent}obs_end_date = date.today()\n"
+            if fb.get("type") == "start_date":
+                return f"{indent}obs_end_date = obs_start_date\n"
+        return f"{indent}obs_end_date = obs_start_date\n"
 
-    start_col = obs.get("start_date_col", "")
-    end_col = obs.get("end_date_col", "")
-    fallback = obs.get("end_date_fallback", "start_date")
-    type_concept_id = int(obs.get("period_type_concept_id") or 32879)
-    date_fmt = obs.get("date_format") or "%Y-%m-%d"
+    col_fbs = [(i, fb) for i, fb in enumerate(fallbacks) if fb.get("type") == "column" and fb.get("col")]
 
-    pid_cfg = _person_pid_cfg(person_cfg)
-    pid_col = pid_cfg.get("source_col", "")
-
-    if pid_col:
-        psv_setup = ""
-        psv_lines = (
-            f"            _pid_raw = row.get({repr(pid_col)})\n"
-            "            if pd.isnull(_pid_raw):\n"
-            f'                print(f"WARNING: skipping row {{_src_idx}} — person_id column {repr(pid_col)} is null or missing")\n'
-            "                continue\n"
-            "            person_source_value = str(_pid_raw)\n"
-        )
-    else:
-        psv_setup = ""
-        psv_lines = (
-            "            person_source_value = str(_src_idx)\n"
-        )
+    def col_chain(indent: str, else_indent: str) -> str:
+        if not col_fbs:
+            return terminal_line(indent)
+        lines = f"{indent}_obs_end_resolved = False\n"
+        for _i, fb in col_fbs:
+            col = fb["col"]
+            lines += (
+                f"{indent}if not _obs_end_resolved:\n"
+                f"{indent}    _fb_raw = str(row.get({repr(col)}, '')).strip()\n"
+                f"{indent}    if _fb_raw and _fb_raw != 'nan':\n"
+                f"{indent}        try:\n"
+                f"{indent}            obs_end_date = datetime.strptime(_fb_raw, {repr(date_fmt)}).date()\n"
+                f"{indent}            _obs_end_resolved = True\n"
+                f"{indent}        except Exception:\n"
+                f"{indent}            pass\n"
+            )
+        term = terminal_line(indent)
+        lines += f"{indent}if not _obs_end_resolved:\n"
+        lines += "".join(f"{indent}    {l}" for l in term.lstrip().splitlines(keepends=True))
+        return lines
 
     if end_col:
-        end_date_lines = (
-            f"                _end_raw = str(row.get({repr(end_col)}, '')).strip()\n"
-            "                if _end_raw and _end_raw != 'nan':\n"
-            f"                    obs_end_date = datetime.strptime(_end_raw, {repr(date_fmt)}).date()\n"
-            "                else:\n"
-            + ("                    obs_end_date = obs_start_date\n" if fallback == "start_date"
-               else "                    obs_end_date = date.today()\n")
+        return (
+            f"{i16}_end_raw = str(row.get({repr(end_col)}, '')).strip()\n"
+            f"{i16}if _end_raw and _end_raw != 'nan':\n"
+            f"{i16}    obs_end_date = datetime.strptime(_end_raw, {repr(date_fmt)}).date()\n"
+            f"{i16}else:\n"
+            + col_chain(i20, i20)
         )
     else:
-        end_date_lines = (
-            "                obs_end_date = obs_start_date\n" if fallback == "start_date"
-            else "                obs_end_date = date.today()\n"
-        )
+        return col_chain(i16, i16)
 
+
+def _obs_period_common_header() -> str:
     return (
         "import os\n"
         "import pandas as pd\n"
@@ -3642,55 +3645,11 @@ def _generate_observation_period_script(project) -> str:
         "    return merged\n"
         "\n"
         "\n"
-        "def main():\n"
-        + source_path_code +
-        "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
-        "\n"
-        "    # --- Load source data ---\n"
-        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
-        "\n"
-        "    # --- Load lookup tables ---\n"
-        "    person_lookup = {}\n"
-        "    person_file = os.path.join(output_dir, 'person.csv')\n"
-        "    if os.path.exists(person_file):\n"
-        "        try:\n"
-        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
-        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
-        "        except Exception as e:\n"
-        "            print(f'WARNING: could not load person.csv: {e}')\n"
-        "\n"
-        + psv_setup
-        + "\n"
-        + "    # --- Collect observation periods per person ---\n"
-        + "    person_periods: dict = {}  # person_id -> [(start_date, end_date), ...]\n"
-        + "\n"
-        + "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
-        + "        try:\n"
-        + "\n"
-        + "            # Person identifier\n"
-        + psv_lines
-        + "            person_id = person_lookup.get(person_source_value)\n"
-        "            if person_id is None:\n"
-        "                print(f'WARNING: skipping row {_src_idx} — person \"{person_source_value}\" not found in person.csv')\n"
-        "                continue\n"
-        "\n"
-        "            # Start date (required)\n"
-        f"            _start_raw = str(row.get({repr(start_col)}, '')).strip()\n"
-        "            if not _start_raw or _start_raw == 'nan':\n"
-        "                print(f'WARNING: skipping row {_src_idx} — observation_period start_date is empty for person \"{person_source_value}\"')\n"
-        "                continue\n"
-        f"            obs_start_date = datetime.strptime(_start_raw, {repr(date_fmt)}).date()\n"
-        "\n"
-        "            # End date (optional — falls back to start_date or today)\n"
-        "            try:\n"
-        + end_date_lines
-        + "            except Exception as _end_exc:\n"
-        "                _info(f'INFO: person \"{person_source_value}\" — could not parse end_date; defaulting to start_date ({_end_exc})')\n"
-        "                obs_end_date = obs_start_date\n"
-        "\n"
-        "            person_periods.setdefault(person_id, []).append((obs_start_date, obs_end_date))\n"
-        "        except Exception as e:\n"
-        "            print(f'WARNING: skipping row — {e}')\n"
+    )
+
+
+def _obs_period_common_tail(type_concept_id: int) -> str:
+    return (
         "\n"
         "    # --- Merge overlapping periods and build records ---\n"
         "    rows = []\n"
@@ -3720,6 +3679,245 @@ def _generate_observation_period_script(project) -> str:
         "\n"
         "if __name__ == '__main__':\n"
         "    main()\n"
+    )
+
+
+def _generate_observation_period_script_multi(project, obs: dict, person_cfg: dict, fallbacks: list) -> str:
+    """Multi-source observation period generator: start_date/end_date/fallback columns span different files."""
+    start_col = obs.get("start_date_col", "")
+    start_file = obs.get("start_date_file", "")
+    end_col = obs.get("end_date_col", "")
+    end_file = obs.get("end_date_file", "")
+    date_fmt = obs.get("date_format") or "%Y-%m-%d"
+    type_concept_id = int(obs.get("period_type_concept_id") or 32879)
+
+    pid_cfg = _person_pid_cfg(person_cfg)
+    pid_col = pid_cfg.get("source_col", "")
+
+    # Ordered list of distinct files involved
+    involved_files: list = []
+    for fn in [start_file, end_file]:
+        if fn and fn not in involved_files:
+            involved_files.append(fn)
+    for fb in fallbacks:
+        fn = fb.get("source_filename", "")
+        if fn and fn not in involved_files:
+            involved_files.append(fn)
+
+    if pid_col:
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            f'                print(f"WARNING: skipping row {{_src_idx}} — person_id column {repr(pid_col)} is null or missing")\n'
+            "                continue\n"
+            "            psv = str(_pid_raw)\n"
+        )
+    else:
+        psv_lines = "            psv = str(_src_idx)\n"
+
+    # Build per-file loop blocks
+    file_blocks = ""
+    for filename in involved_files:
+        contributes_start = bool(start_col and filename == start_file)
+        contributes_end = bool(end_col and filename == end_file)
+        fb_for_file = [
+            (i, fb) for i, fb in enumerate(fallbacks)
+            if fb.get("type") == "column" and fb.get("source_filename") == filename and fb.get("col")
+        ]
+
+        body = ""
+        if contributes_start:
+            body += (
+                f"            _start_raw = str(row.get({repr(start_col)}, '')).strip()\n"
+                "            if _start_raw and _start_raw != 'nan':\n"
+                "                try:\n"
+                f"                    person_data[psv]['start'] = datetime.strptime(_start_raw, {repr(date_fmt)}).date()\n"
+                "                except Exception as _e:\n"
+                f"                    _info(f'INFO: row {{_src_idx}} person {{psv!r}} — could not parse start_date ({{_e}})')\n"
+            )
+        if contributes_end:
+            body += (
+                f"            _end_raw = str(row.get({repr(end_col)}, '')).strip()\n"
+                "            if _end_raw and _end_raw != 'nan':\n"
+                "                try:\n"
+                f"                    person_data[psv]['end'] = datetime.strptime(_end_raw, {repr(date_fmt)}).date()\n"
+                "                except Exception as _e:\n"
+                f"                    _info(f'INFO: row {{_src_idx}} person {{psv!r}} — could not parse end_date ({{_e}})')\n"
+            )
+        for i, fb in fb_for_file:
+            col = fb["col"]
+            body += (
+                f"            _fb{i}_raw = str(row.get({repr(col)}, '')).strip()\n"
+                f"            if _fb{i}_raw and _fb{i}_raw != 'nan':\n"
+                f"                try:\n"
+                f"                    person_data[psv]['fb_{i}'] = datetime.strptime(_fb{i}_raw, {repr(date_fmt)}).date()\n"
+                f"                except Exception:\n"
+                f"                    pass\n"
+            )
+
+        read_line = _sf_read_line(project, filename)
+        file_blocks += (
+            f"\n    # --- {filename} ---\n"
+            + read_line
+            + "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+            "        try:\n"
+            + psv_lines
+            + "            if psv not in person_data:\n"
+            "                person_data[psv] = {}\n"
+            + body
+            + "        except Exception as e:\n"
+            "            print(f'WARNING: skipping row — {e}')\n"
+        )
+
+    # Fallback resolution block (runs after all file loops)
+    resolve = (
+        "\n"
+        "    # --- Resolve observation periods from accumulated data ---\n"
+        "    person_periods: dict = {}\n"
+        "    for psv, data in person_data.items():\n"
+        "        start = data.get('start')\n"
+        "        if not start:\n"
+        "            print(f'WARNING: skipping person {psv!r} — no start_date found across all source files')\n"
+        "            continue\n"
+        "        person_id = person_lookup.get(psv)\n"
+        "        if person_id is None:\n"
+        "            print(f'WARNING: skipping person {psv!r} — not found in person.csv')\n"
+        "            continue\n"
+        "        end = data.get('end')\n"
+    )
+    for i, fb in enumerate(fallbacks):
+        fb_type = fb.get("type")
+        if fb_type == "column" and fb.get("col"):
+            resolve += f"        if end is None:\n            end = data.get('fb_{i}')\n"
+        elif fb_type == "start_date":
+            resolve += "        if end is None:\n            end = start\n"
+            break
+        elif fb_type == "today":
+            resolve += "        if end is None:\n            end = date.today()\n"
+            break
+    else:
+        # No terminal fallback found — default to start_date
+        resolve += "        if end is None:\n            end = start\n"
+    resolve += "        person_periods.setdefault(person_id, []).append((start, end))\n"
+
+    return (
+        _obs_period_common_header()
+        + "def main():\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        "    # --- Load lookup tables ---\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        "    # Accumulate per-patient date components across all source files\n"
+        "    person_data: dict = {}  # psv -> {start, end, fb_0, ...}\n"
+        + file_blocks
+        + resolve
+        + _obs_period_common_tail(type_concept_id)
+    )
+
+
+def _generate_observation_period_script(project) -> str:
+    """Deterministic template-based generator for the OMOP observation_period script."""
+    obs = (project.etl_config or {}).get("observation_period", {})
+    person_cfg = (project.etl_config or {}).get("person", {})
+
+    # Normalise fallback chain (migrate legacy end_date_fallback string)
+    fallbacks: list = obs.get("end_date_fallbacks") or []
+    if not fallbacks and obs.get("end_date_fallback"):
+        fallbacks = [{"type": obs["end_date_fallback"]}]
+
+    # Detect multi-file: distinct files referenced for start, end, or fallback columns
+    start_file = obs.get("start_date_file", "")
+    end_file = obs.get("end_date_file", "")
+    fb_files = [fb.get("source_filename", "") for fb in fallbacks if fb.get("type") == "column" and fb.get("source_filename")]
+    distinct_files = set(filter(None, [start_file, end_file] + fb_files))
+    if len(distinct_files) > 1:
+        return _generate_observation_period_script_multi(project, obs, person_cfg, fallbacks)
+
+    # Single-file path — resolve source from whichever file was selected (if any)
+    obs_for_src = obs
+    if distinct_files:
+        obs_for_src = {**obs, "source_filename": next(iter(distinct_files))}
+    source_path_code, delim, enc = _source_file_params(project, obs_for_src)
+
+    start_col = obs.get("start_date_col", "")
+    end_col = obs.get("end_date_col", "")
+    type_concept_id = int(obs.get("period_type_concept_id") or 32879)
+    date_fmt = obs.get("date_format") or "%Y-%m-%d"
+
+    pid_cfg = _person_pid_cfg(person_cfg)
+    pid_col = pid_cfg.get("source_col", "")
+
+    if pid_col:
+        psv_lines = (
+            f"            _pid_raw = row.get({repr(pid_col)})\n"
+            "            if pd.isnull(_pid_raw):\n"
+            f'                print(f"WARNING: skipping row {{_src_idx}} — person_id column {repr(pid_col)} is null or missing")\n'
+            "                continue\n"
+            "            person_source_value = str(_pid_raw)\n"
+        )
+    else:
+        psv_lines = "            person_source_value = str(_src_idx)\n"
+
+    end_date_lines = _obs_period_end_date_lines(end_col, fallbacks, date_fmt)
+
+    return (
+        _obs_period_common_header()
+        + "def main():\n"
+        + source_path_code
+        + "    output_dir  = os.getenv('ETL_OUTPUT_DIR')\n"
+        "\n"
+        "    # --- Load source data ---\n"
+        f"    df = pd.read_csv(source_path, delimiter={delim}, encoding={enc})\n"
+        "\n"
+        "    # --- Load lookup tables ---\n"
+        "    person_lookup = {}\n"
+        "    person_file = os.path.join(output_dir, 'person.csv')\n"
+        "    if os.path.exists(person_file):\n"
+        "        try:\n"
+        "            pers_df = pd.read_csv(person_file, delimiter=';', encoding='utf-8')\n"
+        "            person_lookup = dict(zip(pers_df['person_source_value'].astype(str), pers_df['person_id']))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: could not load person.csv: {e}')\n"
+        "\n"
+        "    # --- Collect observation periods per person ---\n"
+        "    person_periods: dict = {}  # person_id -> [(start_date, end_date), ...]\n"
+        "\n"
+        "    for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
+        "        try:\n"
+        "\n"
+        "            # Person identifier\n"
+        + psv_lines
+        + "            person_id = person_lookup.get(person_source_value)\n"
+        "            if person_id is None:\n"
+        "                print(f'WARNING: skipping row {_src_idx} — person \"{person_source_value}\" not found in person.csv')\n"
+        "                continue\n"
+        "\n"
+        "            # Start date (required)\n"
+        f"            _start_raw = str(row.get({repr(start_col)}, '')).strip()\n"
+        "            if not _start_raw or _start_raw == 'nan':\n"
+        "                print(f'WARNING: skipping row {_src_idx} — observation_period start_date is empty for person \"{person_source_value}\"')\n"
+        "                continue\n"
+        f"            obs_start_date = datetime.strptime(_start_raw, {repr(date_fmt)}).date()\n"
+        "\n"
+        "            # End date (optional — resolved via fallback chain)\n"
+        "            try:\n"
+        + end_date_lines
+        + "            except Exception as _end_exc:\n"
+        "                _info(f'INFO: person \"{person_source_value}\" — could not parse end_date; defaulting to start_date ({_end_exc})')\n"
+        "                obs_end_date = obs_start_date\n"
+        "\n"
+        "            person_periods.setdefault(person_id, []).append((obs_start_date, obs_end_date))\n"
+        "        except Exception as e:\n"
+        "            print(f'WARNING: skipping row — {e}')\n"
+        + _obs_period_common_tail(type_concept_id)
     )
 
 
