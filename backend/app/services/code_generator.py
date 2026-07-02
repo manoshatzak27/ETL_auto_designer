@@ -2121,6 +2121,23 @@ def _person_row_body(v: dict, loc: dict, cs_cfg: dict, prov_cfg: dict, indent: s
     return pid_lines + dob_lines + "\n" + gender_lines + race_lines + eth_lines + "\n" + loc_lines + cs_lines + prov_lines
 
 
+def _resolve_flat_cfg_merged(cfg: dict) -> dict:
+    """Return a merged flat view with the union of non-empty values across all file configs.
+
+    Used when we need to know whether *any* file has a given column configured,
+    rather than what a specific file's config says.
+    """
+    fc = cfg.get("file_configs")
+    if not fc:
+        return cfg
+    merged: dict = {}
+    for file_cfg in fc.values():
+        for k, v in file_cfg.items():
+            if v and k not in merged:
+                merged[k] = v
+    return merged
+
+
 def _resolve_flat_cfg(cfg: dict, filename: str = '') -> dict:
     """Return a flat (field→value) view of a config dict.
 
@@ -2143,9 +2160,9 @@ def _resolve_flat_cfg(cfg: dict, filename: str = '') -> dict:
 
 def _person_lookup_setup(loc: dict, cs_cfg: dict, prov_cfg: dict) -> str:
     """Generate lookup-table loading code (location, care_site, provider) for the person script."""
-    loc_flat = _resolve_flat_cfg(loc)
-    cs_flat = _resolve_flat_cfg(cs_cfg)
-    prov_flat = _resolve_flat_cfg(prov_cfg)
+    loc_flat = _resolve_flat_cfg_merged(loc)
+    cs_flat = _resolve_flat_cfg_merged(cs_cfg)
+    prov_flat = _resolve_flat_cfg_merged(prov_cfg)
 
     a1_col = loc_flat.get("address_1_col", "")
     a2_col = loc_flat.get("address_2_col", "")
@@ -2239,6 +2256,24 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
     """Generate a multi-file person script that merges patients across sources."""
 
     lookup_setup = _person_lookup_setup(loc, cs_cfg, prov_cfg)
+
+    # Determine if any file has location columns — used to decide whether to use the
+    # deferred accumulation approach (needed when columns are split across files).
+    _loc_merged = _resolve_flat_cfg_merged(loc)
+    has_location_any = any([
+        _loc_merged.get("address_1_col"), _loc_merged.get("address_2_col"),
+        _loc_merged.get("city_col"), _loc_merged.get("state_col"),
+        _loc_merged.get("zip_col"), _loc_merged.get("county_col"),
+        _loc_merged.get("country_col"), _loc_merged.get("country_source_value"),
+    ])
+
+    # Ensure DOB-bearing files are processed first so the primary file always has DOB.
+    # Files lacking DOB become merge files, where existing patients pass through with
+    # None birth values (preserved from the DOB-bearing file via _is_meaningful).
+    source_files = sorted(
+        source_files,
+        key=lambda fn: 0 if (file_configs.get(fn, {}).get("mappings", {}).get("year_of_birth") or {}).get("source_col") else 1,
+    )
 
     # Build per-file blocks
     file_blocks = ""
@@ -2363,14 +2398,14 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
             "\n"
             + pid_extract
             + "            # Date of birth\n"
-            + _person_dob_lines(v)
+            + _person_dob_lines(v, is_merge=not is_primary)
             + "\n"
             "            # Demographics\n"
             + _person_gender_lines(v)
             + _person_race_lines(v)
             + _person_eth_lines(v)
             + "\n"
-            + _person_loc_lines(loc, cs_cfg, prov_cfg, filename=filename)
+            + _person_loc_lines(loc, cs_cfg, prov_cfg, filename=filename, deferred_location=has_location_any)
             + "\n"
             + store_block
             + "        except Exception as e:\n"
@@ -2418,7 +2453,9 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
         "    person_dict = {}        # keyed by person_source_value\n"
         "    conflicted_ids = set()  # dropped due to cross-file conflicts\n"
         "    person_id_counter = 1\n"
+        + ("    _loc_parts = {}         # cross-file location components per patient\n" if has_location_any else "")
         + file_blocks
+        + ((_person_loc_resolve_block()) if has_location_any else "")
         + "\n"
         "    # --- Build output DataFrame ---\n"
         "    PERSON_COLUMNS = [\n"
@@ -2443,7 +2480,7 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
     )
 
 
-def _person_dob_lines(v: dict, indent: str = "            ") -> str:
+def _person_dob_lines(v: dict, indent: str = "            ", is_merge: bool = False) -> str:
     dob_col = v["dob_col"]
     date_format = v["date_format"]
     birth_time_col = v["birth_time_col"]
@@ -2475,6 +2512,19 @@ def _person_dob_lines(v: dict, indent: str = "            ") -> str:
             f"{indent}month_of_birth = _dob.month\n"
             f"{indent}day_of_birth = _dob.day\n"
             + bt
+        )
+    # No DOB column configured.
+    # For merge files: allow existing patients through (DOB already loaded from a prior file).
+    # New patients in this file still require DOB and are skipped.
+    if is_merge:
+        return (
+            f"{indent}if person_source_value not in person_dict:\n"
+            f'{indent}    print(f"WARNING: skipping row {{_src_idx}} — no birth-date column configured; year_of_birth is required by OMOP CDM")\n'
+            f"{indent}    continue\n"
+            f"{indent}year_of_birth = None\n"
+            f"{indent}month_of_birth = None\n"
+            f"{indent}day_of_birth = None\n"
+            f"{indent}birth_datetime = None\n"
         )
     return (
         f'{indent}print(f"WARNING: skipping row {{_src_idx}} — no birth-date column configured; year_of_birth is required by OMOP CDM")\n'
@@ -2545,12 +2595,16 @@ def _person_eth_lines(v: dict, indent: str = "            ") -> str:
 
 
 def _person_loc_lines(loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "            ",
-                      *, filename: str = '') -> str:
+                      *, filename: str = '', deferred_location: bool = False) -> str:
     """Generate per-row location/care-site/provider lookup lines for the person script.
 
     *loc*, *cs_cfg*, *prov_cfg* may be either the legacy flat dict or the new
     multi-file format (with ``file_configs``).  Pass *filename* to resolve the
     per-file config for that specific source file; falls back to the primary file.
+
+    When *deferred_location* is True, the location part accumulates field values into
+    ``_loc_parts[person_source_value]`` instead of doing an inline lookup.  The actual
+    lookup is emitted separately via :func:`_person_loc_resolve_block`.
     """
     loc_flat = _resolve_flat_cfg(loc, filename)
     cs_flat = _resolve_flat_cfg(cs_cfg, filename)
@@ -2568,7 +2622,33 @@ def _person_loc_lines(loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "  
     cs_name_col = cs_flat.get("care_site_name_col", "")
     prov_name_col = prov_flat.get("provider_name_col", "")
 
-    if has_location:
+    if has_location and deferred_location:
+        # Accumulate this file's location columns into _loc_parts; lookup happens later.
+        field_pairs = [
+            ("a1",         a1_col),
+            ("a2",         a2_col),
+            ("city",       city_col),
+            ("state",      state_col),
+            ("zip",        zip_col),
+            ("county",     county_col),
+        ]
+        acc = f"{indent}if person_source_value not in _loc_parts:\n{indent}    _loc_parts[person_source_value] = {{}}\n"
+        for key, col in field_pairs:
+            if col:
+                acc += (
+                    f"{indent}__{key} = _read_str(row, {repr(col)})\n"
+                    f"{indent}if __{key} is not None: _loc_parts[person_source_value][{repr(key)}] = __{key}\n"
+                )
+        if country_col:
+            acc += (
+                f"{indent}__country_sv = _read_str(row, {repr(country_col)})\n"
+                f"{indent}if __country_sv is not None: _loc_parts[person_source_value]['country_sv'] = __country_sv\n"
+            )
+        elif country_sv:
+            acc += f"{indent}_loc_parts[person_source_value]['country_sv'] = {repr(country_sv)}\n"
+        acc += f"{indent}location_id = None\n"
+        loc_lines = acc
+    elif has_location:
         loc_lines = (
             _xtr("_a1", a1_col, len(indent)) + "\n"
             + _xtr("_a2", a2_col, len(indent)) + "\n"
@@ -2611,6 +2691,27 @@ def _person_loc_lines(loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "  
         prov_lines = _xtr_doc("provider_id", "", len(indent)) + "\n"
 
     return loc_lines + cs_lines + prov_lines
+
+
+def _person_loc_resolve_block() -> str:
+    """Generate the post-loop block that resolves location_id from accumulated components."""
+    return (
+        "\n"
+        "    # --- Resolve location_id from cross-file accumulated components ---\n"
+        "    for _psv, _parts in _loc_parts.items():\n"
+        "        if _psv not in person_dict:\n"
+        "            continue\n"
+        "        _loc_sv = ' | '.join(filter(None, [\n"
+        "            _parts.get('a1'), _parts.get('a2'), _parts.get('city'),\n"
+        "            _parts.get('state'), _parts.get('zip'), _parts.get('county'),\n"
+        "            _parts.get('country_sv'),\n"
+        "        ]))[:255]\n"
+        "        if _loc_sv:\n"
+        "            _lid = location_lookup.get(_loc_sv)\n"
+        "            if _lid is None:\n"
+        "                _info(f'INFO: person {_psv!r} — location {_loc_sv!r} not found in location.csv; location_id set to NULL')\n"
+        "            person_dict[_psv]['location_id'] = _lid\n"
+    )
 
 
 def _generate_person_script(project) -> str:
