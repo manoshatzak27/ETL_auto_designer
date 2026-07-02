@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues, detectColumnType } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
-import type { Project, PersonConfig, PersonFileConfig, RaceEthnicityMapping, SourceFile } from '../../types'
+import type { Project, PersonConfig, PersonFileConfig, RaceEthnicityMapping, SourceFile, LocationConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
@@ -16,7 +16,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { useDomainValidation } from '../../hooks/useDomainValidation'
-import { FileText } from 'lucide-react'
+import { FileText, Info } from 'lucide-react'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -106,6 +106,12 @@ export default function PersonStep({ project, onUpdate }: Props) {
     ? Object.values(ethMap?.value_map ?? {})
     : ethDefaultId > 0 ? [ethDefaultId] : []
   const ethViolations = useDomainValidation(ethConceptIds, 'Ethnicity')
+
+  // ── Location-step patient identifier lock ────────────────────────────
+  const locCfg = (project.etl_config?.location ?? {}) as LocationConfig
+  const locAutoIncrement = locCfg.person_id_auto_increment ?? false
+  const locPidCol = !locAutoIncrement ? (locCfg.file_configs?.[activeFilename]?.person_id_col ?? '') : ''
+  const pidLockedFromLocation = locAutoIncrement || !!locPidCol
 
   // ── Auto-detect person_id transform ──────────────────────────────────
   const pidCol = activeCfg.mappings.person_id.source_col
@@ -373,7 +379,23 @@ export default function PersonStep({ project, onUpdate }: Props) {
   // ── Save ──────────────────────────────────────────────────────────────
   const saveConfig = async () => {
     const currentCfg: PersonFileConfig = { ...activeCfg, gender_mode: genderMode, race_mode: raceMode, ethnicity_mode: ethnicityMode }
-    const allFileConfigs = activeFilename ? { ...fileConfigs, [activeFilename]: currentCfg } : fileConfigs
+    const snapped = activeFilename ? { ...fileConfigs, [activeFilename]: currentCfg } : fileConfigs
+
+    // Inject the location step's patient identifier into every file config where it is controlled
+    const locCfgSave = (project.etl_config?.location ?? {}) as LocationConfig
+    const locAutoIncSave = locCfgSave.person_id_auto_increment ?? false
+    const allFileConfigs = Object.fromEntries(
+      Object.entries(snapped).map(([fn, cfg]) => {
+        const filePidCol = locAutoIncSave ? '' : (locCfgSave.file_configs?.[fn]?.person_id_col ?? '')
+        if (locAutoIncSave || filePidCol) {
+          const injected = locAutoIncSave
+            ? { source_col: '', transform: 'int_float' as const, auto_increment: true }
+            : { source_col: filePidCol, transform: cfg.mappings.person_id.transform ?? 'int_float' as const, auto_increment: false }
+          return [fn, { ...cfg, mappings: { ...cfg.mappings, person_id: injected } }]
+        }
+        return [fn, cfg]
+      })
+    )
 
     const primaryCfg = selectedFiles.length > 0 ? (allFileConfigs[selectedFiles[0]] ?? DEFAULT_FILE_CFG) : DEFAULT_FILE_CFG
     const required = [
@@ -394,11 +416,15 @@ export default function PersonStep({ project, onUpdate }: Props) {
     setFileConfigs(allFileConfigs)
   }
 
-  const validatePidMapped = (allFileConfigs: Record<string, PersonFileConfig>): string[] =>
-    selectedFiles.filter(filename => {
+  const validatePidMapped = (allFileConfigs: Record<string, PersonFileConfig>): string[] => {
+    const locCfgVal = (project.etl_config?.location ?? {}) as LocationConfig
+    if (locCfgVal.person_id_auto_increment) return []
+    return selectedFiles.filter(filename => {
+      if (locCfgVal.file_configs?.[filename]?.person_id_col) return false
       const pid = (allFileConfigs[filename] ?? DEFAULT_FILE_CFG).mappings.person_id
       return !pid.auto_increment && !pid.source_col
     })
+  }
 
   const beforeGenerate = async () => {
     const currentCfg: PersonFileConfig = { ...activeCfg, gender_mode: genderMode, race_mode: raceMode, ethnicity_mode: ethnicityMode }
@@ -527,46 +553,79 @@ export default function PersonStep({ project, onUpdate }: Props) {
             <Card className="flex flex-col gap-5 p-6">
               <h3 className="font-semibold text-foreground">Person id</h3>
 
-              <label className="flex items-center gap-3 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={activeCfg.mappings.person_id.auto_increment ?? false}
-                  onChange={e => setField(['mappings', 'person_id', 'auto_increment'], e.target.checked)}
-                  className="w-4 h-4 accent-primary rounded"
-                />
-                <span className="text-sm text-foreground">
-                  Auto-increment Patient ID — assign sequential IDs (1, 2, 3…) without mapping to a source column
-                </span>
-              </label>
-
-              {!activeCfg.mappings.person_id.auto_increment && (
+              {pidLockedFromLocation ? (
                 <>
-                  <FieldMapper
-                    label="Patient ID column"
-                    sourceColumns={availCols(activeCfg.mappings.person_id.source_col)}
-                    value={activeCfg.mappings.person_id.source_col}
-                    onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
-                    required
-                    hint="Will be cast using the transform selected below. Used as person_id."
-                  />
-
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Label>Patient ID transform</Label>
-                      {detectedTransform && (
-                        <span className="text-xs text-green-600 dark:text-green-400 font-medium">(auto-detected)</span>
-                      )}
-                    </div>
-                    <Select
-                      value={activeCfg.mappings.person_id.transform}
-                      onChange={e => { setDetectedTransform(null); setField(['mappings', 'person_id', 'transform'], e.target.value) }}
-                      className="mt-1"
-                    >
-                      <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
-                      <option value="int">int(x) — for "1", "2" style IDs</option>
-                      <option value="str">str(x) — keep as string</option>
-                    </Select>
+                  <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2.5">
+                    <Info className="size-4 text-primary mt-0.5 flex-shrink-0" />
+                    <p className="text-sm text-muted-foreground">
+                      The patient identifier is controlled by the{' '}
+                      <span className="font-medium text-foreground">Location step</span>.
+                      To change it, go back to the Location step.
+                    </p>
                   </div>
+                  <div className="opacity-50 pointer-events-none flex flex-col gap-4">
+                    {locAutoIncrement ? (
+                      <label className="flex items-center gap-3 select-none">
+                        <input type="checkbox" checked readOnly className="w-4 h-4 accent-primary rounded" />
+                        <span className="text-sm text-foreground">
+                          Auto-increment Patient ID — assign sequential IDs (1, 2, 3…) without mapping to a source column
+                        </span>
+                      </label>
+                    ) : (
+                      <FieldMapper
+                        label="Patient ID column"
+                        sourceColumns={[locPidCol]}
+                        value={locPidCol}
+                        onChange={() => {}}
+                        hint="Inherited from the Location step."
+                      />
+                    )}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <label className="flex items-center gap-3 cursor-pointer select-none">
+                    <input
+                      type="checkbox"
+                      checked={activeCfg.mappings.person_id.auto_increment ?? false}
+                      onChange={e => setField(['mappings', 'person_id', 'auto_increment'], e.target.checked)}
+                      className="w-4 h-4 accent-primary rounded"
+                    />
+                    <span className="text-sm text-foreground">
+                      Auto-increment Patient ID — assign sequential IDs (1, 2, 3…) without mapping to a source column
+                    </span>
+                  </label>
+
+                  {!activeCfg.mappings.person_id.auto_increment && (
+                    <>
+                      <FieldMapper
+                        label="Patient ID column"
+                        sourceColumns={availCols(activeCfg.mappings.person_id.source_col)}
+                        value={activeCfg.mappings.person_id.source_col}
+                        onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
+                        required
+                        hint="Will be cast using the transform selected below. Used as person_id."
+                      />
+
+                      <div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <Label>Patient ID transform</Label>
+                          {detectedTransform && (
+                            <span className="text-xs text-green-600 dark:text-green-400 font-medium">(auto-detected)</span>
+                          )}
+                        </div>
+                        <Select
+                          value={activeCfg.mappings.person_id.transform}
+                          onChange={e => { setDetectedTransform(null); setField(['mappings', 'person_id', 'transform'], e.target.value) }}
+                          className="mt-1"
+                        >
+                          <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
+                          <option value="int">int(x) — for "1", "2" style IDs</option>
+                          <option value="str">str(x) — keep as string</option>
+                        </Select>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
             </Card>

@@ -85,18 +85,12 @@ def _xtr_v(var: str, col: str, indent: int = 8) -> str:
 
 
 def _xtr_doc(var: str, col: str, indent: int = 8) -> str:
-    """Like _xtr_v but uses an intermediate `val` variable.
-    When no column is mapped, emits a '# <var> is not populated' comment instead."""
+    """Emit _read_str(row, col). When col is empty, emit `var = None` with a comment."""
     pad = " " * indent
     if not col:
         return f"{pad}# {var} is not populated\n{pad}{var} = None"
     c = repr(col)
-    return (
-        f"{pad}val = row.get({c})\n"
-        f"{pad}{var} = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        f"{pad}if {var} is None:\n"
-        f'{pad}    _info(f"INFO: column {col!r} is empty for this row")'
-    )
+    return f"{pad}{var} = _read_str(row, {c})"
 
 
 def _source_file_params(project, table_cfg: dict) -> tuple[str, str, str]:
@@ -121,9 +115,34 @@ def _source_file_params(project, table_cfg: dict) -> tuple[str, str, str]:
     )
 
 
+def _sf_read_line(project, filename: str) -> str:
+    """Return a pd.read_csv(...) line for a named source file."""
+    entry = next((f for f in (project.source_files or []) if f.get("filename") == filename), None)
+    if entry:
+        path = entry.get("path", "")
+        delim = repr(entry.get("delimiter", ","))
+        enc = repr(entry.get("encoding", "utf-8"))
+        return f"    df = pd.read_csv(r{repr(path)}, delimiter={delim}, encoding={enc})\n"
+    return f"    # WARNING: source file entry not found for {repr(filename)}\n    df = pd.DataFrame()\n"
+
+
 def _generate_location_script(project) -> str:
     """Deterministic template-based generator for the OMOP location script."""
     loc = (project.etl_config or {}).get("location", {})
+
+    source_files = loc.get("source_files", [])
+    file_configs = loc.get("file_configs", {})
+    if source_files and file_configs:
+        person_id_auto_increment = bool(loc.get("person_id_auto_increment", False))
+        if not person_id_auto_increment:
+            missing = [fn for fn in source_files if not file_configs.get(fn, {}).get("person_id_col", "")]
+            if missing:
+                raise ValueError(
+                    f"Location: person_id_col is not mapped for {missing}. "
+                    f"Map the column in the Location step or switch to auto-increment."
+                )
+        return _generate_location_script_multi(project, source_files, file_configs, person_id_auto_increment)
+
     source_path_code, delim, enc = _source_file_params(project, loc)
 
     a1_col = loc.get("address_1_col", "")
@@ -162,6 +181,14 @@ def _generate_location_script(project) -> str:
         "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
         "    if VERBOSE:\n"
         "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
         "\n"
         "\n"
         "def _to_lat(val):\n"
@@ -349,10 +376,388 @@ def _generate_location_script(project) -> str:
     )
 
 
+def _location_file_block(fc: dict, project, person_id_col: str = "",
+                         person_id_auto_increment: bool = False) -> tuple:
+    """Return (map_init, row_body) for one source file's location config (person + cs addresses).
+
+    When person_id_col is supplied cross-file patient dedup uses conflict/merge semantics:
+    - New patient: write location row normally and track it.
+    - Returning patient with no conflicting fields: fill any blanks in the existing row (merge).
+    - Returning patient with at least one field that differs between files: tombstone the existing
+      row (set to None) so it is filtered out before writing the CSV.
+    Without person_id_col the original address-key-only dedup is used.
+    """
+    a1_col = fc.get("address_1_col", "")
+    a2_col = fc.get("address_2_col", "")
+    city_col = fc.get("city_col", "")
+    state_col = fc.get("state_col", "")
+    zip_col = fc.get("zip_col", "")
+    county_col = fc.get("county_col", "")
+    country_col = fc.get("country_col", "")
+    country_sv = fc.get("country_source_value", "")
+    cid_map = fc.get("country_concept_id_map", {})
+    cid_default = fc.get("country_concept_id_default", 0) or 0
+    lat_col = fc.get("latitude_col", "")
+    lon_col = fc.get("longitude_col", "")
+
+    cs_a1_col = fc.get("cs_address_1_col", "")
+    cs_a2_col = fc.get("cs_address_2_col", "")
+    cs_city_col = fc.get("cs_city_col", "")
+    cs_state_col = fc.get("cs_state_col", "")
+    cs_zip_col = fc.get("cs_zip_col", "")
+    cs_county_col = fc.get("cs_county_col", "")
+    cs_country_col = fc.get("cs_country_col", "")
+    cs_country_sv = fc.get("cs_country_source_value", "")
+    cs_cid_map = fc.get("cs_country_concept_id_map", {})
+    cs_cid_default = fc.get("cs_country_concept_id_default", 0) or 0
+    cs_lat_col = fc.get("cs_latitude_col", "")
+    cs_lon_col = fc.get("cs_longitude_col", "")
+
+    map_init = ""
+    if country_col:
+        map_init += (
+            f"    country_concept_id_map     = {json.dumps(cid_map)}\n"
+            f"    country_concept_id_default = {cid_default}\n"
+        )
+    if cs_country_col:
+        map_init += (
+            f"    cs_country_concept_id_map     = {json.dumps(cs_cid_map)}\n"
+            f"    cs_country_concept_id_default = {cs_cid_default}\n"
+        )
+
+    # ── shared row-append snippets (used in both dedup paths) ────────────
+    _person_append = (
+        "                rows.append({\n"
+        "                    'location_id':           None,\n"
+        "                    'address_1':             address_1[:50]  if address_1 else None,\n"
+        "                    'address_2':             address_2[:50]  if address_2 else None,\n"
+        "                    'city':                  city[:50]       if city      else None,\n"
+        "                    'state':                 state[:2]       if state     else None,\n"
+        "                    'zip':                   zip_code[:9]    if zip_code  else None,\n"
+        "                    'county':                county[:20]     if county    else None,\n"
+        "                    'location_source_value': location_source_value,\n"
+        "                    'country_concept_id':    country_concept_id,\n"
+        "                    'country_source_value':  country_source_value,\n"
+        "                    'latitude':              _to_lat(latitude),\n"
+        "                    'longitude':             _to_lon(longitude),\n"
+        "                })\n"
+    )
+    _cs_append = (
+        "                rows.append({\n"
+        "                    'location_id':           None,\n"
+        "                    'address_1':             cs_address_1[:50]  if cs_address_1 else None,\n"
+        "                    'address_2':             cs_address_2[:50]  if cs_address_2 else None,\n"
+        "                    'city':                  cs_city[:50]       if cs_city      else None,\n"
+        "                    'state':                 cs_state[:2]       if cs_state     else None,\n"
+        "                    'zip':                   cs_zip_code[:9]    if cs_zip_code  else None,\n"
+        "                    'county':                cs_county[:20]     if cs_county    else None,\n"
+        "                    'location_source_value': cs_location_source_value,\n"
+        "                    'country_concept_id':    cs_country_concept_id,\n"
+        "                    'country_source_value':  cs_country_source_value,\n"
+        "                    'latitude':              _to_lat(cs_latitude),\n"
+        "                    'longitude':             _to_lon(cs_longitude),\n"
+        "                })\n"
+    )
+
+    # ── field-extraction code (same regardless of dedup mode) ────────────
+    person_fields = (
+        "        # PERSON ADDRESS\n"
+        + _xtr_doc("address_1", a1_col) + "\n\n"
+        + _xtr_doc("address_2", a2_col) + "\n\n"
+        + _xtr_doc("city", city_col) + "\n\n"
+        + _xtr_doc("state", state_col) + "\n\n"
+        + _xtr_doc("zip_code", zip_col) + "\n\n"
+        + _xtr_doc("county", county_col) + "\n\n"
+        + _xtr_doc("latitude", lat_col) + "\n\n"
+        + _xtr_doc("longitude", lon_col) + "\n\n"
+        + (
+            _xtr("country_source_value", country_col, 8) + "\n"
+            + "        if country_source_value:\n"
+            + "            _cid = country_concept_id_map.get(country_source_value)\n"
+            + "            if _cid is None:\n"
+            + "                _info(f'INFO: country value {country_source_value!r} not in concept map — using default')\n"
+            + "            country_concept_id = (_cid if _cid is not None else country_concept_id_default) or None\n"
+            + "        else:\n"
+            + "            country_concept_id = country_concept_id_default or None\n"
+            if country_col else
+            f"        country_source_value = {repr(country_sv) if country_sv else 'None'}\n"
+            + f"        country_concept_id = {cid_default if cid_default else 'None'}\n"
+        )
+        + '        location_source_value = " | ".join(filter(None, [\n'
+        + "            address_1, address_2, city, state, zip_code, county, country_source_value\n"
+        + "        ]))[:255]\n"
+    )
+
+    cs_fields = (
+        "        # CARE SITE ADDRESS\n"
+        + _xtr_doc("cs_address_1", cs_a1_col) + "\n\n"
+        + _xtr_doc("cs_address_2", cs_a2_col) + "\n\n"
+        + _xtr_doc("cs_city", cs_city_col) + "\n\n"
+        + _xtr_doc("cs_state", cs_state_col) + "\n\n"
+        + _xtr_doc("cs_zip_code", cs_zip_col) + "\n\n"
+        + _xtr_doc("cs_county", cs_county_col) + "\n\n"
+        + _xtr_doc("cs_latitude", cs_lat_col) + "\n\n"
+        + _xtr_doc("cs_longitude", cs_lon_col) + "\n\n"
+        + (
+            _xtr("cs_country_source_value", cs_country_col, 8) + "\n"
+            + "        if cs_country_source_value:\n"
+            + "            _cs_cid = cs_country_concept_id_map.get(cs_country_source_value)\n"
+            + "            if _cs_cid is None:\n"
+            + "                _info(f'INFO: cs_country value {cs_country_source_value!r} not in concept map — using default')\n"
+            + "            cs_country_concept_id = (_cs_cid if _cs_cid is not None else cs_country_concept_id_default) or None\n"
+            + "        else:\n"
+            + "            cs_country_concept_id = cs_country_concept_id_default or None\n"
+            if cs_country_col else
+            f"        cs_country_source_value = {repr(cs_country_sv) if cs_country_sv else 'None'}\n"
+            + f"        cs_country_concept_id = {cs_cid_default if cs_cid_default else 'None'}\n"
+        )
+        + '        cs_location_source_value = " | ".join(filter(None, [\n'
+        + "            cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value\n"
+        + "        ]))[:255]\n"
+    )
+
+    # ── dedup logic ──────────────────────────────────────────────────────
+    if person_id_col or person_id_auto_increment:
+        person_dedup = (
+            "        _upsert_location(\n"
+            "            _patient_id,\n"
+            "            {'address_1': address_1, 'address_2': address_2, 'city': city,\n"
+            "             'state': state, 'zip_code': zip_code, 'county': county,\n"
+            "             'country_source_value': country_source_value, 'country_concept_id': country_concept_id,\n"
+            "             'latitude': latitude, 'longitude': longitude},\n"
+            "            location_source_value,\n"
+            "            {'by_patient': patient_addr, 'conflicted': patient_conflicted, 'indices': patient_row_indices},\n"
+            "            rows, seen_locations, 'person',\n"
+            "        )\n"
+        )
+        cs_dedup = (
+            "        _upsert_location(\n"
+            "            _patient_id,\n"
+            "            {'address_1': cs_address_1, 'address_2': cs_address_2, 'city': cs_city,\n"
+            "             'state': cs_state, 'zip_code': cs_zip_code, 'county': cs_county,\n"
+            "             'country_source_value': cs_country_source_value, 'country_concept_id': cs_country_concept_id,\n"
+            "             'latitude': cs_latitude, 'longitude': cs_longitude},\n"
+            "            cs_location_source_value,\n"
+            "            {'by_patient': cs_patient_addr, 'conflicted': cs_patient_conflicted, 'indices': cs_patient_row_indices},\n"
+            "            rows, seen_locations, 'care site',\n"
+            "        )\n"
+        )
+        if person_id_auto_increment:
+            pid_line = "        _patient_id = str(_src_idx)\n"
+        else:
+            pid_line = f"        _patient_id = str(row.get({repr(person_id_col)}, '') or '')\n"
+        combined = pid_line + person_fields + person_dedup + "\n" + cs_fields + cs_dedup
+    else:
+        person_dedup = (
+            "        if location_source_value and location_source_value not in seen_locations:\n"
+            "            if (address_1 or city or state or zip_code):\n"
+            "                seen_locations.add(location_source_value)\n"
+            + _person_append
+        )
+        cs_dedup = (
+            "        if cs_location_source_value and cs_location_source_value not in seen_locations:\n"
+            "            if (cs_address_1 or cs_city or cs_state or cs_zip_code):\n"
+            "                seen_locations.add(cs_location_source_value)\n"
+            + _cs_append
+        )
+        combined = person_fields + person_dedup + "\n" + cs_fields + cs_dedup
+
+    return map_init, combined
+
+
+def _generate_location_script_multi(project, source_files: list, file_configs: dict,
+                                     person_id_auto_increment: bool = False) -> str:
+    """Generate a multi-file location script that merges addresses across sources."""
+    header = (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
+        "\n"
+        "def _info(msg):\n"
+        "    if VERBOSE:\n"
+        "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
+        "\n"
+        "\n"
+        "def _to_lat(val):\n"
+        "    try:\n"
+        "        f = float(val)\n"
+        "        if -90 <= f <= 90:\n"
+        "            return f\n"
+        "        print(f'WARNING: latitude value {f} is out of range [-90, 90] — set to NULL')\n"
+        "        return None\n"
+        "    except (TypeError, ValueError):\n"
+        "        return None\n"
+        "\n"
+        "def _to_lon(val):\n"
+        "    try:\n"
+        "        f = float(val)\n"
+        "        if -180 <= f <= 180:\n"
+        "            return f\n"
+        "        print(f'WARNING: longitude value {f} is out of range [-180, 180] — set to NULL')\n"
+        "        return None\n"
+        "    except (TypeError, ValueError):\n"
+        "        return None\n"
+        "\n"
+        "\n"
+        "def _upsert_location(patient_id, addr, lsv, tracking, rows, seen_locations, warn_label):\n"
+        "    a1       = addr.get('address_1')\n"
+        "    a2       = addr.get('address_2')\n"
+        "    city     = addr.get('city')\n"
+        "    state    = addr.get('state')\n"
+        "    zip_code = addr.get('zip_code')\n"
+        "    county   = addr.get('county')\n"
+        "    csv      = addr.get('country_source_value')\n"
+        "    ccid     = addr.get('country_concept_id')\n"
+        "    lat      = addr.get('latitude')\n"
+        "    lon      = addr.get('longitude')\n"
+        "    if patient_id and patient_id in tracking['by_patient']:\n"
+        "        if patient_id not in tracking['conflicted']:\n"
+        "            _old = tracking['by_patient'][patient_id]\n"
+        "            _has_conflict = any(\n"
+        "                _old.get(_k) and _new and _old[_k] != _new\n"
+        "                for _k, _new in [\n"
+        "                    ('address_1', a1), ('address_2', a2), ('city', city),\n"
+        "                    ('state', state), ('zip_code', zip_code), ('county', county),\n"
+        "                    ('country_source_value', csv),\n"
+        "                ]\n"
+        "            )\n"
+        "            if _has_conflict:\n"
+        "                tracking['conflicted'].add(patient_id)\n"
+        "                if patient_id in tracking['indices']:\n"
+        "                    rows[tracking['indices'][patient_id]] = None\n"
+        "                print(f'WARNING: patient {patient_id!r} — conflicting {warn_label} addresses across files; location row dropped')\n"
+        "            else:\n"
+        "                _idx = tracking['indices'].get(patient_id)\n"
+        "                if _idx is not None:\n"
+        "                    _r = rows[_idx]\n"
+        "                    for _k, _v in [\n"
+        "                        ('address_1', a1[:50] if a1 else None),\n"
+        "                        ('address_2', a2[:50] if a2 else None),\n"
+        "                        ('city', city[:50] if city else None),\n"
+        "                        ('state', state[:2] if state else None),\n"
+        "                        ('zip', zip_code[:9] if zip_code else None),\n"
+        "                        ('county', county[:20] if county else None),\n"
+        "                        ('country_source_value', csv),\n"
+        "                        ('country_concept_id', ccid),\n"
+        "                        ('latitude', _to_lat(lat)),\n"
+        "                        ('longitude', _to_lon(lon)),\n"
+        "                    ]:\n"
+        "                        if _r[_k] is None and _v is not None:\n"
+        "                            _r[_k] = _v\n"
+        "                    _new_lsv = ' | '.join(filter(None, [\n"
+        "                        _r.get('address_1'), _r.get('address_2'), _r.get('city'),\n"
+        "                        _r.get('state'), _r.get('zip'), _r.get('county'), _r.get('country_source_value'),\n"
+        "                    ]))[:255]\n"
+        "                    if _new_lsv != _r['location_source_value']:\n"
+        "                        seen_locations.add(_new_lsv)\n"
+        "                        _r['location_source_value'] = _new_lsv\n"
+        "                    for _pk, _rv in [\n"
+        "                        ('address_1', _r.get('address_1')), ('address_2', _r.get('address_2')),\n"
+        "                        ('city', _r.get('city')), ('state', _r.get('state')),\n"
+        "                        ('zip_code', _r.get('zip')), ('county', _r.get('county')),\n"
+        "                        ('country_source_value', _r.get('country_source_value')),\n"
+        "                    ]:\n"
+        "                        if _rv is not None:\n"
+        "                            tracking['by_patient'][patient_id][_pk] = _rv\n"
+        "    elif lsv and lsv not in seen_locations:\n"
+        "        if a1 or city or state or zip_code:\n"
+        "            seen_locations.add(lsv)\n"
+        "            if patient_id:\n"
+        "                tracking['by_patient'][patient_id] = {\n"
+        "                    'address_1': a1, 'address_2': a2, 'city': city,\n"
+        "                    'state': state, 'zip_code': zip_code, 'county': county,\n"
+        "                    'country_source_value': csv,\n"
+        "                }\n"
+        "                tracking['indices'][patient_id] = len(rows)\n"
+        "            rows.append({\n"
+        "                'location_id': None,\n"
+        "                'address_1': a1[:50] if a1 else None,\n"
+        "                'address_2': a2[:50] if a2 else None,\n"
+        "                'city': city[:50] if city else None,\n"
+        "                'state': state[:2] if state else None,\n"
+        "                'zip': zip_code[:9] if zip_code else None,\n"
+        "                'county': county[:20] if county else None,\n"
+        "                'location_source_value': lsv,\n"
+        "                'country_concept_id': ccid,\n"
+        "                'country_source_value': csv,\n"
+        "                'latitude': _to_lat(lat),\n"
+        "                'longitude': _to_lon(lon),\n"
+        "            })\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        "    rows = []\n"
+        "    seen_locations = set()       # address-key dedup (within + across files)\n"
+        "    patient_addr = {}            # person_id -> person address fields\n"
+        "    patient_conflicted = set()   # person_ids whose person addresses conflict\n"
+        "    patient_row_indices = {}     # person_id -> index into rows[]\n"
+        "    cs_patient_addr = {}         # person_id -> care-site address fields\n"
+        "    cs_patient_conflicted = set()\n"
+        "    cs_patient_row_indices = {}\n"
+        "\n"
+    )
+
+    file_blocks = ""
+    for filename in source_files:
+        fc = file_configs.get(filename, {})
+        person_id_col = "" if person_id_auto_increment else fc.get("person_id_col", "")
+        map_init, row_body = _location_file_block(fc, project, person_id_col, person_id_auto_increment)
+        read_line = _sf_read_line(project, filename)
+        label = f"    # ── File: {filename} {'─' * max(0, 55 - len(filename))}\n"
+        file_blocks += (
+            label
+            + read_line
+            + (("    # Concept maps\n" + map_init) if map_init else "")
+            + "    for _src_idx, row in df.iterrows():\n"
+            + row_body
+            + "\n"
+        )
+
+    footer = (
+        "    output_df = pd.DataFrame([r for r in rows if r is not None], columns=[\n"
+        "        'location_id', 'address_1', 'address_2', 'city', 'state', 'zip', 'county',\n"
+        "        'location_source_value', 'country_concept_id', 'country_source_value', 'latitude', 'longitude',\n"
+        "    ])\n"
+        '    output_df["location_id"] = range(1, len(output_df) + 1)\n'
+        "    output_file = os.path.join(output_dir, 'location.csv')\n"
+        "    output_df.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing location.csv ... done ({len(output_df)} records)')\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+    return header + file_blocks + footer
+
+
 def _generate_care_site_script(project) -> str:
     """Deterministic template-based generator for the OMOP care_site script."""
     cs_cfg = (project.etl_config or {}).get("care_site", {})
     loc = (project.etl_config or {}).get("location", {})
+
+    source_files = cs_cfg.get("source_files", [])
+    file_configs = cs_cfg.get("file_configs", {})
+    if source_files and file_configs:
+        person_id_auto_increment = bool(cs_cfg.get("person_id_auto_increment", False))
+        if not person_id_auto_increment:
+            missing = [fn for fn in source_files if not file_configs.get(fn, {}).get("person_id_col", "")]
+            if missing:
+                raise ValueError(
+                    f"CareSite: person_id_col is not mapped for {missing}. "
+                    f"Map the column in the Care Site step or switch to auto-increment."
+                )
+        return _generate_care_site_script_multi(project, source_files, file_configs, loc, person_id_auto_increment)
+
     source_path_code, delim, enc = _source_file_params(project, cs_cfg)
 
     name_col = cs_cfg.get("care_site_name_col", "")
@@ -498,10 +903,345 @@ def _generate_care_site_script(project) -> str:
     )
 
 
+def _loc_lookup_for_care_site(loc: dict) -> str:
+    """Return the location_lookup setup lines for a care_site script, based on the location config."""
+    has_location = any(loc.get(k) for k in [
+        "address_1_col", "address_2_col", "city_col", "state_col", "zip_col",
+        "county_col", "country_col", "country_source_value",
+        "cs_address_1_col", "cs_address_2_col", "cs_city_col", "cs_state_col",
+        "cs_zip_col", "cs_county_col", "cs_country_col", "cs_country_source_value",
+    ])
+    if not has_location:
+        # Check per-file configs
+        for fc in loc.get("file_configs", {}).values():
+            if any(fc.get(k) for k in ["cs_address_1_col", "cs_address_2_col", "cs_city_col",
+                                        "cs_state_col", "cs_zip_col", "cs_county_col",
+                                        "cs_country_col", "cs_country_source_value"]):
+                has_location = True
+                break
+    if has_location:
+        return (
+            "    location_lookup = {}\n"
+            "    location_file = os.path.join(output_dir, 'location.csv')\n"
+            "    if os.path.exists(location_file):\n"
+            "        try:\n"
+            "            loc_df = pd.read_csv(location_file, delimiter=';', encoding='utf-8')\n"
+            "            location_lookup = dict(zip(loc_df['location_source_value'], loc_df['location_id']))\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load location.csv: {e}')\n"
+        )
+    return "    location_lookup = {}\n"
+
+
+def _cs_file_row_body(fc: dict, loc_fc: dict, person_id_col: str = "",
+                      person_id_auto_increment: bool = False) -> tuple:
+    """Row extraction body for one file in the pass-2 care_site loop.
+
+    When a patient identifier is available (column or auto-increment) cs address
+    fields are read from _cs_addr[_patient_id], which was populated in pass 1 by
+    _cs_addr_pass1_block and already has ALL files' columns merged.  This ensures
+    cs_location_source_value always uses the full composite key that location.csv
+    carries, regardless of which file is currently being processed.
+
+    The else-path (no patient identifier) is the legacy single-file fallback and
+    reads address columns directly from the current row.
+    """
+    name_col = fc.get("care_site_name_col", "")
+    pos_col = fc.get("place_of_service_col", "")
+    pos_value_map = fc.get("place_of_service_value_map", {})
+
+    map_init = f"    pos_value_map = {json.dumps(pos_value_map)}\n" if pos_col else ""
+
+    name_line = _xtr_v("care_site_name", name_col, 8) + "\n"
+    pos_lines = (
+        _xtr_v("pos_source_value", pos_col, 8) + "\n"
+        + "        place_of_service_concept_id = pos_value_map.get(pos_source_value)\n"
+        + "        if place_of_service_concept_id is None and pos_source_value is not None:\n"
+        + "            _info(f'INFO: place_of_service value {pos_source_value!r} not in map; place_of_service_concept_id set to NULL')\n"
+        if pos_col else
+        _xtr_doc("pos_source_value", "", 8) + "\n"
+        + "        place_of_service_concept_id = None\n"
+    )
+
+    cs_sv_line = "        care_site_source_value = (str(location_id) + ' | ' + care_site_name)[:50] if care_site_name else None\n"
+
+    if person_id_col or person_id_auto_increment:
+        if person_id_auto_increment:
+            pid_line = "        _patient_id = str(_src_idx)\n"
+        else:
+            pid_line = f"        _patient_id = str(row.get({repr(person_id_col)}, '') or '')\n"
+
+        # Read merged cs address from _cs_addr (populated across all files in pass 1)
+        addr_lines = (
+            "        _merged_addr = _cs_addr.get(_patient_id, {})\n"
+            "        cs_address_1            = _merged_addr.get('cs_address_1')\n"
+            "        cs_address_2            = _merged_addr.get('cs_address_2')\n"
+            "        cs_city                 = _merged_addr.get('cs_city')\n"
+            "        cs_state                = _merged_addr.get('cs_state')\n"
+            "        cs_zip_code             = _merged_addr.get('cs_zip')\n"
+            "        cs_county               = _merged_addr.get('cs_county')\n"
+            "        cs_country_source_value = _merged_addr.get('cs_country_source_value')\n"
+            "        cs_location_source_value = ' | '.join(filter(None, [\n"
+            "            cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value,\n"
+            "        ]))[:255]\n"
+            "        location_id = location_lookup.get(cs_location_source_value)\n"
+            "        if location_id is None and cs_location_source_value:\n"
+            "            _info(f'INFO: care_site row — location not found for address {cs_location_source_value!r}; location_id set to NULL')\n"
+        )
+
+        _row_append = (
+            "            rows.append({\n"
+            "                'care_site_name':                care_site_name[:255] if care_site_name else None,\n"
+            "                'place_of_service_concept_id':   place_of_service_concept_id,\n"
+            "                'location_id':                   location_id,\n"
+            "                'care_site_source_value':        care_site_source_value,\n"
+            "                'place_of_service_source_value': pos_source_value[:50] if pos_source_value else None,\n"
+            "            })\n"
+        )
+
+        # Conflict: same patient in a later file maps to a DIFFERENT care site name.
+        # Address conflicts can't occur here because all files already share the same
+        # merged address via _cs_addr.
+        dedup = (
+            "        if _patient_id and _patient_id in _patient_cs:\n"
+            "            if _patient_id not in _patient_cs_conflicted:\n"
+            "                if care_site_source_value and care_site_source_value != _patient_cs[_patient_id]:\n"
+            "                    _patient_cs_conflicted.add(_patient_id)\n"
+            "                    if _patient_id in _patient_cs_row_idx:\n"
+            "                        rows[_patient_cs_row_idx[_patient_id]] = None\n"
+            "                    print(f'WARNING: patient {_patient_id!r} — conflicting care sites across files; care site row dropped')\n"
+            "        elif care_site_source_value is not None and care_site_source_value not in _seen_source_values:\n"
+            "            _seen_source_values.add(care_site_source_value)\n"
+            "            if _patient_id:\n"
+            "                _patient_cs[_patient_id] = care_site_source_value\n"
+            "                _patient_cs_row_idx[_patient_id] = len(rows)\n"
+            + _row_append
+        )
+
+        # Fallback: if this file doesn't supply name / pos, pull from _cs_addr (pass-1 merged).
+        # Use 'is not None' for concept_id because 0 is a valid OMOP value.
+        fallback_lines = (
+            "        care_site_name = care_site_name or _merged_addr.get('care_site_name')\n"
+            "        pos_source_value = pos_source_value or _merged_addr.get('pos_source_value')\n"
+            "        place_of_service_concept_id = (place_of_service_concept_id\n"
+            "            if place_of_service_concept_id is not None\n"
+            "            else _merged_addr.get('place_of_service_concept_id'))\n"
+        )
+
+        return map_init, pid_line + addr_lines + "\n" + name_line + pos_lines + fallback_lines + "\n" + cs_sv_line + dedup
+
+    else:
+        # Legacy path: read cs address directly from current row (single-file / no patient ID)
+        cs_a1_col = loc_fc.get("cs_address_1_col", "")
+        cs_a2_col = loc_fc.get("cs_address_2_col", "")
+        cs_city_col = loc_fc.get("cs_city_col", "")
+        cs_state_col = loc_fc.get("cs_state_col", "")
+        cs_zip_col = loc_fc.get("cs_zip_col", "")
+        cs_county_col = loc_fc.get("cs_county_col", "")
+        cs_country_col = loc_fc.get("cs_country_col", "")
+        cs_country_sv = loc_fc.get("cs_country_source_value", "")
+        has_location = any([cs_a1_col, cs_a2_col, cs_city_col, cs_state_col, cs_zip_col,
+                            cs_county_col, cs_country_col, cs_country_sv])
+
+        addr_lines = (
+            _xtr_v("cs_address_1", cs_a1_col, 8) + "\n"
+            + _xtr_v("cs_address_2", cs_a2_col, 8) + "\n"
+            + _xtr_v("cs_city", cs_city_col, 8) + "\n"
+            + _xtr_v("cs_state", cs_state_col, 8) + "\n"
+            + _xtr_v("cs_zip_code", cs_zip_col, 8) + "\n"
+            + _xtr_v("cs_county", cs_county_col, 8) + "\n"
+            + (
+                _xtr_v("cs_country_source_value", cs_country_col, 8) + "\n"
+                if cs_country_col else
+                f"        cs_country_source_value = {repr(cs_country_sv) if cs_country_sv else 'None'}\n"
+            )
+            + "        cs_location_source_value = ' | '.join(filter(None, [cs_address_1, cs_address_2, cs_city, cs_state, cs_zip_code, cs_county, cs_country_source_value]))[:255]\n"
+            + "        location_id = location_lookup.get(cs_location_source_value)\n"
+            + "        if location_id is None and cs_location_source_value:\n"
+            + "            _info(f'INFO: care_site row — location not found for address {cs_location_source_value!r}; location_id set to NULL')\n"
+            if has_location else
+            "        location_id = None\n"
+        )
+
+        append = (
+            cs_sv_line
+            + "        if care_site_source_value is None or care_site_source_value in _seen_source_values:\n"
+            "            continue\n"
+            "        _seen_source_values.add(care_site_source_value)\n"
+            "        rows.append({\n"
+            "            'care_site_name':                care_site_name[:255] if care_site_name else None,\n"
+            "            'place_of_service_concept_id':   place_of_service_concept_id,\n"
+            "            'location_id':                   location_id,\n"
+            "            'care_site_source_value':        care_site_source_value,\n"
+            "            'place_of_service_source_value': pos_source_value[:50] if pos_source_value else None,\n"
+            "        })\n"
+        )
+
+        return map_init, addr_lines + "\n" + name_line + pos_lines + "\n" + append
+
+
+def _cs_addr_pass1_block(project, filename: str, loc_fc: dict, fc: dict, person_id_col: str,
+                          person_id_auto_increment: bool) -> str:
+    """Generate a pass-1 loop that merges cs address + care site fields per patient into _cs_addr.
+
+    Uses first-wins per field: the first non-null value seen across all files wins.
+    Collects cs address fields (from loc_fc) AND care_site_name / pos fields (from fc)
+    so that pass 2 can fill in missing columns when they are split across files.
+    """
+    pairs = []
+    for key, col in [
+        ("cs_address_1", loc_fc.get("cs_address_1_col", "")),
+        ("cs_address_2", loc_fc.get("cs_address_2_col", "")),
+        ("cs_city",      loc_fc.get("cs_city_col", "")),
+        ("cs_state",     loc_fc.get("cs_state_col", "")),
+        ("cs_zip",       loc_fc.get("cs_zip_col", "")),
+        ("cs_county",    loc_fc.get("cs_county_col", "")),
+    ]:
+        if col:
+            pairs.append(f"({repr(key)}, str(row.get({repr(col)}, '') or '') or None)")
+    cc = loc_fc.get("cs_country_col", "")
+    cs_sv = loc_fc.get("cs_country_source_value", "")
+    if cc:
+        pairs.append(f"('cs_country_source_value', str(row.get({repr(cc)}, '') or '') or None)")
+    elif cs_sv:
+        pairs.append(f"('cs_country_source_value', {repr(cs_sv)})")
+
+    # care site columns from fc — needed when name / pos are split across files
+    name_col = fc.get("care_site_name_col", "")
+    pos_col  = fc.get("place_of_service_col", "")
+    pos_vm   = fc.get("place_of_service_value_map", {})
+    if name_col:
+        pairs.append(f"('care_site_name', str(row.get({repr(name_col)}, '') or '') or None)")
+    if pos_col:
+        pairs.append(f"('pos_source_value', str(row.get({repr(pos_col)}, '') or '') or None)")
+        pairs.append(
+            f"('place_of_service_concept_id', {json.dumps(pos_vm)}.get("
+            f"str(row.get({repr(pos_col)}, '') or '') or None))"
+        )
+
+    if not pairs:
+        return ""
+
+    pid_expr = "str(_src_idx)" if person_id_auto_increment else f"str(row.get({repr(person_id_col)}, '') or '')"
+    field_pairs_str = ", ".join(pairs)
+    label = f"    # ── File: {filename} (address pass) {'─' * max(0, 46 - len(filename))}\n"
+    return (
+        label
+        + _sf_read_line(project, filename)
+        + "    for _src_idx, row in df.iterrows():\n"
+        + f"        _pid = {pid_expr}\n"
+        + "        if _pid:\n"
+        + "            if _pid not in _cs_addr:\n"
+        + "                _cs_addr[_pid] = {}\n"
+        + f"            for _k, _v in [{field_pairs_str}]:\n"
+        + "                if _v and _k not in _cs_addr[_pid]:\n"
+        + "                    _cs_addr[_pid][_k] = _v\n"
+    )
+
+
+def _generate_care_site_script_multi(project, source_files: list, file_configs: dict, loc: dict,
+                                      person_id_auto_increment: bool = False) -> str:
+    """Generate a two-pass multi-file care_site script.
+
+    Pass 1: merge cs address fields per patient across all source files into _cs_addr.
+    Pass 2: generate care site rows using the fully-merged address for every patient,
+            ensuring cs_location_source_value always matches the composite key in location.csv.
+    """
+    loc_file_configs = loc.get("file_configs", {})
+
+    def _get_loc_fc(fn: str) -> dict:
+        return loc_file_configs.get(fn) or (
+            loc_file_configs.get(source_files[0]) if source_files else {}
+        ) or {}
+
+    header = (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
+        "\n"
+        "def _info(msg):\n"
+        "    if VERBOSE:\n"
+        "        print(msg)\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        + _loc_lookup_for_care_site(loc)
+        + "    # ── Pass 1: merge cs address fields per patient across all files ─────────\n"
+        "    _cs_addr = {}               # patient_id -> merged cs address fields\n"
+        "\n"
+    )
+
+    pass1_blocks = ""
+    for filename in source_files:
+        fc = file_configs.get(filename, {})
+        loc_fc = _get_loc_fc(filename)
+        person_id_col = "" if person_id_auto_increment else fc.get("person_id_col", "")
+        block = _cs_addr_pass1_block(project, filename, loc_fc, fc, person_id_col, person_id_auto_increment)
+        if block:
+            pass1_blocks += block + "\n"
+
+    pass2_header = (
+        "    # ── Pass 2: generate care site rows ──────────────────────────────────────\n"
+        "    rows = []\n"
+        "    _seen_source_values = set()\n"
+        "    _patient_cs = {}            # patient_id -> care_site_source_value string\n"
+        "    _patient_cs_conflicted = set()\n"
+        "    _patient_cs_row_idx = {}    # patient_id -> index into rows[]\n"
+        "\n"
+    )
+
+    pass2_blocks = ""
+    for filename in source_files:
+        fc = file_configs.get(filename, {})
+        loc_fc = _get_loc_fc(filename)
+        person_id_col = "" if person_id_auto_increment else fc.get("person_id_col", "")
+        map_init, row_body = _cs_file_row_body(fc, loc_fc, person_id_col, person_id_auto_increment)
+        read_line = _sf_read_line(project, filename)
+        label = f"    # ── File: {filename} {'─' * max(0, 55 - len(filename))}\n"
+        pass2_blocks += (
+            label
+            + read_line
+            + (map_init if map_init else "")
+            + "    for _src_idx, row in df.iterrows():\n"
+            + row_body
+            + "\n"
+        )
+
+    footer = (
+        "    CARE_SITE_COLUMNS = ['care_site_id', 'care_site_name', 'place_of_service_concept_id',\n"
+        "                         'location_id', 'care_site_source_value', 'place_of_service_source_value']\n"
+        "    if rows:\n"
+        "        df_out = pd.DataFrame([r for r in rows if r is not None])\n"
+        "        df_out = df_out.reset_index(drop=True)\n"
+        "        df_out['care_site_id'] = df_out.index + 1\n"
+        "        df_out = df_out[CARE_SITE_COLUMNS]\n"
+        "    else:\n"
+        "        df_out = pd.DataFrame(columns=CARE_SITE_COLUMNS)\n"
+        "    output_file = os.path.join(output_dir, 'care_site.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing care_site.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+    return header + pass1_blocks + pass2_header + pass2_blocks + footer
+
+
 def _generate_provider_script(project) -> str:
     """Deterministic template-based generator for the OMOP provider script."""
     prov = (project.etl_config or {}).get("provider", {})
     cs_cfg = (project.etl_config or {}).get("care_site", {})
+
+    source_files = prov.get("source_files", [])
+    file_configs = prov.get("file_configs", {})
+    if source_files and file_configs:
+        person_id_auto_increment = prov.get("person_id_auto_increment", False)
+        return _generate_provider_script_multi(project, source_files, file_configs, cs_cfg,
+                                               person_id_auto_increment)
+
     source_path_code, delim, enc = _source_file_params(project, prov)
 
     name_col = prov.get("provider_name_col", "")
@@ -515,7 +1255,15 @@ def _generate_provider_script(project) -> str:
     gender_col = prov.get("gender_source_value_col", "")
     gender_map = prov.get("gender_concept_value_map", {})
     gender_default = prov.get("gender_concept_id_default", 0) or 0
-    cs_name_col = cs_cfg.get("care_site_name_col", "")
+    _cs_file_cfgs = cs_cfg.get("file_configs", {})
+    _cs_src_files = cs_cfg.get("source_files", [])
+    cs_name_col = ""
+    for _fn in _cs_src_files:
+        cs_name_col = _cs_file_cfgs.get(_fn, {}).get("care_site_name_col", "")
+        if cs_name_col:
+            break
+    if not cs_name_col:
+        cs_name_col = cs_cfg.get("care_site_name_col", "")
 
     if cs_name_col:
         care_site_block = (
@@ -602,6 +1350,14 @@ def _generate_provider_script(project) -> str:
         "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
         "    if VERBOSE:\n"
         "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
         "\n"
         "\n"
         "def _parse_year_of_birth(val):\n"
@@ -691,6 +1447,412 @@ def _generate_provider_script(project) -> str:
         + "if __name__ == '__main__':\n"
         + "    main()\n"
     )
+
+
+def _prov_file_row_body(fc: dict, cs_name_col: str) -> str:
+    """Row extraction body for one file in a multi-file provider script."""
+    name_col = fc.get("provider_name_col", "")
+    npi_col = fc.get("npi_col", "")
+    dea_col = fc.get("dea_col", "")
+    yob_col = fc.get("year_of_birth_col", "")
+    specialty_col = fc.get("specialty_source_value_col", "")
+    specialty_map = fc.get("specialty_concept_value_map", {})
+    prefix_specialty = fc.get("prefix_specialty", "") or ""
+    prefix_specialty_cid = fc.get("prefix_specialty_concept_id")
+    gender_col = fc.get("gender_source_value_col", "")
+    gender_map = fc.get("gender_concept_value_map", {})
+    gender_default = fc.get("gender_concept_id_default", 0) or 0
+
+    map_init = (
+        f"    specialty_map  = {json.dumps(specialty_map)}\n"
+        f"    gender_map     = {json.dumps(gender_map)}\n"
+        f"    gender_default = {gender_default}\n"
+    )
+
+    if specialty_col:
+        specialty_lines = (
+            _xtr("specialty_source_value", specialty_col, 8) + "\n"
+            "        if specialty_source_value is None:\n"
+            f'            _info(f"INFO: provider row — specialty column {repr(specialty_col)} is empty; specialty_concept_id set to 0")\n'
+            "            specialty_concept_id = 0\n"
+            "        elif specialty_source_value not in specialty_map:\n"
+            "            _info(f'INFO: provider row — specialty value {specialty_source_value!r} not in map; specialty_concept_id set to 0')\n"
+            "            specialty_concept_id = 0\n"
+            "        else:\n"
+            "            specialty_concept_id = specialty_map[specialty_source_value]\n"
+        )
+    elif prefix_specialty:
+        _sv = prefix_specialty[:50]
+        _cid = prefix_specialty_cid if prefix_specialty_cid is not None else 0
+        specialty_lines = (
+            f"        specialty_source_value = {repr(_sv)}\n"
+            f"        specialty_concept_id = {_cid}\n"
+        )
+    else:
+        specialty_lines = (
+            _xtr_doc("specialty_source_value", "", 8) + "\n"
+            "        specialty_concept_id = 0\n"
+        )
+
+    if gender_col:
+        gender_lines = (
+            _xtr("gender_source_value", gender_col, 8) + "\n"
+            "        if gender_source_value is None:\n"
+            "            _info(f'INFO: provider row — gender column is empty; gender_concept_id set to {gender_default}')\n"
+            "            gender_concept_id = gender_default\n"
+            "        elif gender_source_value not in gender_map:\n"
+            "            _info(f'INFO: provider row — gender value {gender_source_value!r} not in map; gender_concept_id set to {gender_default}')\n"
+            "            gender_concept_id = gender_default\n"
+            "        else:\n"
+            "            gender_concept_id = gender_map[gender_source_value]\n"
+        )
+    else:
+        gender_lines = (
+            _xtr_doc("gender_source_value", "", 8) + "\n"
+            "        gender_concept_id = gender_default\n"
+        )
+
+    if cs_name_col:
+        cs_lookup = (
+            _xtr("raw_cs_name", cs_name_col, 8) + "\n"
+            "        care_site_id = care_site_lookup.get(raw_cs_name) if raw_cs_name else None\n"
+            "        if raw_cs_name and care_site_id is None:\n"
+            "            _info(f'INFO: provider row — care_site {raw_cs_name!r} not found in care_site.csv; care_site_id set to NULL')\n"
+        )
+    else:
+        cs_lookup = _xtr_doc("care_site_id", "", 8) + "\n"
+
+    name_line = _xtr_doc("provider_name", name_col, 8) + "\n"
+    npi_line  = _xtr_doc("npi", npi_col, 8) + "\n"
+    dea_line  = _xtr_doc("dea", dea_col, 8) + "\n"
+    yob_lines = (
+        f"        _yob_raw = row.get({repr(yob_col)})\n"
+        "        year_of_birth = _parse_year_of_birth(_yob_raw)\n"
+        if yob_col else
+        _xtr_doc("year_of_birth", "", 8) + "\n"
+    )
+
+    append = (
+        "        provider_source_value = (str(care_site_id) + ' | ' + (provider_name or ''))[:50]\n"
+        "        if provider_source_value in seen:\n"
+        "            continue\n"
+        "        seen.add(provider_source_value)\n"
+        "        rows.append({\n"
+        "            'provider_id':               None,\n"
+        "            'provider_name':             provider_name[:255] if provider_name else None,\n"
+        "            'npi':                       npi[:20] if npi else None,\n"
+        "            'dea':                       dea[:20] if dea else None,\n"
+        "            'specialty_concept_id':      specialty_concept_id,\n"
+        "            'care_site_id':              care_site_id,\n"
+        "            'year_of_birth':             year_of_birth,\n"
+        "            'gender_concept_id':         gender_concept_id,\n"
+        "            'provider_source_value':     provider_source_value,\n"
+        "            'specialty_source_value':    specialty_source_value[:50] if specialty_source_value else None,\n"
+        "            'specialty_source_concept_id': 0,\n"
+        "            'gender_source_value':       gender_source_value[:50] if gender_source_value else None,\n"
+        "            'gender_source_concept_id':  0,\n"
+        "        })\n"
+    )
+
+    row_body = (
+        name_line + npi_line + dea_line + yob_lines
+        + "\n        # Specialty\n" + specialty_lines
+        + "\n        # Care site lookup\n" + cs_lookup
+        + "\n        # Gender\n" + gender_lines
+        + "\n" + append
+    )
+    return map_init, row_body
+
+
+def _prov_pass1_block(project, filename: str, fc: dict, cs_name_col: str,
+                       person_id_col: str, person_id_auto_increment: bool) -> str:
+    """Generate a pass-1 loop that merges provider field values per patient into _prov_data.
+
+    Collects: provider_name, npi, dea, year_of_birth, specialty_source_value,
+              specialty_concept_id, gender_source_value, gender_concept_id, care_site_id.
+    care_site_id is stored first-wins so that pass 2 uses a consistent value across all
+    files for the same patient, ensuring provider_source_value is identical everywhere.
+    Returns "" if there is nothing to collect for this file.
+    """
+    name_col      = fc.get("provider_name_col", "")
+    npi_col       = fc.get("npi_col", "")
+    dea_col       = fc.get("dea_col", "")
+    yob_col       = fc.get("year_of_birth_col", "")
+    specialty_col = fc.get("specialty_source_value_col", "")
+    specialty_map = fc.get("specialty_concept_value_map", {})
+    prefix_sp     = (fc.get("prefix_specialty", "") or "").strip()
+    prefix_sp_cid = fc.get("prefix_specialty_concept_id")
+    gender_col    = fc.get("gender_source_value_col", "")
+    gender_map    = fc.get("gender_concept_value_map", {})
+    gender_default = fc.get("gender_concept_id_default", 0) or 0
+
+    pairs = []
+    if name_col:
+        pairs.append(f"('provider_name', str(row.get({repr(name_col)}, '') or '') or None)")
+    if npi_col:
+        pairs.append(f"('npi', str(row.get({repr(npi_col)}, '') or '') or None)")
+    if dea_col:
+        pairs.append(f"('dea', str(row.get({repr(dea_col)}, '') or '') or None)")
+    if yob_col:
+        pairs.append(f"('year_of_birth', _parse_year_of_birth(row.get({repr(yob_col)})))")
+    if specialty_col:
+        pairs.append(f"('specialty_source_value', str(row.get({repr(specialty_col)}, '') or '') or None)")
+        pairs.append(
+            f"('specialty_concept_id', {json.dumps(specialty_map)}.get("
+            f"str(row.get({repr(specialty_col)}, '') or '') or None))"
+        )
+    elif prefix_sp:
+        pairs.append(f"('specialty_source_value', {repr(prefix_sp[:50])})")
+        pairs.append(f"('specialty_concept_id', {prefix_sp_cid or 0})")
+    if gender_col:
+        pairs.append(f"('gender_source_value', str(row.get({repr(gender_col)}, '') or '') or None)")
+        pairs.append(
+            f"('gender_concept_id', {json.dumps(gender_map)}.get("
+            f"str(row.get({repr(gender_col)}, '') or '') or None, {gender_default}))"
+        )
+    if cs_name_col:
+        pairs.append(
+            f"('care_site_id', care_site_lookup.get("
+            f"(str(row.get({repr(cs_name_col)}, '') or '').strip() or None)))"
+        )
+
+    if not pairs:
+        return ""
+
+    pid_expr = "str(_src_idx)" if person_id_auto_increment else f"str(row.get({repr(person_id_col)}, '') or '')"
+    field_pairs_str = ", ".join(pairs)
+    label = f"    # ── File: {filename} (data pass) {'─' * max(0, 47 - len(filename))}\n"
+    return (
+        label
+        + _sf_read_line(project, filename)
+        + "    for _src_idx, row in df.iterrows():\n"
+        + f"        _pid = {pid_expr}\n"
+        + "        if _pid:\n"
+        + "            if _pid not in _prov_data:\n"
+        + "                _prov_data[_pid] = {}\n"
+        + f"            for _k, _v in [{field_pairs_str}]:\n"
+        + "                if _v and _k not in _prov_data[_pid]:\n"
+        + "                    _prov_data[_pid][_k] = _v\n"
+    )
+
+
+def _prov_file_row_body_pass2(fc: dict, cs_name_col: str,
+                               person_id_col: str, person_id_auto_increment: bool) -> str:
+    """Pass-2 row body for a provider file.
+
+    Reads merged provider attributes (name, specialty, gender, npi, dea, yob) from
+    _prov_data[_pid]. care_site_id is looked up fresh from the current row via
+    care_site_lookup, identical to the original single-pass code.
+    """
+    prefix_sp     = (fc.get("prefix_specialty", "") or "").strip()
+    prefix_sp_cid = fc.get("prefix_specialty_concept_id")
+    gender_default = fc.get("gender_concept_id_default", 0) or 0
+
+    pid_expr = "str(_src_idx)" if person_id_auto_increment else f"str(row.get({repr(person_id_col)}, '') or '')"
+
+    map_init = (
+        f"    _prov_prefix_specialty     = {repr(prefix_sp[:50] if prefix_sp else '')}\n"
+        f"    _prov_prefix_specialty_cid = {prefix_sp_cid or 0}\n"
+        f"    _prov_gender_default       = {gender_default}\n"
+    )
+
+    if cs_name_col:
+        cs_lookup_line = (
+            # Prefer care_site_id merged in pass 1 so all files for the same patient agree.
+            # Fall back to a fresh row lookup only if pass 1 didn't capture it (e.g. the
+            # cs column was missing/null in every file that contributed to _prov_data).
+            "        care_site_id = _merged.get('care_site_id')\n"
+            "        if care_site_id is None:\n"
+            + _xtr("_raw_cs_name", cs_name_col, 12) + "\n"
+            "            care_site_id = care_site_lookup.get(_raw_cs_name) if _raw_cs_name else None\n"
+            "            if _raw_cs_name and care_site_id is None:\n"
+            f"                _info(f'INFO: provider row — care_site {{_raw_cs_name!r}} not found in care_site.csv; care_site_id set to NULL')\n"
+        )
+    else:
+        cs_lookup_line = "        care_site_id = _merged.get('care_site_id')\n"
+
+    row_body = (
+        f"        _pid = {pid_expr}\n"
+        "        _merged = _prov_data.get(_pid, {})\n"
+        "        if not _merged:\n"
+        "            continue\n"
+        "        provider_name = _merged.get('provider_name')\n"
+        "        npi           = _merged.get('npi')\n"
+        "        dea           = _merged.get('dea')\n"
+        "        year_of_birth = _merged.get('year_of_birth')\n"
+        "        specialty_source_value  = _merged.get('specialty_source_value') or (_prov_prefix_specialty or None)\n"
+        "        specialty_concept_id    = _merged.get('specialty_concept_id') or _prov_prefix_specialty_cid\n"
+        "        gender_source_value     = _merged.get('gender_source_value')\n"
+        "        _gcid = _merged.get('gender_concept_id')\n"
+        "        gender_concept_id       = _gcid if _gcid is not None else _prov_gender_default\n"
+        + cs_lookup_line
+        + "        provider_source_value = (str(care_site_id) + ' | ' + (provider_name or ''))[:50]\n"
+        "        if provider_source_value in seen:\n"
+        "            continue\n"
+        "        seen.add(provider_source_value)\n"
+        "        rows.append({\n"
+        "            'provider_id':               None,\n"
+        "            'provider_name':             provider_name[:255] if provider_name else None,\n"
+        "            'npi':                       npi[:20] if npi else None,\n"
+        "            'dea':                       dea[:20] if dea else None,\n"
+        "            'specialty_concept_id':      specialty_concept_id,\n"
+        "            'care_site_id':              care_site_id,\n"
+        "            'year_of_birth':             year_of_birth,\n"
+        "            'gender_concept_id':         gender_concept_id,\n"
+        "            'provider_source_value':     provider_source_value,\n"
+        "            'specialty_source_value':    specialty_source_value[:50] if specialty_source_value else None,\n"
+        "            'specialty_source_concept_id': 0,\n"
+        "            'gender_source_value':       gender_source_value[:50] if gender_source_value else None,\n"
+        "            'gender_source_concept_id':  0,\n"
+        "        })\n"
+    )
+    return map_init, row_body
+
+
+def _generate_provider_script_multi(project, source_files: list, file_configs: dict, cs_cfg: dict,
+                                     person_id_auto_increment: bool = False) -> str:
+    """Generate a multi-file provider script.
+
+    When person_id is configured (auto_increment or per-file column), a two-pass approach is
+    used: pass 1 merges all provider fields per patient; pass 2 generates deduplicated rows.
+    Without person_id config, falls back to sequential single-pass processing.
+    """
+    # Determine the care_site_name_col from any configured care-site file (first-wins), or legacy
+    cs_file_configs = cs_cfg.get("file_configs", {})
+    cs_source_files = cs_cfg.get("source_files", [])
+    cs_name_col = ""
+    for _cs_fn in cs_source_files:
+        cs_name_col = cs_file_configs.get(_cs_fn, {}).get("care_site_name_col", "")
+        if cs_name_col:
+            break
+    if not cs_name_col:
+        cs_name_col = cs_cfg.get("care_site_name_col", "")
+
+    if cs_name_col:
+        care_site_block = (
+            "    care_site_lookup = {}\n"
+            "    care_site_file = os.path.join(output_dir, 'care_site.csv')\n"
+            "    if os.path.exists(care_site_file):\n"
+            "        try:\n"
+            "            cs_df = pd.read_csv(care_site_file, delimiter=';', encoding='utf-8')\n"
+            "            care_site_lookup = {str(r['care_site_name']): int(r['care_site_id']) for _, r in cs_df.iterrows()}\n"
+            "        except Exception as e:\n"
+            "            print(f'WARNING: could not load care_site.csv: {e}')\n"
+        )
+    else:
+        care_site_block = "    care_site_lookup = {}\n"
+
+    common_header = (
+        "import os\n"
+        "import pandas as pd\n"
+        "\n"
+        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
+        "\n"
+        "def _info(msg):\n"
+        "    if VERBOSE:\n"
+        "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
+        "\n"
+        "\n"
+        "def _parse_year_of_birth(val):\n"
+        "    try:\n"
+        "        return int(val) if pd.notnull(val) else None\n"
+        "    except (TypeError, ValueError):\n"
+        "        _info(f'INFO: provider row — year_of_birth value {val!r} could not be parsed as int; year_of_birth set to NULL')\n"
+        "        return None\n"
+        "\n"
+        "\n"
+        "def main():\n"
+        "    output_dir = os.getenv('ETL_OUTPUT_DIR')\n"
+        + care_site_block
+    )
+
+    footer = (
+        "    PROVIDER_COLUMNS = ['provider_id', 'provider_name', 'npi', 'dea', 'specialty_concept_id',\n"
+        "                        'care_site_id', 'year_of_birth', 'gender_concept_id', 'provider_source_value',\n"
+        "                        'specialty_source_value', 'specialty_source_concept_id',\n"
+        "                        'gender_source_value', 'gender_source_concept_id']\n"
+        "    if rows:\n"
+        "        df_out = pd.DataFrame(rows)\n"
+        "        df_out['provider_id'] = range(1, len(df_out) + 1)\n"
+        "        df_out = df_out[PROVIDER_COLUMNS]\n"
+        "    else:\n"
+        "        df_out = pd.DataFrame(columns=PROVIDER_COLUMNS)\n"
+        "    output_file = os.path.join(output_dir, 'provider.csv')\n"
+        "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
+        "    print(f'Writing provider.csv ... done ({len(df_out)} records)')\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    main()\n"
+    )
+
+    # ── Two-pass path (person_id configured) ─────────────────────────────
+    has_person_id = person_id_auto_increment or any(
+        file_configs.get(fn, {}).get("person_id_col") for fn in source_files
+    )
+    if has_person_id:
+        pass1_blocks = ""
+        for filename in source_files:
+            fc = file_configs.get(filename, {})
+            person_id_col = "" if person_id_auto_increment else fc.get("person_id_col", "")
+            block = _prov_pass1_block(project, filename, fc, cs_name_col, person_id_col, person_id_auto_increment)
+            if block:
+                pass1_blocks += block + "\n"
+
+        pass2_blocks = ""
+        for filename in source_files:
+            fc = file_configs.get(filename, {})
+            person_id_col = "" if person_id_auto_increment else fc.get("person_id_col", "")
+            map_init, row_body = _prov_file_row_body_pass2(fc, cs_name_col, person_id_col, person_id_auto_increment)
+            read_line = _sf_read_line(project, filename)
+            label = f"    # ── File: {filename} {'─' * max(0, 55 - len(filename))}\n"
+            pass2_blocks += (
+                label
+                + read_line
+                + map_init
+                + "    for _src_idx, row in df.iterrows():\n"
+                + row_body
+                + "\n"
+            )
+
+        header = (
+            common_header
+            + "    # ── Pass 1: merge provider fields per patient across all files ──────────\n"
+            "    _prov_data = {}              # patient_id -> merged provider fields\n"
+            "\n"
+        )
+        pass2_header = (
+            "    # ── Pass 2: generate provider rows ───────────────────────────────────────\n"
+            "    rows = []\n"
+            "    seen = set()\n"
+            "\n"
+        )
+        return header + pass1_blocks + pass2_header + pass2_blocks + footer
+
+    # ── Legacy single-pass path (no person_id) ────────────────────────────
+    header = common_header + "    rows = []\n    seen = set()\n\n"
+    file_blocks = ""
+    for filename in source_files:
+        fc = file_configs.get(filename, {})
+        map_init, row_body = _prov_file_row_body(fc, cs_name_col)
+        read_line = _sf_read_line(project, filename)
+        label = f"    # ── File: {filename} {'─' * max(0, 55 - len(filename))}\n"
+        file_blocks += (
+            label
+            + read_line
+            + (map_init if map_init else "")
+            + "    for _src_idx, row in df.iterrows():\n"
+            + row_body
+            + "\n"
+        )
+    return header + file_blocks + footer
 
 
 def _person_pid_cfg(person_cfg: dict) -> dict:
@@ -959,20 +2121,44 @@ def _person_row_body(v: dict, loc: dict, cs_cfg: dict, prov_cfg: dict, indent: s
     return pid_lines + dob_lines + "\n" + gender_lines + race_lines + eth_lines + "\n" + loc_lines + cs_lines + prov_lines
 
 
+def _resolve_flat_cfg(cfg: dict, filename: str = '') -> dict:
+    """Return a flat (field→value) view of a config dict.
+
+    Handles both legacy format (flat keys at top level) and new multi-file format
+    (keys nested under file_configs[filename]).  When the new format is detected,
+    falls back to the primary file's config if *filename* is not found.
+    """
+    fc = cfg.get("file_configs")
+    if not fc:
+        return cfg  # legacy flat format
+    if filename and filename in fc:
+        return fc[filename]
+    # Fall back to primary file
+    src_files = cfg.get("source_files", [])
+    if src_files and src_files[0] in fc:
+        return fc[src_files[0]]
+    # Last resort: first value
+    return next(iter(fc.values()), {})
+
+
 def _person_lookup_setup(loc: dict, cs_cfg: dict, prov_cfg: dict) -> str:
     """Generate lookup-table loading code (location, care_site, provider) for the person script."""
-    a1_col = loc.get("address_1_col", "")
-    a2_col = loc.get("address_2_col", "")
-    city_col = loc.get("city_col", "")
-    state_col = loc.get("state_col", "")
-    zip_col = loc.get("zip_col", "")
-    county_col = loc.get("county_col", "")
-    country_col = loc.get("country_col", "")
-    country_sv = loc.get("country_source_value", "")
+    loc_flat = _resolve_flat_cfg(loc)
+    cs_flat = _resolve_flat_cfg(cs_cfg)
+    prov_flat = _resolve_flat_cfg(prov_cfg)
+
+    a1_col = loc_flat.get("address_1_col", "")
+    a2_col = loc_flat.get("address_2_col", "")
+    city_col = loc_flat.get("city_col", "")
+    state_col = loc_flat.get("state_col", "")
+    zip_col = loc_flat.get("zip_col", "")
+    county_col = loc_flat.get("county_col", "")
+    country_col = loc_flat.get("country_col", "")
+    country_sv = loc_flat.get("country_source_value", "")
     has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
 
-    cs_name_col = cs_cfg.get("care_site_name_col", "")
-    prov_name_col = prov_cfg.get("provider_name_col", "")
+    cs_name_col = cs_flat.get("care_site_name_col", "")
+    prov_name_col = prov_flat.get("provider_name_col", "")
 
     if has_location:
         loc_setup = (
@@ -1184,7 +2370,7 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
             + _person_race_lines(v)
             + _person_eth_lines(v)
             + "\n"
-            + _person_loc_lines(loc, cs_cfg, prov_cfg)
+            + _person_loc_lines(loc, cs_cfg, prov_cfg, filename=filename)
             + "\n"
             + store_block
             + "        except Exception as e:\n"
@@ -1204,6 +2390,14 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
         '    """Print diagnostic message only in detailed output mode."""\n'
         "    if VERBOSE:\n"
         "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
         "\n"
         "\n"
         "def _is_meaningful(val):\n"
@@ -1350,18 +2544,29 @@ def _person_eth_lines(v: dict, indent: str = "            ") -> str:
     return f"{indent}ethnicity_concept_id = {eth_default}\n" + _xtr_doc("ethnicity_source_value", "", len(indent)) + "\n"
 
 
-def _person_loc_lines(loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "            ") -> str:
-    a1_col = loc.get("address_1_col", "")
-    a2_col = loc.get("address_2_col", "")
-    city_col = loc.get("city_col", "")
-    state_col = loc.get("state_col", "")
-    zip_col = loc.get("zip_col", "")
-    county_col = loc.get("county_col", "")
-    country_col = loc.get("country_col", "")
-    country_sv = loc.get("country_source_value", "")
+def _person_loc_lines(loc: dict, cs_cfg: dict, prov_cfg: dict, indent: str = "            ",
+                      *, filename: str = '') -> str:
+    """Generate per-row location/care-site/provider lookup lines for the person script.
+
+    *loc*, *cs_cfg*, *prov_cfg* may be either the legacy flat dict or the new
+    multi-file format (with ``file_configs``).  Pass *filename* to resolve the
+    per-file config for that specific source file; falls back to the primary file.
+    """
+    loc_flat = _resolve_flat_cfg(loc, filename)
+    cs_flat = _resolve_flat_cfg(cs_cfg, filename)
+    prov_flat = _resolve_flat_cfg(prov_cfg, filename)
+
+    a1_col = loc_flat.get("address_1_col", "")
+    a2_col = loc_flat.get("address_2_col", "")
+    city_col = loc_flat.get("city_col", "")
+    state_col = loc_flat.get("state_col", "")
+    zip_col = loc_flat.get("zip_col", "")
+    county_col = loc_flat.get("county_col", "")
+    country_col = loc_flat.get("country_col", "")
+    country_sv = loc_flat.get("country_source_value", "")
     has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
-    cs_name_col = cs_cfg.get("care_site_name_col", "")
-    prov_name_col = prov_cfg.get("provider_name_col", "")
+    cs_name_col = cs_flat.get("care_site_name_col", "")
+    prov_name_col = prov_flat.get("provider_name_col", "")
 
     if has_location:
         loc_lines = (
@@ -1485,18 +2690,24 @@ def _generate_person_script(project) -> str:
         eth_default = int(eth_cfg.get("default") or 0)
         eth_col, eth_map, eth_constant = "", {}, 0
 
-    a1_col = loc.get("address_1_col", "")
-    a2_col = loc.get("address_2_col", "")
-    city_col = loc.get("city_col", "")
-    state_col = loc.get("state_col", "")
-    zip_col = loc.get("zip_col", "")
-    county_col = loc.get("county_col", "")
-    country_col = loc.get("country_col", "")
-    country_sv = loc.get("country_source_value", "")
+    # Resolve new multi-file format configs to flat dicts for the single-file path
+    _person_filename = person.get("source_filename", "")
+    loc_flat = _resolve_flat_cfg(loc, _person_filename)
+    cs_flat = _resolve_flat_cfg(cs_cfg, _person_filename)
+    prov_flat = _resolve_flat_cfg(prov_cfg, _person_filename)
+
+    a1_col = loc_flat.get("address_1_col", "")
+    a2_col = loc_flat.get("address_2_col", "")
+    city_col = loc_flat.get("city_col", "")
+    state_col = loc_flat.get("state_col", "")
+    zip_col = loc_flat.get("zip_col", "")
+    county_col = loc_flat.get("county_col", "")
+    country_col = loc_flat.get("country_col", "")
+    country_sv = loc_flat.get("country_source_value", "")
     has_location = any([a1_col, a2_col, city_col, state_col, zip_col, county_col, country_col, country_sv])
 
-    cs_name_col = cs_cfg.get("care_site_name_col", "")
-    prov_name_col = prov_cfg.get("provider_name_col", "")
+    cs_name_col = cs_flat.get("care_site_name_col", "")
+    prov_name_col = prov_flat.get("provider_name_col", "")
 
     # ── per-row code blocks ───────────────────────────────────────────────
 
@@ -1732,6 +2943,14 @@ def _generate_person_script(project) -> str:
         "        print(msg)\n"
         "\n"
         "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
+        "\n"
+        "\n"
         "def main():\n"
         "    # Load environmental variables\n"
         + source_path_code +
@@ -1914,6 +3133,14 @@ def _generate_visit_occurrence_script(project) -> str:
         "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
         "    if VERBOSE:\n"
         "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
         "\n"
         "\n"
         "# --- Module-level constants ---\n"
@@ -2514,6 +3741,14 @@ def _generate_death_script(project) -> str:
         "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
         "    if VERBOSE:\n"
         "        print(msg)\n"
+        "\n"
+        "\n"
+        "def _read_str(row, col):\n"
+        "    val = row.get(col)\n"
+        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
+        "    if result is None:\n"
+        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
+        "    return result\n"
         "\n"
         "\n"
         "# Output column order\n"

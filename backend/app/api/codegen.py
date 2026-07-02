@@ -40,7 +40,10 @@ async def generate_single_table(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    code = await generate_table_script(project, table)
+    try:
+        code = await generate_table_script(project, table)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     scripts: dict = dict(project.generated_scripts or {})
     scripts[table] = code
@@ -76,14 +79,17 @@ async def generate_all_tables(
 
     tables_to_gen = payload.tables or None
 
-    if tables_to_gen:
-        # Selective regeneration
-        scripts: dict = dict(project.generated_scripts or {})
-        for table in tables_to_gen:
-            if table in SUPPORTED_TABLES:
-                scripts[table] = await generate_table_script(project, table)
-    else:
-        scripts = await generate_all_table_scripts(project)
+    try:
+        if tables_to_gen:
+            # Selective regeneration
+            scripts: dict = dict(project.generated_scripts or {})
+            for table in tables_to_gen:
+                if table in SUPPORTED_TABLES:
+                    scripts[table] = await generate_table_script(project, table)
+        else:
+            scripts = await generate_all_table_scripts(project)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     project.generated_scripts = scripts
     project.last_execution_status = ""

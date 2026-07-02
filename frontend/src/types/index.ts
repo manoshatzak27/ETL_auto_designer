@@ -159,8 +159,9 @@ export interface ObservationPeriodConfig {
   date_format?: string
 }
 
-export interface LocationConfig {
-  enabled: boolean
+export interface LocationFileConfig {
+  // Patient identifier — used for cross-file deduplication in multi-source mode
+  person_id_col: string
   // Person address columns
   address_1_col: string
   address_2_col: string
@@ -185,10 +186,9 @@ export interface LocationConfig {
   cs_country_source_value: string
   cs_latitude_col: string
   cs_longitude_col: string
-  // Person country config
+  // Country concept maps
   country_concept_id_map: Record<string, number>
   country_concept_id_default: number
-  // Care site country config
   cs_country_concept_id_map: Record<string, number>
   cs_country_concept_id_default: number
   // UI mode persistence
@@ -196,19 +196,71 @@ export interface LocationConfig {
   cs_country_mode?: 'column' | 'default'
 }
 
-export interface CareSiteConfig {
+export interface LocationConfig {
   enabled: boolean
+  source_files: string[]
+  file_configs: Record<string, LocationFileConfig>
+  person_id_auto_increment?: boolean
+  // Legacy single-file fields kept for migration
+  person_id_col?: string
+  address_1_col?: string
+  address_2_col?: string
+  city_col?: string
+  state_col?: string
+  zip_col?: string
+  county_col?: string
+  county_source_value?: string
+  country_col?: string
+  country_source_value?: string
+  latitude_col?: string
+  longitude_col?: string
+  cs_address_1_col?: string
+  cs_address_2_col?: string
+  cs_city_col?: string
+  cs_state_col?: string
+  cs_zip_col?: string
+  cs_county_col?: string
+  cs_county_source_value?: string
+  cs_country_col?: string
+  cs_country_source_value?: string
+  cs_latitude_col?: string
+  cs_longitude_col?: string
+  country_concept_id_map?: Record<string, number>
+  country_concept_id_default?: number
+  cs_country_concept_id_map?: Record<string, number>
+  cs_country_concept_id_default?: number
+  country_mode?: 'column' | 'default'
+  cs_country_mode?: 'column' | 'default'
+  source_filename?: string
+}
+
+export interface CareSiteFileConfig {
+  // Patient identifier — used for cross-file deduplication in multi-source mode
+  person_id_col: string
   care_site_name_col: string
   place_of_service_col: string
   place_of_service_value_map: Record<string, number>
 }
 
-export interface ProviderConfig {
+export interface CareSiteConfig {
   enabled: boolean
+  source_files: string[]
+  file_configs: Record<string, CareSiteFileConfig>
+  person_id_auto_increment?: boolean
+  // Legacy single-file fields kept for migration
+  care_site_name_col?: string
+  place_of_service_col?: string
+  place_of_service_value_map?: Record<string, number>
+  source_filename?: string
+}
+
+export interface ProviderFileConfig {
+  // Patient identifier — used for cross-file deduplication in multi-source mode
+  person_id_col: string
   provider_name_col: string
   npi_col: string
   dea_col: string
-  specialty_concept_id: number | null
+  specialty_concept_id?: number | null
   specialty_concept_value_map?: Record<string, number>
   prefix_specialty?: string
   prefix_specialty_concept_id?: number | null
@@ -217,9 +269,31 @@ export interface ProviderConfig {
   gender_concept_id_default?: number
   specialty_source_value_col: string
   gender_source_value_col: string
-  // UI mode persistence
   specialty_mode?: 'column' | 'prefix'
   gender_mode?: 'column' | 'default'
+}
+
+export interface ProviderConfig {
+  enabled: boolean
+  source_files: string[]
+  file_configs: Record<string, ProviderFileConfig>
+  person_id_auto_increment?: boolean
+  // Legacy single-file fields kept for migration
+  provider_name_col?: string
+  npi_col?: string
+  dea_col?: string
+  specialty_concept_id?: number | null
+  specialty_concept_value_map?: Record<string, number>
+  prefix_specialty?: string
+  prefix_specialty_concept_id?: number | null
+  year_of_birth_col?: string
+  gender_concept_value_map?: Record<string, number>
+  gender_concept_id_default?: number
+  specialty_source_value_col?: string
+  gender_source_value_col?: string
+  specialty_mode?: 'column' | 'prefix'
+  gender_mode?: 'column' | 'default'
+  source_filename?: string
 }
 
 export interface StemTableOverride {
