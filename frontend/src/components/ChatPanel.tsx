@@ -42,8 +42,14 @@ interface Props {
 }
 
 export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
+  const generatedTables = TABLES.filter(t => (project.generated_scripts || {})[t.key])
+
   const [open, setOpen] = useState(false)
-  const [table, setTable] = useState(defaultTable || 'person')
+  const [table, setTable] = useState(
+    defaultTable && (project.generated_scripts || {})[defaultTable]
+      ? defaultTable
+      : generatedTables[0]?.key || '',
+  )
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [sending, setSending] = useState(false)
@@ -75,6 +81,13 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
 
   // Discard pending code update when the user switches tables
   useEffect(() => { setPendingScripts(null) }, [table])
+
+  // If the selected table has no script (e.g. none were generated yet
+  // when the panel opened), fall back to the first generated one as it becomes available
+  useEffect(() => {
+    if (table && (project.generated_scripts || {})[table]) return
+    if (generatedTables.length > 0) setTable(generatedTables[0].key)
+  }, [table, generatedTables, project.generated_scripts])
 
   const handleApplyCode = () => {
     if (!pendingScripts) return
@@ -135,7 +148,7 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
     setMessages([])
   }
 
-  const hasScript = !!(project.generated_scripts || {})[table]
+  const hasAnyScript = generatedTables.length > 0
 
   return (
     <>
@@ -183,22 +196,22 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
 
           {/* Table selector */}
           <div className="px-3 py-2 border-b border-border flex-shrink-0">
-            <Select
-              value={table}
-              onChange={e => setTable(e.target.value)}
-              className="text-xs font-mono"
-            >
-              {TABLES.map(t => (
-                <option key={t.key} value={t.key}>
-                  {t.label}
-                  {!(project.generated_scripts || {})[t.key] ? ' (not generated)' : ''}
-                </option>
-              ))}
-            </Select>
-            {!hasScript && (
-              <p className="text-xs text-amber-600 mt-1.5 flex items-center gap-1">
+            {hasAnyScript ? (
+              <Select
+                value={table}
+                onChange={e => setTable(e.target.value)}
+                className="text-xs font-mono"
+              >
+                {generatedTables.map(t => (
+                  <option key={t.key} value={t.key}>
+                    {t.label}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <p className="text-xs text-amber-600 flex items-center gap-1">
                 <Code2 className="w-3 h-3" />
-                Generate this script first for the best results.
+                Generate a script first to chat about it.
               </p>
             )}
           </div>
@@ -292,12 +305,13 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
                 onKeyDown={handleKeyDown}
                 placeholder="Ask about the code or request changes… (Enter to send)"
                 rows={2}
+                disabled={!hasAnyScript}
                 className="flex-1 resize-none text-sm rounded-xl px-3 py-2.5 min-h-0"
               />
               <Button
                 size="icon"
                 onClick={handleSend}
-                disabled={!input.trim() || sending}
+                disabled={!input.trim() || sending || !hasAnyScript}
                 className="flex-shrink-0 w-9 h-9 rounded-xl"
               >
                 {sending
