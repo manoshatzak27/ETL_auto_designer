@@ -1068,7 +1068,7 @@ function VariableRow({
           className="flex items-center gap-2 flex-1 min-w-0 text-left"
           onClick={() => setOpen(o => !o)}
         >
-          <span className="font-mono text-sm font-medium text-foreground w-36 flex-shrink-0 truncate">{column}</span>
+          <span className="font-mono text-sm font-medium text-foreground w-64 flex-shrink-0 truncate" title={column}>{column}</span>
 
           <span className={clsx('flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0', sm.color)}>
             {sm.icon}{sm.label}

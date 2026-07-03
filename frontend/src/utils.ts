@@ -2,86 +2,55 @@ export function basename(path: string): string {
   return path.replace(/\\/g, '/').split('/').pop() || path
 }
 
+const STRUCTURAL_TABLES = ['observation_period', 'location', 'care_site', 'provider', 'death', 'person', 'visit_occurrence']
+
+// Recursively walks a table config, following `file_configs` (a per-filename map,
+// as used by person/location/care_site/provider, or a per-filename array, as used
+// by visit_occurrence) so that every `*_col` value — however deeply nested (e.g.
+// person's `mappings.<field>.source_col`) — is attributed to the source file it
+// actually belongs to, not just whichever file happens to be active.
+function collectColFiles(obj: unknown, filename: string | null, out: Map<string, string | null>): void {
+  if (!obj || typeof obj !== 'object') return
+  if (Array.isArray(obj)) {
+    for (const item of obj) {
+      const ownFilename = (item && typeof item === 'object' && typeof (item as Record<string, unknown>).source_filename === 'string')
+        ? (item as Record<string, unknown>).source_filename as string
+        : filename
+      collectColFiles(item, ownFilename, out)
+    }
+    return
+  }
+  for (const [key, value] of Object.entries(obj as Record<string, unknown>)) {
+    if (key === 'file_configs' && value && typeof value === 'object') {
+      if (Array.isArray(value)) {
+        collectColFiles(value, filename, out)
+      } else {
+        for (const [fname, fileCfg] of Object.entries(value as Record<string, unknown>)) {
+          collectColFiles(fileCfg, fname, out)
+        }
+      }
+      continue
+    }
+    if (key.endsWith('_col') && typeof value === 'string' && value.trim()) {
+      out.set(value.trim(), filename)
+    } else if (value && typeof value === 'object') {
+      collectColFiles(value, filename, out)
+    }
+  }
+}
+
 // Returns col → source filename (null = structural but file unknown → exclude globally).
 export function getStructuralColFileMap(etlConfig: Record<string, unknown>): Map<string, string | null> {
   const map = new Map<string, string | null>()
-
-  const add = (col: unknown, filename: string | null | undefined) => {
-    if (typeof col === 'string' && col.trim()) {
-      map.set(col.trim(), filename ?? null)
-    }
-  }
-
-  for (const table of ['observation_period', 'location', 'care_site', 'provider', 'death']) {
+  for (const table of STRUCTURAL_TABLES) {
     const cfg = etlConfig[table] as Record<string, unknown> | undefined
     if (!cfg) continue
-    const filename = (cfg.source_filename as string | undefined) ?? null
-    for (const [key, value] of Object.entries(cfg)) {
-      if (key.endsWith('_col')) add(value, filename)
-    }
+    const rootFilename = (cfg.source_filename as string | undefined) ?? null
+    collectColFiles(cfg, rootFilename, map)
   }
-
-  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>>; source_filename?: string } & Record<string, unknown> | undefined
-  if (personCfg) {
-    const filename = personCfg.source_filename ?? null
-    for (const [key, value] of Object.entries(personCfg)) {
-      if (key.endsWith('_col')) add(value, filename)
-    }
-    for (const m of Object.values(personCfg.mappings ?? {})) {
-      if (m && typeof m.source_col === 'string') add(m.source_col, filename)
-    }
-  }
-
-  const visitCfg = etlConfig['visit_occurrence'] as {
-    visit_definitions?: Array<Record<string, unknown>>
-    visit_source_col?: string
-    source_filename?: string
-  } | undefined
-  if (visitCfg) {
-    const filename = visitCfg.source_filename ?? null
-    add(visitCfg.visit_source_col, filename)
-    const visitColFields = ['date_col', 'time_col', 'end_date_col', 'end_time_col', 'visit_concept_source_col', 'visit_type_source_col', 'admitted_from_source_col', 'discharged_to_source_col']
-    for (const def of visitCfg.visit_definitions || []) {
-      for (const field of visitColFields) add(def[field], filename)
-    }
-  }
-
   return map
 }
 
 export function getStructuralColumns(etlConfig: Record<string, unknown>): Set<string> {
-  const mapped = new Set<string>()
-
-  for (const table of ['observation_period', 'location', 'care_site', 'provider', 'death']) {
-    const cfg = etlConfig[table] as Record<string, unknown> | undefined
-    if (!cfg) continue
-    for (const [key, value] of Object.entries(cfg)) {
-      if (key.endsWith('_col') && typeof value === 'string' && value.trim()) {
-        mapped.add(value.trim())
-      }
-    }
-  }
-
-  const personCfg = etlConfig['person'] as { mappings?: Record<string, Record<string, unknown>> } & Record<string, unknown> | undefined
-  if (personCfg) {
-    for (const [key, value] of Object.entries(personCfg)) {
-      if (key.endsWith('_col') && typeof value === 'string' && value.trim()) mapped.add(value.trim())
-    }
-    for (const m of Object.values(personCfg.mappings ?? {})) {
-      if (m && typeof m.source_col === 'string' && m.source_col.trim()) mapped.add(m.source_col.trim())
-    }
-  }
-
-  const visitCfg = etlConfig['visit_occurrence'] as { visit_definitions?: Array<Record<string, unknown>>; visit_source_col?: string } | undefined
-  if (visitCfg?.visit_source_col?.trim()) mapped.add(visitCfg.visit_source_col.trim())
-  if (visitCfg?.visit_definitions) {
-    const visitColFields = ['date_col', 'time_col', 'end_date_col', 'end_time_col', 'visit_concept_source_col', 'visit_type_source_col', 'admitted_from_source_col', 'discharged_to_source_col']
-    for (const def of visitCfg.visit_definitions) {
-      for (const field of visitColFields) {
-        if (typeof def[field] === 'string' && (def[field] as string).trim()) mapped.add((def[field] as string).trim())
-      }
-    }
-  }
-
-  return mapped
+  return new Set(getStructuralColFileMap(etlConfig).keys())
 }
