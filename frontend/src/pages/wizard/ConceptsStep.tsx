@@ -457,7 +457,7 @@ function ConceptPicker({
           {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
           <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
         </div>
-        {/* Editable name input with X — clears only name, preserves ID */}
+        {/* Editable name input with X — clears only name, preserves ID; width auto-adapts to content length */}
         <input
           type="text"
           value={editingName}
@@ -465,8 +465,9 @@ function ConceptPicker({
           onBlur={commitEditingName}
           onKeyDown={e => e.key === 'Enter' && commitEditingName()}
           placeholder="Name"
+          style={{ width: `${Math.min(Math.max((editingName || 'Name').length + 2, 10), 60)}ch`, maxWidth: '100%' }}
           className={clsx(
-            'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 w-40',
+            'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 flex-shrink',
             editingName.trim()
               ? clsx(lockedCls, 'focus:ring-green-300')
               : 'border-gray-300 bg-white text-gray-500 focus:ring-gray-300',
