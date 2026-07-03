@@ -585,7 +585,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         sourceColumns={availCols(vd.visit_concept_source_col ?? '')}
                         value={vd.visit_concept_source_col ?? ''}
                         onChange={v => updateVisit(i, 'visit_concept_source_col', v || undefined)}
-                        hint="Values will be mapped to OMOP Visit concept IDs using the table below."
+                        hint="Values will be mapped to OMOP Visit concept IDs using the table below. The raw value is also stored verbatim in visit_source_value."
                       />
                       {!vd.visit_concept_source_col && (
                         <p className="text-xs text-muted-foreground">
