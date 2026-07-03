@@ -587,6 +587,13 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         onChange={v => updateVisit(i, 'visit_concept_source_col', v || undefined)}
                         hint="Values will be mapped to OMOP Visit concept IDs using the table below."
                       />
+                      {!vd.visit_concept_source_col && (
+                        <p className="text-xs text-muted-foreground">
+                          If left as "— not mapped —", every row will be assigned the default concept ID{' '}
+                          <strong>{vd.visit_concept_id}</strong> ({VISIT_CONCEPTS.find(c => c.id === vd.visit_concept_id)?.label.split(' — ')[1] ?? 'Outpatient Visit'}).
+                          Use "Set default" above to pick a different value.
+                        </p>
+                      )}
                       {vd.visit_concept_source_col && (
                         <ValueConceptMapper
                           label="Source value → Visit concept ID"
@@ -629,6 +636,13 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         onChange={v => updateVisit(i, 'visit_type_source_col', v || undefined)}
                         hint="Values will be mapped to OMOP Type concept IDs using the table below."
                       />
+                      {!vd.visit_type_source_col && (
+                        <p className="text-xs text-muted-foreground">
+                          If left as "— not mapped —", every row will be assigned the default concept ID{' '}
+                          <strong>{vd.type_concept_id}</strong> ({TYPE_CONCEPTS.find(c => c.id === vd.type_concept_id)?.label.split(' — ')[1] ?? 'Registry'}).
+                          Use "Set default" above to pick a different value.
+                        </p>
+                      )}
                       {vd.visit_type_source_col && (
                         <ValueConceptMapper
                           label="Source value → Type concept ID"
