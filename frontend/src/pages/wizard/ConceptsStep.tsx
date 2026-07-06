@@ -394,7 +394,7 @@ function ConceptPicker({
   const [useReranker, setUseReranker] = useState(rerankerAvailable)
 
   useEffect(() => {
-    if (value) setEditingName(value.concept_name)
+    if (value) setEditingName(value.concept_name ?? '')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.concept_id])
 
@@ -678,6 +678,8 @@ function ValueConceptRow({
       }
       return
     }
+
+    if (!concept.concept_id || concept.concept_id < 1) return
 
     setLookingUpDomain(true)
     setRawDomain(null)
@@ -1005,6 +1007,8 @@ function VariableRow({
       if (numeric !== undefined) onChange({ ...decision, domain_id: numeric })
       return
     }
+
+    if (!concept.concept_id || concept.concept_id < 1) return
 
     // Manual concept ID entry — look up in CONCEPT.csv
     setLookingUpDomain(true)
