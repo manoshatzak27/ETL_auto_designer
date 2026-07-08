@@ -18,7 +18,7 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, X,
-  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText,
+  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
@@ -400,7 +400,12 @@ function ConceptPicker({
 
   const applyId = () => {
     const id = parseInt(manualId)
-    if (isNaN(id) || id < 1) return
+    if (isNaN(id) || id < 0) return
+    if (id === 0) {
+      onSelect({ concept_id: 0, concept_name: 'Not mapped' })
+      setManualId(''); setManualName(''); setIdLocked(false)
+      return
+    }
     setIdLocked(true)
     if (manualName.trim()) {
       onSelect({ concept_id: id, concept_name: manualName.trim() })
@@ -426,7 +431,12 @@ function ConceptPicker({
 
   const applyName = () => {
     const id = parseInt(manualId)
-    if (isNaN(id) || id < 1) return
+    if (isNaN(id) || id < 0) return
+    if (id === 0) {
+      onSelect({ concept_id: 0, concept_name: 'Not mapped' })
+      setManualId(''); setManualName(''); setIdLocked(false)
+      return
+    }
     onSelect({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
     setManualId(''); setManualName(''); setIdLocked(false)
   }
@@ -438,8 +448,11 @@ function ConceptPicker({
   }
 
   if (value) {
-    const isCustom = value.is_custom || value.concept_id >= 2_000_000_000
-    const lockedCls = isCustom
+    const isUnmapped = value.concept_id === 0
+    const isCustom = !isUnmapped && (value.is_custom || value.concept_id >= 2_000_000_000)
+    const lockedCls = isUnmapped
+      ? 'border border-gray-300 bg-gray-100 text-gray-600'
+      : isCustom
       ? 'border border-purple-200 bg-purple-50 text-purple-800'
       : 'border border-green-200 bg-green-50 text-green-800'
     const clearId = () => { setIdLocked(false); setManualId(''); setManualName(''); onClear() }
@@ -452,8 +465,8 @@ function ConceptPicker({
           {isCustom && (
             <span className="bg-purple-200 text-purple-800 px-1 rounded text-[10px] font-bold uppercase tracking-wide ml-0.5">Custom</span>
           )}
-          <span>{value.concept_id}</span>
-          {value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
+          <span>{isUnmapped ? '0 · Not mapped' : value.concept_id}</span>
+          {!isUnmapped && value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
           {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
           <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
         </div>
@@ -1653,6 +1666,17 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             Map each source variable to OMOP concepts. Click a variable to expand it and see its values.
             Use batch mode to map multiple variables at once.
           </p>
+        </div>
+
+        {/* Concept ID 0 explainer */}
+        <div className="flex items-start gap-1.5 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+          <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5 text-muted-foreground" />
+          <span>
+            <span className="font-semibold text-foreground">Tip:</span> set a concept ID to{' '}
+            <code className="bg-gray-100 text-gray-700 px-1 rounded font-mono">0</code> to explicitly mark a value as
+            not mapped. It behaves exactly like leaving the value unmapped — no row is generated for it — but it
+            shows up as reviewed instead of pending.
+          </span>
         </div>
 
         {/* AI + custom-vocab settings banner */}
