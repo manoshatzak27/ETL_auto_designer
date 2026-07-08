@@ -354,6 +354,7 @@ export default function StemTableStep({ project, onUpdate }: Props) {
           table="stem_table"
           onUpdate={onUpdate}
           beforeGenerate={saveConfig}
+          deterministic
         />
       </div>
     </WizardLayout>

@@ -465,7 +465,11 @@ function ConceptPicker({
           onBlur={commitEditingName}
           onKeyDown={e => e.key === 'Enter' && commitEditingName()}
           placeholder="Name"
-          style={{ width: `${Math.min(Math.max((editingName || 'Name').length + 2, 10), 60)}ch`, maxWidth: '100%' }}
+          style={{
+            width: `${Math.min(Math.max((editingName || 'Name').length + 2, 10), 60)}ch`,
+            maxWidth: '100%',
+            boxSizing: 'content-box',
+          }}
           className={clsx(
             'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 flex-shrink',
             editingName.trim()
@@ -875,16 +879,33 @@ function UnitMappingSection({
 }) {
   const [manualId, setManualId] = useState('')
   const [manualName, setManualName] = useState('')
+  const [lookingUpName, setLookingUpName] = useState(false)
 
   const fixed = getFixedUnit(unitMapping)
 
   const applyManual = () => {
     const id = parseInt(manualId, 10)
     if (isNaN(id) || id < 1) return
-    const displayName = manualName.trim() || `Concept ${id}`
-    onChange({ unit_col: null, unit_concepts: { [displayName]: id } })
-    setManualId('')
-    setManualName('')
+    if (manualName.trim()) {
+      onChange({ unit_col: null, unit_concepts: { [manualName.trim()]: id } })
+      setManualId('')
+      setManualName('')
+      return
+    }
+    setLookingUpName(true)
+    lookupConceptDomain(id)
+      .then(res => {
+        const name = res.concept_name || `Concept ${id}`
+        onChange({ unit_col: null, unit_concepts: { [name]: id } })
+      })
+      .catch(() => {
+        onChange({ unit_col: null, unit_concepts: { [`Concept ${id}`]: id } })
+      })
+      .finally(() => {
+        setLookingUpName(false)
+        setManualId('')
+        setManualName('')
+      })
   }
 
   const clear = () => {
@@ -944,9 +965,12 @@ function UnitMappingSection({
             />
             <button
               onClick={applyManual}
-              disabled={!manualId}
-              className="px-2 py-1 text-xs bg-sky-600 text-white rounded disabled:opacity-30 hover:bg-sky-700"
-            >Set</button>
+              disabled={!manualId || lookingUpName}
+              className="px-2 py-1 text-xs bg-sky-600 text-white rounded disabled:opacity-30 hover:bg-sky-700 flex items-center gap-1"
+            >
+              {lookingUpName && <Loader2 className="w-3 h-3 animate-spin" />}
+              Set
+            </button>
           </div>
           <a
             href={athenaUrl}

@@ -333,7 +333,7 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
           <div className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold text-foreground">Generate / regenerate per table</h3>
             {activeTables.map(t => (
-              <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" />
+              <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" deterministic />
             ))}
           </div>
         </section>

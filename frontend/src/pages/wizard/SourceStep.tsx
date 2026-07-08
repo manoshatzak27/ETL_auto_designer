@@ -4,10 +4,21 @@ import { uploadSources, deleteSourceFile, updateTableConfig } from '../../api/cl
 import type { Project, SourceFile } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
-import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3, Trash2 } from 'lucide-react'
+import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3, Trash2, Table2 } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import VocabLoaderCard from '../../components/VocabLoaderCard'
+import SourceFileGridEditor from '../../components/SourceFileGridEditor'
 import clsx from 'clsx'
+
+const WARN_ROW_THRESHOLD = 20
+const PREVIEW_ROW_LIMIT = 20
+
+function formatFileSize(bytes: number | undefined): string {
+  if (bytes == null) return 'unknown size'
+  const mb = bytes / (1024 * 1024)
+  return mb >= 0.1 ? `${mb.toFixed(2)} MB` : `${(bytes / 1024).toFixed(1)} KB`
+}
 
 interface Props {
   project: Project
@@ -49,6 +60,8 @@ export default function SourceStep({ project, onUpdate }: Props) {
   const [togglingTable, setTogglingTable] = useState<string | null>(null)
   const [togglingMultiRow, setTogglingMultiRow] = useState(false)
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null)
+  const [openFile, setOpenFile] = useState<{ file: SourceFile; preview: boolean } | null>(null)
+  const [pendingEditFile, setPendingEditFile] = useState<SourceFile | null>(null)
 
   const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
 
@@ -92,6 +105,11 @@ export default function SourceStep({ project, onUpdate }: Props) {
     } finally {
       setDeletingIndex(null)
     }
+  }
+
+  const handleView = (file: SourceFile) => {
+    if (file.row_count > WARN_ROW_THRESHOLD) setPendingEditFile(file)
+    else setOpenFile({ file, preview: false })
   }
 
   const toggleMultiRow = async (checked: boolean) => {
@@ -193,6 +211,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
                 index={idx}
                 deleting={deletingIndex === idx}
                 onDelete={handleDelete}
+                onView={handleView}
               />
             ))}
           </div>
@@ -323,6 +342,56 @@ export default function SourceStep({ project, onUpdate }: Props) {
           <VocabLoaderCard />
         </div>
       </div>
+
+      {/* Large-file warning before opening the grid editor */}
+      <Dialog open={!!pendingEditFile} onOpenChange={open => { if (!open) setPendingEditFile(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Large file</DialogTitle>
+            <DialogDescription>
+              This file has {pendingEditFile?.row_count.toLocaleString()} rows
+              ({formatFileSize(pendingEditFile?.size_bytes)}). Loading the whole thing into the editable
+              grid may be slow and use significant memory. Preview the first {PREVIEW_ROW_LIMIT} rows instead,
+              or open the whole file to edit it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              onClick={() => setPendingEditFile(null)}
+              className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => { if (pendingEditFile) setOpenFile({ file: pendingEditFile, preview: true }); setPendingEditFile(null) }}
+              className="px-3 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-secondary"
+            >
+              Preview first {PREVIEW_ROW_LIMIT} rows
+            </button>
+            <button
+              onClick={() => { if (pendingEditFile) setOpenFile({ file: pendingEditFile, preview: false }); setPendingEditFile(null) }}
+              className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            >
+              Open whole file
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Grid editor */}
+      <Dialog open={!!openFile} onOpenChange={open => { if (!open) setOpenFile(null) }}>
+        <DialogContent className="max-w-6xl w-[95vw] h-[85vh] overflow-hidden flex flex-col">
+          {openFile && (
+            <SourceFileGridEditor
+              projectId={project.id}
+              filename={openFile.file.filename}
+              previewRowLimit={openFile.preview ? PREVIEW_ROW_LIMIT : undefined}
+              onClose={() => setOpenFile(null)}
+              onSaved={onUpdate}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </WizardLayout>
   )
 }
@@ -332,14 +401,22 @@ interface SourceFileCardProps {
   index: number
   deleting: boolean
   onDelete: (index: number) => void
+  onView: (file: SourceFile) => void
 }
 
-function SourceFileCard({ file, index, deleting, onDelete }: SourceFileCardProps) {
+function SourceFileCard({ file, index, deleting, onDelete, onView }: SourceFileCardProps) {
   return (
     <Card className={clsx('flex flex-col gap-3 p-4 transition-opacity', deleting && 'opacity-50 pointer-events-none')}>
       <div className="flex items-center gap-2">
         <FileText className="size-4 text-primary flex-shrink-0" />
         <span className="text-sm font-medium text-foreground truncate flex-1">{file.filename}</span>
+        <button
+          onClick={() => onView(file)}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          title="View / edit data"
+        >
+          <Table2 className="size-3.5" />
+        </button>
         <button
           onClick={() => onDelete(index)}
           disabled={deleting}

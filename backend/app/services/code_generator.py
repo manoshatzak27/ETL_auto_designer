@@ -132,7 +132,7 @@ def _generate_location_script(project) -> str:
 
     source_files = loc.get("source_files", [])
     file_configs = loc.get("file_configs", {})
-    if source_files and file_configs:
+    if source_files and file_configs and len(source_files) > 1:
         person_id_auto_increment = bool(loc.get("person_id_auto_increment", False))
         if not person_id_auto_increment:
             missing = [fn for fn in source_files if not file_configs.get(fn, {}).get("person_id_col", "")]
@@ -142,6 +142,11 @@ def _generate_location_script(project) -> str:
                     f"Map the column in the Location step or switch to auto-increment."
                 )
         return _generate_location_script_multi(project, source_files, file_configs, person_id_auto_increment)
+
+    if source_files and file_configs:
+        first_file = source_files[0]
+        fc = file_configs.get(first_file, {})
+        loc = {**loc, **fc, "source_filename": first_file}
 
     source_path_code, delim, enc = _source_file_params(project, loc)
 
@@ -747,7 +752,7 @@ def _generate_care_site_script(project) -> str:
 
     source_files = cs_cfg.get("source_files", [])
     file_configs = cs_cfg.get("file_configs", {})
-    if source_files and file_configs:
+    if source_files and file_configs and len(source_files) > 1:
         person_id_auto_increment = bool(cs_cfg.get("person_id_auto_increment", False))
         if not person_id_auto_increment:
             missing = [fn for fn in source_files if not file_configs.get(fn, {}).get("person_id_col", "")]
@@ -757,6 +762,18 @@ def _generate_care_site_script(project) -> str:
                     f"Map the column in the Care Site step or switch to auto-increment."
                 )
         return _generate_care_site_script_multi(project, source_files, file_configs, loc, person_id_auto_increment)
+
+    if source_files and file_configs:
+        first_file = source_files[0]
+        fc = file_configs.get(first_file, {})
+        cs_cfg = {**cs_cfg, **fc, "source_filename": first_file}
+
+        loc_file_configs = loc.get("file_configs", {})
+        loc_source_files = loc.get("source_files", [])
+        loc_fc = loc_file_configs.get(first_file) or (
+            loc_file_configs.get(loc_source_files[0]) if loc_source_files else {}
+        ) or {}
+        loc = {**loc, **loc_fc}
 
     source_path_code, delim, enc = _source_file_params(project, cs_cfg)
 

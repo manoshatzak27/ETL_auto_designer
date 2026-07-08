@@ -1,8 +1,9 @@
 import io
+import os
 import shutil
 import zipfile
 from pathlib import Path
-from typing import List
+from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -13,6 +14,10 @@ from app.services.schema_inferrer import infer_schema, detect_pid_transform
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["sources"])
+
+# Informational only — the frontend uses this (mirrored) to warn before
+# loading a file into the non-virtualized editable grid. Not enforced here.
+SOURCE_CONTENT_WARN_THRESHOLD = 20
 
 MAPPING_FILENAMES = {
     "variable_mapping": "variable_mapping.csv",
@@ -52,6 +57,7 @@ async def upload_source(
         "encoding": schema["encoding"],
         "columns": schema["columns"],
         "row_count": schema["row_count"],
+        "size_bytes": dest.stat().st_size,
     }])
     _reset_project_state(project)
     db.commit()
@@ -139,6 +145,7 @@ async def upload_sources(
             "encoding": schema["encoding"],
             "columns": schema["columns"],
             "row_count": schema["row_count"],
+            "size_bytes": path.stat().st_size,
         }
 
     merged = list(existing.values())
@@ -174,6 +181,113 @@ def delete_source_file(
 
     project.source_files = files
     _sync_legacy_fields(project, files)
+    db.commit()
+    db.refresh(project)
+    return project
+
+
+def _find_source_file_entry(project: Project, filename: str) -> dict:
+    entry = next((f for f in (project.source_files or []) if f.get("filename") == filename), None)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Source file not found")
+    if not Path(entry["path"]).exists():
+        raise HTTPException(status_code=404, detail="Source file missing from disk")
+    return entry
+
+
+class SourceFileContentResponse(BaseModel):
+    filename: str
+    delimiter: str
+    encoding: str
+    columns: List[str]
+    rows: List[dict]
+    row_count: int
+
+
+@router.get("/{project_id}/source-file-content", response_model=SourceFileContentResponse)
+def get_source_file_content(project_id: str, filename: str, rows: int | None = None, db: Session = Depends(get_db)):
+    """`rows`, when given, caps how many data rows are read — used for the
+    20-row preview so opening a huge file doesn't load it all into memory."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    entry = _find_source_file_entry(project, filename)
+
+    import pandas as pd
+    try:
+        df = pd.read_csv(
+            entry["path"],
+            sep=entry.get("delimiter", ","),
+            encoding=entry.get("encoding", "utf-8"),
+            dtype=str,
+            keep_default_na=False,
+            on_bad_lines="skip",
+            nrows=rows,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to parse file: {exc}")
+
+    return {
+        "filename": filename,
+        "delimiter": entry.get("delimiter", ","),
+        "encoding": entry.get("encoding", "utf-8"),
+        "columns": list(df.columns),
+        "rows": df.to_dict(orient="records"),
+        "row_count": entry.get("row_count", len(df)),
+    }
+
+
+class SourceFileContentPayload(BaseModel):
+    columns: List[str]
+    rows: List[dict[str, Any]]
+
+
+@router.put("/{project_id}/source-file-content", response_model=ProjectResponse)
+def update_source_file_content(
+    project_id: str,
+    filename: str,
+    payload: SourceFileContentPayload,
+    db: Session = Depends(get_db),
+):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    entry = _find_source_file_entry(project, filename)
+
+    columns = [c.strip() for c in payload.columns]
+    if not columns or any(not c for c in columns):
+        raise HTTPException(status_code=400, detail="Column names must be non-empty")
+    seen = set()
+    for c in columns:
+        if c in seen:
+            raise HTTPException(status_code=400, detail=f"Duplicate column name: {c}")
+        seen.add(c)
+
+    import pandas as pd
+    df = pd.DataFrame(payload.rows, columns=columns).fillna("")
+
+    path = Path(entry["path"])
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        df.to_csv(tmp_path, sep=entry.get("delimiter", ","), encoding=entry.get("encoding", "utf-8"), index=False)
+        schema = infer_schema(str(tmp_path))
+        os.replace(tmp_path, path)
+    except Exception as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
+
+    updated_entry = {
+        "filename": filename,
+        "path": str(path),
+        "delimiter": schema["delimiter"],
+        "encoding": schema["encoding"],
+        "columns": schema["columns"],
+        "row_count": schema["row_count"],
+        "size_bytes": path.stat().st_size,
+    }
+    source_files = [updated_entry if f.get("filename") == filename else f for f in (project.source_files or [])]
+    project.source_files = source_files
+    _sync_legacy_fields(project, source_files)
     db.commit()
     db.refresh(project)
     return project

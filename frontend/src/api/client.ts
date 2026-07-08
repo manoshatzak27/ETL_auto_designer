@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { SourceFileContent } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -54,6 +55,16 @@ export const lookupConceptDomain = (conceptId: number) =>
 
 export const getSourcePreview = (projectId: string, rows = 5) =>
   api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
+
+export const getSourceFileContent = (projectId: string, filename: string, rows?: number) =>
+  api
+    .get<SourceFileContent>(`/projects/${projectId}/source-file-content`, { params: { filename, ...(rows ? { rows } : {}) } })
+    .then(r => r.data)
+
+export const updateSourceFileContent = (projectId: string, filename: string, columns: string[], rows: Record<string, string>[]) =>
+  api
+    .put(`/projects/${projectId}/source-file-content`, { columns, rows }, { params: { filename } })
+    .then(r => r.data)
 
 export interface OutputPreview {
   columns: string[]

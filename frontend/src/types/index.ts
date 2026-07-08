@@ -4,6 +4,16 @@ export interface SourceFile {
   encoding: string
   columns: string[]
   row_count: number
+  size_bytes?: number
+}
+
+export interface SourceFileContent {
+  filename: string
+  delimiter: string
+  encoding: string
+  columns: string[]
+  rows: Record<string, string>[]
+  row_count: number
 }
 
 export interface ProjectSummary {
