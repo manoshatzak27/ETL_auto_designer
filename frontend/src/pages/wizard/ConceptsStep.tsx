@@ -22,6 +22,7 @@ import {
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
+import { Textarea } from '@/components/ui/textarea'
 
 interface Props {
   project: Project
@@ -59,6 +60,10 @@ interface VariableDecision {
   value_concepts: Record<string, ConceptRef>
   domain_id: number | null
   unit_mapping?: UnitMapping
+  // Free-text guidance for how this variable should be transformed/loaded
+  // into the stem table. Folded into the AI prompt when the stem_table
+  // script is generated.
+  extra_instructions?: string
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -999,6 +1004,53 @@ function UnitMappingSection({
   )
 }
 
+// ── Extra instructions (AI) — locally-buffered textarea ────────────────────
+//
+// With ~1000 columns on the page, committing every keystroke straight to the
+// parent's `decisions` state re-renders the entire column list on each key
+// press (VariableRow isn't memoized and its callback/decision props are
+// recreated every render anyway). Buffer locally and only flush upstream on
+// blur or after a short idle debounce, matching the commit-on-blur pattern
+// ConceptPicker already uses for its manual ID/name inputs.
+
+function ExtraInstructionsInput({
+  value,
+  onCommit,
+  column,
+}: {
+  value: string
+  onCommit: (v: string) => void
+  column: string
+}) {
+  const [draft, setDraft] = useState(value)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  useEffect(() => { setDraft(value) }, [value])
+
+  useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
+
+  const scheduleCommit = (v: string) => {
+    if (timerRef.current) clearTimeout(timerRef.current)
+    timerRef.current = setTimeout(() => { timerRef.current = null; onCommit(v) }, 500)
+  }
+
+  const flush = () => {
+    if (timerRef.current) { clearTimeout(timerRef.current); timerRef.current = null }
+    onCommit(draft)
+  }
+
+  return (
+    <Textarea
+      value={draft}
+      onChange={e => { setDraft(e.target.value); scheduleCommit(e.target.value) }}
+      onBlur={flush}
+      rows={2}
+      placeholder={`e.g. "Convert ${column} from Fahrenheit to Celsius before loading."`}
+      className="font-mono text-xs resize-y min-h-0"
+    />
+  )
+}
+
 // ── Single variable expandable row ─────────────────────────────────────────
 
 function VariableRow({
@@ -1128,6 +1180,16 @@ function VariableRow({
               </span>
             )
           })()}
+
+          {/* Extra instructions (AI) indicator */}
+          {!!decision.extra_instructions?.trim() && (
+            <span
+              className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 border border-amber-200 flex-shrink-0"
+              title={`Extra instructions (AI): ${decision.extra_instructions}`}
+            >
+              <Sparkles className="w-3 h-3" /> instructions
+            </span>
+          )}
 
           {/* Sample value chips (header preview) */}
           {!open && info && sampleValues.length > 0 && (
@@ -1331,6 +1393,24 @@ function VariableRow({
               unitMapping={decision.unit_mapping ?? EMPTY_UNIT_MAPPING}
               onChange={u => onChange({ ...decision, unit_mapping: u })}
             />
+          )}
+
+          {/* Extra instructions (AI) — per-variable free-text guidance */}
+          {decision.strategy !== 'skip' && (
+            <div className="flex flex-col gap-1.5">
+              <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                Extra instructions (AI)
+              </p>
+              <ExtraInstructionsInput
+                value={decision.extra_instructions ?? ''}
+                onCommit={v => onChange({ ...decision, extra_instructions: v })}
+                column={column}
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Describe any special transformation or loading logic for <code className="bg-muted px-1 rounded">{column}</code>. Sent to the AI when generating the stem_table script.
+              </p>
+            </div>
           )}
         </div>
       )}

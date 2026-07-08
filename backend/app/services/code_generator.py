@@ -4942,9 +4942,27 @@ async def generate_table_script(project, table: str) -> str:
         code = _generate_domain_script(table)
 
     extra = (project.etl_config or {}).get(table, {}).get("extra_instructions", "").strip()
+    if table == "stem_table":
+        extra = "\n\n".join(filter(None, [extra, _stem_variable_instructions(project)]))
     if extra:
         code = await _apply_extra_instructions(code, extra, table)
     return code
+
+
+def _stem_variable_instructions(project) -> str:
+    """Fold per-variable "Extra instructions (AI)" text from the Concepts step
+    into the stem_table AI-patch prompt, so users can request custom
+    transformation/loading logic scoped to a single variable."""
+    lines = []
+    for variable, d in (project.concept_decisions or {}).items():
+        if not isinstance(d, dict) or d.get("strategy") == "skip":
+            continue
+        instr = (d.get("extra_instructions") or "").strip()
+        if instr:
+            lines.append(f'- For variable "{variable}": {instr}')
+    if not lines:
+        return ""
+    return "Per-variable instructions:\n" + "\n".join(lines)
 
 
 async def generate_all_table_scripts(project) -> dict[str, str]:
