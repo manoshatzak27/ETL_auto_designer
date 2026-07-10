@@ -19,7 +19,7 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, X,
-  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info, Download,
+  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info, Download, Pill, Lock,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
@@ -65,6 +65,20 @@ interface VariableDecision {
   // into the stem table. Folded into the AI prompt when the stem_table
   // script is generated.
   extra_instructions?: string
+  // Drug Exposure (domain_id 3) only: names of sibling columns in the same
+  // source file whose values are pulled in as this variable's drug_exposure
+  // fields (e.g. a dosage column next to a drug-name column). route_concept_id
+  // is fixed per variable (not per-row) since route rarely varies row-to-row.
+  quantity_col?: string | null
+  days_supply_col?: string | null
+  refills_col?: string | null
+  sig_col?: string | null
+  lot_number_col?: string | null
+  stop_reason_col?: string | null
+  route_col?: string | null
+  dose_unit_col?: string | null
+  route_concept_id?: number | null
+  route_concept_name?: string | null
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -1005,6 +1019,161 @@ function UnitMappingSection({
   )
 }
 
+// Sibling-column fields that get pulled verbatim into a drug_exposure row.
+// Keyed by the VariableDecision field that stores the chosen source column.
+const DRUG_COLUMN_FIELDS: {
+  key: 'quantity_col' | 'days_supply_col' | 'refills_col' | 'sig_col' | 'lot_number_col' | 'stop_reason_col' | 'route_col' | 'dose_unit_col'
+  label: string
+  hint: string
+}[] = [
+  { key: 'quantity_col',    label: 'Quantity',            hint: 'fills quantity' },
+  { key: 'days_supply_col', label: 'Days supply',         hint: 'fills days_supply — verbatim, not calculated' },
+  { key: 'refills_col',     label: 'Refills',             hint: 'fills refills' },
+  { key: 'sig_col',         label: 'Sig / instructions',  hint: 'fills sig' },
+  { key: 'lot_number_col',  label: 'Lot number',          hint: 'fills lot_number' },
+  { key: 'stop_reason_col', label: 'Stop reason',         hint: 'fills stop_reason' },
+  { key: 'route_col',       label: 'Route (verbatim)',    hint: 'fills route_source_value' },
+  { key: 'dose_unit_col',   label: 'Dose unit (verbatim)', hint: 'fills dose_unit_source_value — deprecated CDM field' },
+]
+
+function RouteConceptInput({
+  conceptId,
+  conceptName,
+  onChange,
+}: {
+  conceptId: number | null | undefined
+  conceptName: string | null | undefined
+  onChange: (id: number | null, name: string | null) => void
+}) {
+  const [manualId, setManualId] = useState('')
+  const [lookingUp, setLookingUp] = useState(false)
+
+  const apply = () => {
+    const id = parseInt(manualId, 10)
+    if (isNaN(id) || id < 1) return
+    setLookingUp(true)
+    lookupConceptDomain(id)
+      .then(res => onChange(id, res.concept_name || `Concept ${id}`))
+      .catch(() => onChange(id, `Concept ${id}`))
+      .finally(() => { setLookingUp(false); setManualId('') })
+  }
+
+  if (conceptId) {
+    return (
+      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-100 border border-purple-300 text-xs">
+        <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 text-purple-700" />
+        <span className="font-semibold text-purple-900">{conceptName}</span>
+        <span className="text-purple-700">({conceptId})</span>
+        <button onClick={() => onChange(null, null)} className="ml-auto text-purple-500 hover:text-purple-700" title="Clear route concept">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex items-center gap-1.5">
+      <input
+        type="number"
+        value={manualId}
+        onChange={e => setManualId(e.target.value)}
+        onKeyDown={e => e.key === 'Enter' && apply()}
+        placeholder="Concept ID"
+        className="border border-purple-200 rounded px-2 py-1 text-xs w-28 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
+      />
+      <button
+        onClick={apply}
+        disabled={!manualId || lookingUp}
+        className="px-2 py-1 text-xs bg-purple-600 text-white rounded disabled:opacity-30 hover:bg-purple-700 flex items-center gap-1"
+      >
+        {lookingUp && <Loader2 className="w-3 h-3 animate-spin" />}
+        Set
+      </button>
+    </div>
+  )
+}
+
+function DrugExposureFieldsSection({
+  decision,
+  onChange,
+  fileColumns,
+  excludeColumn,
+  ownVariable,
+  claims,
+}: {
+  decision: VariableDecision
+  onChange: (d: VariableDecision) => void
+  fileColumns: string[]
+  excludeColumn: string
+  ownVariable: string
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+}) {
+  const [open, setOpen] = useState(false)
+  const options = fileColumns.filter(c => c !== excludeColumn)
+  const setCount = DRUG_COLUMN_FIELDS.filter(f => decision[f.key]).length + (decision.route_concept_id ? 1 : 0)
+
+  return (
+    <div className="rounded-lg border border-purple-200 bg-purple-50/40 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-purple-100/50 transition-colors"
+      >
+        <Pill className="w-4 h-4 text-purple-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-purple-800 text-left">
+          Drug Exposure fields <span className="font-normal text-purple-600">(optional)</span>
+          {setCount > 0 && <span className="ml-2 text-purple-500">{setCount} set</span>}
+        </p>
+        {open ? <ChevronUp className="w-3.5 h-3.5 text-purple-500 ml-auto flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-purple-500 ml-auto flex-shrink-0" />}
+      </button>
+
+      {open && (
+        <div className="px-3 pb-3 flex flex-col gap-3 border-t border-purple-200 pt-3">
+          <p className="text-[11px] text-purple-700/90">
+            Pull these drug_exposure fields from other columns in the same source row (e.g. a
+            dosage or sig column next to this drug-name column).
+          </p>
+          <div className="grid grid-cols-2 gap-2.5">
+            {DRUG_COLUMN_FIELDS.map(f => (
+              <div key={f.key} className="flex flex-col gap-1">
+                <label className="text-[11px] font-medium text-purple-800">{f.label}</label>
+                <select
+                  value={decision[f.key] ?? ''}
+                  onChange={e => onChange({ ...decision, [f.key]: e.target.value || null })}
+                  className="border border-purple-200 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
+                >
+                  <option value="">— none —</option>
+                  {options.map(c => {
+                    const claim = claims[c]
+                    const claimedElsewhere = !!claim && !(claim.variable === ownVariable && claim.fieldKey === f.key)
+                    return (
+                      <option key={c} value={c} disabled={claimedElsewhere}>
+                        {c}{claimedElsewhere ? ` (used as ${claim.label} for ${claim.variable})` : ''}
+                      </option>
+                    )
+                  })}
+                </select>
+                <span className="text-[10px] text-purple-500">{f.hint}</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="flex flex-col gap-1 pt-2 border-t border-purple-200/70">
+            <label className="text-[11px] font-medium text-purple-800">
+              Route concept ID <span className="font-normal text-purple-600">— fixed for this variable, fills route_concept_id</span>
+            </label>
+            <RouteConceptInput
+              conceptId={decision.route_concept_id}
+              conceptName={decision.route_concept_name}
+              onChange={(id, name) => onChange({ ...decision, route_concept_id: id, route_concept_name: name })}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Extra instructions (AI) — locally-buffered textarea ────────────────────
 //
 // With ~1000 columns on the page, committing every keystroke straight to the
@@ -1063,6 +1232,8 @@ function VariableRow({
   onCheck,
   onChange,
   batchMode,
+  fileColumns,
+  drugFieldClaims,
 }: {
   column: string
   info: ColumnInfo | null
@@ -1072,7 +1243,10 @@ function VariableRow({
   onCheck: (c: boolean) => void
   onChange: (d: VariableDecision) => void
   batchMode: boolean
+  fileColumns: string[]
+  drugFieldClaims: Record<string, { variable: string; fieldKey: string; label: string }>
 }) {
+  const lockedBy = drugFieldClaims[column] ?? null
   const [open, setOpen] = useState(false)
   const [domainMode, setDomainMode] = useState<'auto' | 'manual'>(() =>
     decision.domain_id !== null ? 'manual' : 'auto'
@@ -1138,6 +1312,24 @@ function VariableRow({
 
   const sampleValues = info?.distinct_values.slice(0, 10) ?? []
   const extraCount = (info?.distinct_count ?? 0) - 10
+
+  // Claimed as a sibling-column field (quantity, sig, …) by another variable's
+  // Drug Exposure mapping — visible but not independently mappable.
+  if (lockedBy) {
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-purple-200 bg-purple-50/30 opacity-70"
+        title={`${column} is consumed as the ${lockedBy.label} field for "${lockedBy.variable}" — clear it there to map this column on its own.`}
+      >
+        <span className="font-mono text-sm font-medium text-muted-foreground w-64 flex-shrink-0 truncate" title={column}>{column}</span>
+        <span className="flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full font-medium bg-purple-100 text-purple-700 border border-purple-200 flex-shrink-0">
+          <Lock className="w-3 h-3 flex-shrink-0" />
+          Used as {lockedBy.label} for <span className="font-mono">{lockedBy.variable}</span>
+        </span>
+        <span className="ml-auto text-[11px] text-muted-foreground flex-shrink-0">Cannot be mapped separately</span>
+      </div>
+    )
+  }
 
   return (
     <div className={clsx(
@@ -1393,6 +1585,18 @@ function VariableRow({
             <UnitMappingSection
               unitMapping={decision.unit_mapping ?? EMPTY_UNIT_MAPPING}
               onChange={u => onChange({ ...decision, unit_mapping: u })}
+            />
+          )}
+
+          {/* Drug Exposure fields (optional) — sibling-column pulls, shown for Drug Exposure */}
+          {decision.domain_id === 3 && decision.strategy !== 'skip' && decision.strategy !== 'map_variable' && (
+            <DrugExposureFieldsSection
+              decision={decision}
+              onChange={onChange}
+              fileColumns={fileColumns}
+              excludeColumn={column}
+              ownVariable={column}
+              claims={drugFieldClaims}
             />
           )}
 
@@ -1747,6 +1951,22 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return sum + n
   }, 0)
 
+  // Columns claimed as a Drug Exposure sibling-column field (quantity_col, sig_col, …) by
+  // some variable — those columns can be seen but not mapped on their own (main list), and
+  // are disabled in every OTHER Drug Exposure field picker (their own claiming field/variable
+  // stays selectable so the current selection still renders).
+  const drugFieldClaims = useMemo(() => {
+    const claims: Record<string, { variable: string; fieldKey: string; label: string }> = {}
+    for (const [variable, d] of Object.entries(decisions)) {
+      if (!d || d.strategy === 'skip') continue
+      for (const f of DRUG_COLUMN_FIELDS) {
+        const col = d[f.key]
+        if (col && !claims[col]) claims[col] = { variable, fieldKey: f.key, label: f.label }
+      }
+    }
+    return claims
+  }, [decisions])
+
   // Filter + search
   const filteredCols = conceptCols.filter(col => {
     if (search && !col.toLowerCase().includes(search.toLowerCase())) return false
@@ -1999,6 +2219,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 onCheck={c => toggleSelect(col, c)}
                 onChange={d => setDecision(col, d)}
                 batchMode={batchMode}
+                fileColumns={cols}
+                drugFieldClaims={drugFieldClaims}
               />
             ))}
             {filteredCols.length === 0 && (

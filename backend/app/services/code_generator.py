@@ -4297,6 +4297,43 @@ def _generate_stem_table_script(project) -> str:
     vvm_repr = repr(variable_visit_map)
     so_repr = repr(special_overrides)
 
+    # Drug Exposure (domain_id 3): variable → name of a sibling column in the
+    # same source row whose value is pulled into a drug_exposure field (e.g. a
+    # dosage column next to a drug-name column). Configured per variable in
+    # the Concepts step. One column-map per raw-passthrough field, plus a
+    # fixed (per-variable, not per-row) route concept id/name pair since
+    # route rarely varies row-to-row for a given drug variable.
+    def _drug_col_map(field: str) -> dict[str, str]:
+        return {
+            k.lower(): d[field]
+            for k, d in (project.concept_decisions or {}).items()
+            if isinstance(d, dict) and d.get(field)
+        }
+
+    quantity_col_map = _drug_col_map("quantity_col")
+    days_supply_col_map = _drug_col_map("days_supply_col")
+    refills_col_map = _drug_col_map("refills_col")
+    sig_col_map = _drug_col_map("sig_col")
+    lot_number_col_map = _drug_col_map("lot_number_col")
+    stop_reason_col_map = _drug_col_map("stop_reason_col")
+    route_col_map = _drug_col_map("route_col")
+    dose_unit_col_map = _drug_col_map("dose_unit_col")
+    route_concept_map = {
+        k.lower(): int(d["route_concept_id"])
+        for k, d in (project.concept_decisions or {}).items()
+        if isinstance(d, dict) and d.get("route_concept_id")
+    }
+
+    qcm_repr = repr(quantity_col_map)
+    dsc_repr = repr(days_supply_col_map)
+    rfc_repr = repr(refills_col_map)
+    sgc_repr = repr(sig_col_map)
+    lnc_repr = repr(lot_number_col_map)
+    src_repr = repr(stop_reason_col_map)
+    rtc_repr = repr(route_col_map)
+    duc_repr = repr(dose_unit_col_map)
+    rcm_repr = repr(route_concept_map)
+
     # Inner per-row processing body — indented 8 spaces (inside the per-file for-loop).
     inner_rows = (
         "        for _src_idx, (_, row) in enumerate(df.iterrows(), start=1):\n"
@@ -4393,6 +4430,25 @@ def _generate_stem_table_script(project) -> str:
         "                        operator_concept_id = None\n"
         "                        value_as_string = mapped.get('value_as_string')\n"
         "\n"
+        "                        # Drug Exposure (domain_id 3) fields pulled from sibling columns —\n"
+        "                        # harmless no-ops for other domains since their *_COL_MAP is empty\n"
+        "                        # unless the user configured it for this variable.\n"
+        "                        _raw_qty = _col_str(row, QUANTITY_COL_MAP, variable)\n"
+        "                        quantity = None\n"
+        "                        if _raw_qty is not None:\n"
+        "                            try:\n"
+        "                                quantity = float(_raw_qty)\n"
+        "                            except (ValueError, TypeError):\n"
+        "                                _info(f'INFO: variable {variable!r} — quantity value {_raw_qty!r} is not numeric; quantity left unset')\n"
+        "                        days_supply = _col_int(row, DAYS_SUPPLY_COL_MAP, variable)\n"
+        "                        refills = _col_int(row, REFILLS_COL_MAP, variable)\n"
+        "                        sig = _col_str(row, SIG_COL_MAP, variable)\n"
+        "                        lot_number = _col_str(row, LOT_NUMBER_COL_MAP, variable)\n"
+        "                        stop_reason = _col_str(row, STOP_REASON_COL_MAP, variable)\n"
+        "                        route_source_value = _col_str(row, ROUTE_COL_MAP, variable)\n"
+        "                        dose_unit_source_value = _col_str(row, DOSE_UNIT_COL_MAP, variable)\n"
+        "                        route_concept_id = ROUTE_CONCEPT_MAP.get(variable.lower())\n"
+        "\n"
         "                        override = OVERRIDE_MAP.get(variable.lower())\n"
         "                        if override:\n"
         "                            if override.get('field') == 'unit_concept_id' and override.get('value') is not None:\n"
@@ -4435,11 +4491,19 @@ def _generate_stem_table_script(project) -> str:
         "                            'range_high': None,\n"
         "                            'provider_id': None,\n"
         "                            'modifier_concept_id': None,\n"
-        "                            'quantity': None,\n"
+        "                            'quantity': quantity,\n"
         "                            'value_source_value': str(raw_value),\n"
         "                            'source_value': variable,\n"
         "                            'source_concept_id': None,\n"
         "                            'record_source_value': record_source_value,\n"
+        "                            'days_supply': days_supply,\n"
+        "                            'refills': refills,\n"
+        "                            'sig': sig,\n"
+        "                            'lot_number': lot_number,\n"
+        "                            'stop_reason': stop_reason,\n"
+        "                            'route_source_value': route_source_value,\n"
+        "                            'route_concept_id': route_concept_id,\n"
+        "                            'dose_unit_source_value': dose_unit_source_value,\n"
         "                        })\n"
         "                        stem_id += 1\n"
         "                    except Exception as _var_exc:\n"
@@ -4463,6 +4527,29 @@ def _generate_stem_table_script(project) -> str:
         "        print(msg)\n"
         "\n"
         "\n"
+        "def _col_str(row, col_map, variable):\n"
+        "    \"\"\"Read a sibling column configured in a *_COL_MAP dict as a stripped string, or None.\"\"\"\n"
+        "    col = col_map.get(variable.lower())\n"
+        "    if not col:\n"
+        "        return None\n"
+        "    raw = row.get(col)\n"
+        "    if pd.isnull(raw) or str(raw).strip() in ('', 'nan'):\n"
+        "        return None\n"
+        "    return str(raw).strip()\n"
+        "\n"
+        "\n"
+        "def _col_int(row, col_map, variable):\n"
+        "    \"\"\"Like _col_str but parsed as int; logs and returns None on a non-numeric value.\"\"\"\n"
+        "    raw = _col_str(row, col_map, variable)\n"
+        "    if raw is None:\n"
+        "        return None\n"
+        "    try:\n"
+        "        return int(float(raw))\n"
+        "    except (ValueError, TypeError):\n"
+        "        _info(f'INFO: variable {variable!r} — column value {raw!r} is not numeric; field left unset')\n"
+        "        return None\n"
+        "\n"
+        "\n"
         "# --- Logging setup ---\n"
         "logging.basicConfig(level=logging.INFO, format='%(message)s')\n"
         "logger = logging.getLogger(__name__)\n"
@@ -4482,6 +4569,18 @@ def _generate_stem_table_script(project) -> str:
         f"SPECIAL_OVERRIDES = {so_repr}\n"
         "\n"
         "OVERRIDE_MAP = {o['variable'].lower(): o for o in SPECIAL_OVERRIDES}\n"
+        "\n"
+        "# Drug Exposure (domain_id 3): variable (lowercase) → sibling column supplying each field.\n"
+        f"QUANTITY_COL_MAP = {qcm_repr}\n"
+        f"DAYS_SUPPLY_COL_MAP = {dsc_repr}\n"
+        f"REFILLS_COL_MAP = {rfc_repr}\n"
+        f"SIG_COL_MAP = {sgc_repr}\n"
+        f"LOT_NUMBER_COL_MAP = {lnc_repr}\n"
+        f"STOP_REASON_COL_MAP = {src_repr}\n"
+        f"ROUTE_COL_MAP = {rtc_repr}\n"
+        f"DOSE_UNIT_COL_MAP = {duc_repr}\n"
+        "# Fixed (per-variable, not per-row) route concept id, since route rarely varies row-to-row.\n"
+        f"ROUTE_CONCEPT_MAP = {rcm_repr}\n"
         "\n"
         "visit_occurrence_id_lookup = None  # built lazily on first lookup call\n"
         "\n"
@@ -4618,6 +4717,8 @@ def _generate_stem_table_script(project) -> str:
         "        'value_as_concept_id', 'unit_concept_id', 'unit_source_value',\n"
         "        'range_low', 'range_high', 'provider_id', 'modifier_concept_id', 'quantity',\n"
         "        'value_source_value', 'source_value', 'source_concept_id', 'record_source_value',\n"
+        "        'days_supply', 'refills', 'sig', 'lot_number', 'stop_reason',\n"
+        "        'route_source_value', 'route_concept_id', 'dose_unit_source_value',\n"
         "    ]\n"
         "    df_out = pd.DataFrame(rows, columns=STEM_COLUMNS)\n"
         "    output_file = os.path.join(output_dir, 'stem_table.csv')\n"
@@ -4761,20 +4862,20 @@ def _generate_domain_script(table: str) -> str:
             "                'drug_exposure_end_datetime': _ss(row.get('end_datetime')),\n"
             "                'verbatim_end_date': _end_date,\n"
             "                'drug_type_concept_id': _si(row.get('type_concept_id'), 32879),\n"
-            "                'stop_reason': None,\n"
-            "                'refills': None,\n"
+            "                'stop_reason': _ss(row.get('stop_reason')),\n"
+            "                'refills': _si(row.get('refills')),\n"
             "                'quantity': _sf(row.get('quantity')),\n"
-            "                'days_supply': None,\n"
-            "                'sig': None,\n"
-            "                'route_concept_id': None,\n"
-            "                'lot_number': None,\n"
+            "                'days_supply': _si(row.get('days_supply')),\n"
+            "                'sig': _ss(row.get('sig')),\n"
+            "                'route_concept_id': _si(row.get('route_concept_id')),\n"
+            "                'lot_number': _ss(row.get('lot_number')),\n"
             "                'provider_id': _si(row.get('provider_id')),\n"
             "                'visit_occurrence_id': _si(row.get('visit_occurrence_id')),\n"
             "                'visit_detail_id': _si(row.get('visit_detail_id')),\n"
             "                'drug_source_value': _ss(row.get('source_value')),\n"
             "                'drug_source_concept_id': _si(row.get('source_concept_id'), 0),\n"
-            "                'route_source_value': None,\n"
-            "                'dose_unit_source_value': _ss(row.get('value_source_value')),\n"
+            "                'route_source_value': _ss(row.get('route_source_value')),\n"
+            "                'dose_unit_source_value': _ss(row.get('dose_unit_source_value')),\n"
             "            })\n"
         )
     elif table == "procedure_occurrence":
