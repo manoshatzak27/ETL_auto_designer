@@ -394,6 +394,7 @@ function ConceptPicker({
   value,
   onSelect,
   onClear,
+  validateDomain,
 }: {
   projectId: string
   label: string
@@ -401,6 +402,10 @@ function ConceptPicker({
   value: ConceptRef | null
   onSelect: (c: ConceptRef) => void
   onClear: () => void
+  // When provided, gates every commit path (manual ID/name, AI search pick, custom
+  // concept create) on the concept's OMOP domain. Return an error message to block
+  // the selection (input stays as typed, nothing is applied) or null to allow it.
+  validateDomain?: (domainStr: string | null) => string | null
 }) {
   const { rerankerAvailable, customVocabularyId } = useConceptsSettings()
   const cs = useConceptSearch(projectId)
@@ -412,39 +417,50 @@ function ConceptPicker({
   const [showSearch, setShowSearch] = useState(false)
   const [showCustom, setShowCustom] = useState(false)
   const [useReranker, setUseReranker] = useState(rerankerAvailable)
+  const [domainError, setDomainError] = useState<string | null>(null)
 
   useEffect(() => {
     if (value) setEditingName(value.concept_name ?? '')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.concept_id])
 
+  const commitConcept = (c: ConceptRef) => {
+    onSelect(c)
+    setManualId(''); setManualName(''); setIdLocked(false); setDomainError(null)
+  }
+
   const applyId = () => {
     const id = parseInt(manualId)
     if (isNaN(id) || id < 0) return
-    if (id === 0) {
-      onSelect({ concept_id: 0, concept_name: 'Not mapped' })
-      setManualId(''); setManualName(''); setIdLocked(false)
+    if (id === 0) { commitConcept({ concept_id: 0, concept_name: 'Not mapped' }); return }
+    setDomainError(null)
+
+    // Fast path: id + name both typed and nothing to validate — no lookup needed.
+    if (manualName.trim() && !validateDomain) {
+      commitConcept({ concept_id: id, concept_name: manualName.trim() })
       return
     }
+
     setIdLocked(true)
-    if (manualName.trim()) {
-      onSelect({ concept_id: id, concept_name: manualName.trim() })
-      setManualId(''); setManualName(''); setIdLocked(false)
-      return
-    }
     setLookingUpName(true)
     lookupConceptDomain(id)
       .then(res => {
-        const name = res.concept_name || `Concept ${id}`
-        onSelect({ concept_id: id, concept_name: name })
+        if (validateDomain) {
+          const err = validateDomain(res.found ? res.domain_id : null)
+          if (err) { setDomainError(err); setIdLocked(false); return }
+        }
+        const name = manualName.trim() || res.concept_name || `Concept ${id}`
+        commitConcept({ concept_id: id, concept_name: name })
       })
       .catch(() => {
-        onSelect({ concept_id: id, concept_name: `Concept ${id}` })
+        if (validateDomain) {
+          setDomainError("Couldn't verify this concept's domain — try again.")
+          setIdLocked(false)
+          return
+        }
+        commitConcept({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
       })
-      .finally(() => {
-        setLookingUpName(false)
-        setManualId(''); setManualName(''); setIdLocked(false)
-      })
+      .finally(() => setLookingUpName(false))
   }
 
   const unlockId = () => { setIdLocked(false) }
@@ -452,13 +468,23 @@ function ConceptPicker({
   const applyName = () => {
     const id = parseInt(manualId)
     if (isNaN(id) || id < 0) return
-    if (id === 0) {
-      onSelect({ concept_id: 0, concept_name: 'Not mapped' })
-      setManualId(''); setManualName(''); setIdLocked(false)
+    if (id === 0) { commitConcept({ concept_id: 0, concept_name: 'Not mapped' }); return }
+
+    if (!validateDomain) {
+      commitConcept({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
       return
     }
-    onSelect({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
-    setManualId(''); setManualName(''); setIdLocked(false)
+
+    setDomainError(null)
+    setLookingUpName(true)
+    lookupConceptDomain(id)
+      .then(res => {
+        const err = validateDomain(res.found ? res.domain_id : null)
+        if (err) { setDomainError(err); return }
+        commitConcept({ concept_id: id, concept_name: manualName.trim() || res.concept_name || `Concept ${id}` })
+      })
+      .catch(() => setDomainError("Couldn't verify this concept's domain — try again."))
+      .finally(() => setLookingUpName(false))
   }
 
   const commitEditingName = () => {
@@ -530,7 +556,7 @@ function ConceptPicker({
             <input
               type="number"
               value={manualId}
-              onChange={e => setManualId(e.target.value)}
+              onChange={e => { setManualId(e.target.value); setDomainError(null) }}
               onKeyDown={e => e.key === 'Enter' && applyId()}
               placeholder="Concept ID"
               className="border border-border rounded px-2 py-1 text-xs w-24 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
@@ -559,6 +585,12 @@ function ConceptPicker({
           className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90"
         >Set</button>
       </div>
+      {domainError && (
+        <p className="text-[11px] text-red-600 flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          {domainError}
+        </p>
+      )}
       <div className="flex items-center gap-1.5">
         <button
           onClick={() => { setShowSearch(s => !s); setShowCustom(false); if (!cs.query) cs.setQuery(defaultQuery) }}
@@ -642,7 +674,13 @@ function ConceptPicker({
               {cs.results.map(c => (
                 <button
                   key={c.concept_id}
-                  onClick={() => { onSelect(c); setShowSearch(false); cs.clear() }}
+                  onClick={() => {
+                    if (validateDomain) {
+                      const err = validateDomain(c.domain ?? null)
+                      if (err) { setDomainError(err); return }
+                    }
+                    onSelect(c); setShowSearch(false); cs.clear()
+                  }}
                   className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 border-b last:border-0 border-indigo-100 flex flex-col gap-0.5"
                 >
                   <div className="flex items-baseline gap-1.5 flex-wrap">
@@ -670,7 +708,13 @@ function ConceptPicker({
           defaultName={defaultQuery}
           defaultVocabularyId={customVocabularyId}
           onCancel={() => setShowCustom(false)}
-          onCreate={c => { onSelect(c); setShowCustom(false) }}
+          onCreate={c => {
+            if (validateDomain) {
+              const err = validateDomain(c.domain_id_str ?? null)
+              if (err) { setDomainError(err); return }
+            }
+            onSelect(c); setShowCustom(false)
+          }}
         />
       )}
     </div>
@@ -684,6 +728,7 @@ function ValueConceptRow({
   val,
   column,
   concept,
+  siblingConcepts,
   onSelect,
   onClear,
 }: {
@@ -691,6 +736,7 @@ function ValueConceptRow({
   val: string
   column: string
   concept: ConceptRef | null
+  siblingConcepts: Record<string, ConceptRef>
   onSelect: (c: ConceptRef) => void
   onClear: () => void
 }) {
@@ -742,6 +788,33 @@ function ValueConceptRow({
 
   const detectedDomainId = concept?.domain_id ?? null
 
+  // Value mapping only ever routes through the stem_table, which only knows how to
+  // route 5 domains. Anything else (Gender, Race, Visit, …) would silently produce no
+  // usable row downstream, so it's rejected at selection time rather than accepted and
+  // flagged after the fact.
+  const validateStemDomain = (domainStr: string | null): string | null => {
+    if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    const numeric = DOMAIN_STRING_MAP[domainStr.toLowerCase()]
+    if (numeric === undefined) {
+      return `"${domainStr}" is not a valid domain for value mapping. Allowed: Measurement, Observation, Drug Exposure, Procedure Occurrence, Condition Occurrence.`
+    }
+
+    // Also block mixing two individually-valid domains within the same variable
+    // (e.g. Drug + Observation) — every value under one variable must route to
+    // the same OMOP table.
+    const establishedEntry = Object.entries(siblingConcepts).find(
+      ([v, cv]) => v !== val && cv.domain_id !== undefined && cv.domain_id !== null,
+    )
+    const establishedDomainId = establishedEntry?.[1].domain_id
+    if (establishedDomainId !== undefined && establishedDomainId !== numeric) {
+      const newLabel = DOMAIN_OPTIONS.find(d => d.value === numeric)?.label ?? `domain ${numeric}`
+      const establishedLabel = DOMAIN_OPTIONS.find(d => d.value === establishedDomainId)?.label ?? `domain ${establishedDomainId}`
+      return `"${domainStr}" is ${newLabel}, but this variable is already mapped to ${establishedLabel}. Pick a ${establishedLabel} concept, or map this value under a different variable.`
+    }
+
+    return null
+  }
+
   return (
     <div className="flex flex-col gap-1.5">
       <ConceptPicker
@@ -751,6 +824,7 @@ function ValueConceptRow({
         value={concept}
         onSelect={c => onSelect(c)}
         onClear={onClear}
+        validateDomain={validateStemDomain}
       />
       {concept && (
         <div className="pl-1">
@@ -825,6 +899,10 @@ function ValueMappingTable({
   mapped: Record<string, ConceptRef>
   onChange: (updated: Record<string, ConceptRef>) => void
 }) {
+  // Domain validation (both "not a valid stem domain" and "mismatches this column's
+  // already-established domain") happens upstream in ConceptPicker/ValueConceptRow,
+  // inline next to the value, before onSelect ever fires — so by the time a concept
+  // reaches here it's already been cleared to commit.
   const set = (val: string, c: ConceptRef | null) => {
     const next = { ...mapped }
     if (c) next[val] = c; else delete next[val]
@@ -886,6 +964,7 @@ function ValueMappingTable({
                     val={val}
                     column={column}
                     concept={mapped[val] ?? null}
+                    siblingConcepts={mapped}
                     onSelect={c => set(val, c)}
                     onClear={() => set(val, null)}
                   />
