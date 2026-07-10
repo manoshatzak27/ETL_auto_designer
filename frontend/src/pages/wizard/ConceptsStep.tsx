@@ -5,6 +5,7 @@ import {
   getConceptDecisions,
   saveConceptDecisions,
   generateMappingCsvs,
+  downloadMappingFiles,
   lookupConceptDomain,
   conceptSearch,
   getApiHealth,
@@ -18,7 +19,7 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, X,
-  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info,
+  AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info, Download,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
@@ -1571,6 +1572,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState('')
+  const [downloadingMappings, setDownloadingMappings] = useState(false)
 
   // Batch state
   const [batchMode, setBatchMode] = useState(false)
@@ -1711,12 +1713,39 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     }
   }
 
+  const handleDownloadMappings = async () => {
+    setDownloadingMappings(true)
+    setGenError('')
+    try {
+      await Promise.all([
+        saveConceptDecisions(project.id, decisions as Record<string, unknown>),
+        updateTableConfig(project.id, 'concepts', { col_file_map: colFileMap, source_filename: selectedFile?.filename ?? null }),
+      ])
+      const withMappings = await generateMappingCsvs(project.id)
+      onUpdate(withMappings)
+      downloadMappingFiles(project.id)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setGenError(err?.response?.data?.detail || 'Failed to generate mapping files.')
+    } finally {
+      setDownloadingMappings(false)
+    }
+  }
+
   // Stats
   const mappedCount = conceptCols.filter(c => {
     const d = decisions[c]
     return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
   }).length
   const skippedCount = conceptCols.filter(c => decisions[c]?.strategy === 'skip').length
+  const idsAddedCount = conceptCols.reduce((sum, c) => {
+    const d = decisions[c]
+    if (!d || d.strategy === 'skip') return sum
+    let n = 0
+    if ((d.strategy === 'map_variable' || d.strategy === 'map_both') && d.variable_concept) n += 1
+    if (d.strategy === 'map_values' || d.strategy === 'map_both') n += Object.keys(d.value_concepts).length
+    return sum + n
+  }, 0)
 
   // Filter + search
   const filteredCols = conceptCols.filter(col => {
@@ -1740,12 +1769,23 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-5">
-        <div>
-          <h2 className="text-xl font-bold text-primary">Concept Mapping</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Map each source variable to OMOP concepts. Click a variable to expand it and see its values.
-            Use batch mode to map multiple variables at once.
-          </p>
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-primary">Concept Mapping</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              Map each source variable to OMOP concepts. Click a variable to expand it and see its values.
+              Use batch mode to map multiple variables at once.
+            </p>
+          </div>
+          <button
+            onClick={handleDownloadMappings}
+            disabled={downloadingMappings}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:bg-muted disabled:opacity-50 flex-shrink-0"
+            title="Generate (if needed) and download variable_mapping.csv, value_mapping.csv, variable_value_mapping.csv, custom_mappings.csv and unit_mapping.csv as a zip"
+          >
+            {downloadingMappings ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+            {downloadingMappings ? 'Preparing…' : 'Download mapping files'}
+          </button>
         </div>
 
         {/* Concept ID 0 explainer */}
@@ -1837,7 +1877,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         )}
 
         {/* Stats */}
-        <div className="grid grid-cols-3 gap-3">
+        <div className="grid grid-cols-4 gap-3">
           <div className="bg-card border border-border rounded-lg p-3 text-center">
             <p className="text-xl font-bold text-foreground">{conceptCols.length}</p>
             <p className="text-xs text-muted-foreground">Variables to map</p>
@@ -1849,6 +1889,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           <div className="bg-muted border border-border rounded-lg p-3 text-center">
             <p className="text-xl font-bold text-muted-foreground">{skippedCount}</p>
             <p className="text-xs text-muted-foreground">Skipped</p>
+          </div>
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-3 text-center">
+            <p className="text-xl font-bold text-indigo-700">{idsAddedCount}</p>
+            <p className="text-xs text-indigo-600">Concept IDs added</p>
           </div>
         </div>
 

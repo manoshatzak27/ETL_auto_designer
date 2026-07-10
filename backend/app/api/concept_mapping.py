@@ -7,10 +7,14 @@ Endpoints:
   GET  /projects/{id}/concept-decisions       → load saved decisions
   POST /projects/{id}/concept-decisions       → save decisions (full replace)
   POST /projects/{id}/generate-mapping-csvs  → generate the 3 CSVs from decisions
+  GET  /projects/{id}/download-mapping-files → download the generated mapping CSVs as a zip
 """
+import io
+import zipfile
 from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import pandas as pd
@@ -203,3 +207,34 @@ def generate_csvs(project_id: str, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(project)
     return project
+
+
+# ── Download mapping CSVs as a zip ──────────────────────────────────────────
+
+@router.get("/{project_id}/download-mapping-files")
+def download_mapping_files(project_id: str, db: Session = Depends(get_db)):
+    """Bundle the CSVs listed in project.mapping_files into a zip for download."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    files: dict = project.mapping_files or {}
+    existing = [Path(p) for p in files.values() if p and Path(p).is_file()]
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail="No mapping files generated yet. Generate them first.",
+        )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in existing:
+            zf.write(path, arcname=path.name)
+    buf.seek(0)
+
+    zip_name = f"{project_id}_mapping_files.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
