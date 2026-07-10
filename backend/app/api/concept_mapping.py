@@ -89,7 +89,7 @@ def concept_lookup(concept_id: int):
 @router.get("/{project_id}/column-values")
 def get_column_values(
     project_id: str,
-    max_values: int = 200,
+    max_values: int = 1000,
     filename: str | None = None,
     db: Session = Depends(get_db),
 ):

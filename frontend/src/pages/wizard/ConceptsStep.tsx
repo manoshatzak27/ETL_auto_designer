@@ -814,12 +814,14 @@ function ValueMappingTable({
   projectId,
   column,
   values,
+  distinctCount,
   mapped,
   onChange,
 }: {
   projectId: string
   column: string
   values: string[]
+  distinctCount: number
   mapped: Record<string, ConceptRef>
   onChange: (updated: Record<string, ConceptRef>) => void
 }) {
@@ -838,9 +840,20 @@ function ValueMappingTable({
     return unique.map(id => DOMAIN_OPTIONS.find(d => d.value === id)?.label ?? `Domain ${id}`)
   })()
 
+  const truncated = distinctCount > values.length
+
   return (
     <div className="flex flex-col gap-2">
-      {values.length > 10 && (
+      {truncated ? (
+        <div className="flex items-start gap-1.5 text-xs text-red-700 bg-red-50 border border-red-200 rounded px-3 py-2">
+          <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+          <span>
+            <span className="font-semibold">{distinctCount} distinct values total</span> — only the first{' '}
+            {values.length} are shown below. The remaining {distinctCount - values.length} value
+            {distinctCount - values.length > 1 ? 's are' : ' is'} not listed here and won't be mapped.
+          </span>
+        </div>
+      ) : values.length > 10 && (
         <div className="flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-1.5">
           <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" />
           {values.length} distinct values — map each one below
@@ -1296,6 +1309,13 @@ function VariableRow({
   const mappedValueCount = Object.keys(decision.value_concepts).length
   const hasVariableConcept = !!decision.variable_concept
 
+  // map_values has no row-level domain picker (domain is detected per value), so a
+  // Drug Exposure variable mapped this way never sets decision.domain_id itself —
+  // fall back to checking whether any mapped value was itself detected as Drug Exposure.
+  const isDrugExposure =
+    decision.domain_id === 3 ||
+    (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 3))
+
   const mappingCompleteness = (() => {
     if (decision.strategy === 'skip') return 0
     if (decision.strategy === 'map_variable') return hasVariableConcept ? 100 : 0
@@ -1573,6 +1593,7 @@ function VariableRow({
                   projectId={projectId}
                   column={column}
                   values={info.distinct_values}
+                  distinctCount={info.distinct_count}
                   mapped={decision.value_concepts}
                   onChange={vc => onChange({ ...decision, value_concepts: vc })}
                 />
@@ -1589,7 +1610,7 @@ function VariableRow({
           )}
 
           {/* Drug Exposure fields (optional) — sibling-column pulls, shown for Drug Exposure */}
-          {decision.domain_id === 3 && decision.strategy !== 'skip' && decision.strategy !== 'map_variable' && (
+          {isDrugExposure && decision.strategy === 'map_values' && (
             <DrugExposureFieldsSection
               decision={decision}
               onChange={onChange}
@@ -1733,6 +1754,7 @@ function BatchPanel({
               projectId={projectId}
               column={selectedCols[0]}
               values={sharedValues}
+              distinctCount={columnInfos[selectedCols[0]]?.distinct_count ?? sharedValues.length}
               mapped={valueConcepts}
               onChange={setValueConcepts}
             />
