@@ -1934,12 +1934,17 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return ownerFile !== selectedFile?.filename // exclude only from the owning file
   }), [cols, structuralCols, structuralColFileMap, selectedFile?.filename])
 
+  // Set to true right before every programmatic (non-user) decisions update, so the
+  // autosave effect below can tell "data just loaded" apart from "user changed something".
+  const skipNextAutosaveRef = useRef(true)
+
   useEffect(() => {
     Promise.all([
       getColumnValues(project.id, selectedFile?.filename),
       getConceptDecisions(project.id),
     ]).then(([infos, saved]: [Record<string, ColumnInfo>, Record<string, VariableDecision>]) => {
       setColumnInfos(infos)
+      skipNextAutosaveRef.current = true
       setDecisions(prev => {
         // saved contains decisions from ALL files; prev contains in-memory changes.
         // Merge so neither is lost: saved is the base, prev (unsaved changes) wins.
@@ -1962,6 +1967,22 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       })
     }).finally(() => setLoading(false))
   }, [project.id, selectedFile?.filename])
+
+  // Autosave: persist decisions shortly after any change (concept set/cleared, strategy
+  // change, domain override, batch apply, …) so mapping work survives a refresh or crash
+  // without requiring the user to click Next. Skipped right after data loads in, since
+  // that update isn't a user edit.
+  useEffect(() => {
+    if (loading) return
+    if (skipNextAutosaveRef.current) { skipNextAutosaveRef.current = false; return }
+    const timer = setTimeout(() => {
+      saveConceptDecisions(project.id, decisions as Record<string, unknown>).catch((e: unknown) => {
+        const err = e as { response?: { data?: { detail?: string } } }
+        setGenError(err?.response?.data?.detail || 'Failed to save concept decisions.')
+      })
+    }, 800)
+    return () => clearTimeout(timer)
+  }, [decisions, loading, project.id])
 
   // Track which source file each column was last active in, so StemTableStep
   // can filter to only show variables belonging to its selected file.
@@ -2037,21 +2058,6 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     }
   }
 
-  // Stats
-  const mappedCount = conceptCols.filter(c => {
-    const d = decisions[c]
-    return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
-  }).length
-  const skippedCount = conceptCols.filter(c => decisions[c]?.strategy === 'skip').length
-  const idsAddedCount = conceptCols.reduce((sum, c) => {
-    const d = decisions[c]
-    if (!d || d.strategy === 'skip') return sum
-    let n = 0
-    if ((d.strategy === 'map_variable' || d.strategy === 'map_both') && d.variable_concept) n += 1
-    if (d.strategy === 'map_values' || d.strategy === 'map_both') n += Object.keys(d.value_concepts).length
-    return sum + n
-  }, 0)
-
   // Columns claimed as a Drug Exposure sibling-column field (quantity_col, sig_col, …) by
   // some variable — those columns can be seen but not mapped on their own (main list), and
   // are disabled in every OTHER Drug Exposure field picker (their own claiming field/variable
@@ -2068,12 +2074,32 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return claims
   }, [decisions])
 
+  // A column is "mapped" either the normal way (has a concept set under a non-skip
+  // strategy) or by being claimed as a Drug Exposure sibling-column field for another
+  // variable — its data is still consumed by the ETL, just not through its own decision.
+  const isColumnMapped = (col: string) => {
+    if (drugFieldClaims[col]) return true
+    const d = decisions[col]
+    return !!d && d.strategy !== 'skip' && (!!d.variable_concept || Object.keys(d.value_concepts).length > 0)
+  }
+
+  // Stats
+  const mappedCount = conceptCols.filter(isColumnMapped).length
+  const skippedCount = conceptCols.filter(c => !drugFieldClaims[c] && decisions[c]?.strategy === 'skip').length
+  const idsAddedCount = conceptCols.reduce((sum, c) => {
+    const d = decisions[c]
+    if (!d || d.strategy === 'skip') return sum
+    let n = 0
+    if ((d.strategy === 'map_variable' || d.strategy === 'map_both') && d.variable_concept) n += 1
+    if (d.strategy === 'map_values' || d.strategy === 'map_both') n += Object.keys(d.value_concepts).length
+    return sum + n
+  }, 0)
+
   // Filter + search
   const filteredCols = conceptCols.filter(col => {
     if (search && !col.toLowerCase().includes(search.toLowerCase())) return false
-    const d = decisions[col]
-    if (filter === 'skipped') return d?.strategy === 'skip'
-    if (filter === 'mapped') return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
+    if (filter === 'skipped') return !drugFieldClaims[col] && decisions[col]?.strategy === 'skip'
+    if (filter === 'mapped') return isColumnMapped(col)
     return true
   })
 
