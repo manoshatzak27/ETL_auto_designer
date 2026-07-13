@@ -4159,9 +4159,11 @@ def _infer_stem_overrides(project) -> list[dict]:
 
     Rules (v1):
       - Skip variables with strategy == 'skip' or no decision.
-      - For Measurement/Observation variables (domain_id in {1, 2}) whose
-        unit_mapping carries exactly one unit concept_id and no unit_col,
-        emit { variable, field: 'unit_concept_id', value: <concept_id> }.
+      - Any variable whose unit_mapping carries exactly one unit concept_id and
+        no unit_col emits { variable, field: 'unit_concept_id', value: <concept_id> }
+        — not domain-restricted: map_values variables (e.g. Drug Exposure's dose
+        unit) never populate domain_id at the decision level in the first place,
+        and applying the override is a harmless no-op for domains that don't use it.
       - No legacy hardcoded overrides; every entry traces back to data.
 
     The extensible hook for future inferred-override rules.
@@ -4172,8 +4174,6 @@ def _infer_stem_overrides(project) -> list[dict]:
         if not isinstance(d, dict):
             continue
         if d.get("strategy") == "skip":
-            continue
-        if d.get("domain_id") not in (1, 2):
             continue
         um = d.get("unit_mapping") or {}
         if um.get("unit_col"):
@@ -4300,9 +4300,9 @@ def _generate_stem_table_script(project) -> str:
     # Drug Exposure (domain_id 3): variable → name of a sibling column in the
     # same source row whose value is pulled into a drug_exposure field (e.g. a
     # dosage column next to a drug-name column). Configured per variable in
-    # the Concepts step. One column-map per raw-passthrough field, plus a
-    # fixed (per-variable, not per-row) route concept id/name pair since
-    # route rarely varies row-to-row for a given drug variable.
+    # the Concepts step. Route and Dose unit are NOT here — they resolve
+    # per-row through route_mapping.csv / unit_mapping.csv instead (see below),
+    # same as any other per-value concept mapping.
     def _drug_col_map(field: str) -> dict[str, str]:
         return {
             k.lower(): d[field]
@@ -4316,12 +4316,26 @@ def _generate_stem_table_script(project) -> str:
     sig_col_map = _drug_col_map("sig_col")
     lot_number_col_map = _drug_col_map("lot_number_col")
     stop_reason_col_map = _drug_col_map("stop_reason_col")
-    route_col_map = _drug_col_map("route_col")
-    dose_unit_col_map = _drug_col_map("dose_unit_col")
-    route_concept_map = {
-        k.lower(): int(d["route_concept_id"])
+
+    # Route "Fixed value" mode: route_col is null and route_concepts carries exactly one
+    # entry (see UnitMappingSection's identical fixed-mode convention) — route_mapping.csv
+    # has nothing to look up in that case, so apply the single concept to every row directly.
+    route_fixed_map: dict[str, int] = {}
+    for k, d in (project.concept_decisions or {}).items():
+        if not isinstance(d, dict):
+            continue
+        rm = d.get("route_mapping") or {}
+        if rm.get("route_col"):
+            continue
+        ids = [v for v in (rm.get("route_concepts") or {}).values() if isinstance(v, int) and v > 0]
+        if len(ids) == 1:
+            route_fixed_map[k.lower()] = ids[0]
+
+    # Type: fixed drug_type_concept_id per variable, falling back to the pipeline default.
+    type_fixed_map: dict[str, int] = {
+        k.lower(): int(d["type_concept_id"])
         for k, d in (project.concept_decisions or {}).items()
-        if isinstance(d, dict) and d.get("route_concept_id")
+        if isinstance(d, dict) and d.get("type_concept_id")
     }
 
     qcm_repr = repr(quantity_col_map)
@@ -4330,9 +4344,8 @@ def _generate_stem_table_script(project) -> str:
     sgc_repr = repr(sig_col_map)
     lnc_repr = repr(lot_number_col_map)
     src_repr = repr(stop_reason_col_map)
-    rtc_repr = repr(route_col_map)
-    duc_repr = repr(dose_unit_col_map)
-    rcm_repr = repr(route_concept_map)
+    rfx_repr = repr(route_fixed_map)
+    tfx_repr = repr(type_fixed_map)
 
     # Inner per-row processing body — indented 8 spaces (inside the per-file for-loop).
     inner_rows = (
@@ -4445,9 +4458,32 @@ def _generate_stem_table_script(project) -> str:
         "                        sig = _col_str(row, SIG_COL_MAP, variable)\n"
         "                        lot_number = _col_str(row, LOT_NUMBER_COL_MAP, variable)\n"
         "                        stop_reason = _col_str(row, STOP_REASON_COL_MAP, variable)\n"
-        "                        route_source_value = _col_str(row, ROUTE_COL_MAP, variable)\n"
-        "                        dose_unit_source_value = _col_str(row, DOSE_UNIT_COL_MAP, variable)\n"
-        "                        route_concept_id = ROUTE_CONCEPT_MAP.get(variable.lower())\n"
+        "\n"
+        "                        # Route (Drug Exposure): per-row lookup via route_mapping.csv, same\n"
+        "                        # pattern as the unit_concept_id resolution above.\n"
+        "                        route_concept_id = None\n"
+        "                        route_source_value = None\n"
+        "                        _route_col = route_col_map.get(variable.lower())\n"
+        "                        if _route_col:\n"
+        "                            _raw_route = row.get(_route_col)\n"
+        "                            if pd.notnull(_raw_route) and str(_raw_route).strip() not in ('', 'nan'):\n"
+        "                                route_source_value = str(_raw_route).strip()\n"
+        "                                _looked_up_route = route_concept_map.get((variable.lower(), route_source_value))\n"
+        "                                if _looked_up_route is not None:\n"
+        "                                    route_concept_id = _looked_up_route\n"
+        "                                else:\n"
+        "                                    _info(f'INFO: variable {variable!r} — route value {route_source_value!r} not in route_concept_map; route_concept_id unset')\n"
+        "                        if route_concept_id is None:\n"
+        "                            route_concept_id = ROUTE_FIXED_MAP.get(variable.lower())\n"
+        "\n"
+        "                        # Dose unit (Drug Exposure): reuses the generic unit_concept_id/\n"
+        "                        # unit_source_value resolved above from unit_mapping.csv — no\n"
+        "                        # separate mechanism needed.\n"
+        "                        dose_unit_source_value = unit_source_value\n"
+        "\n"
+        "                        # Type (Drug Exposure): fixed drug_type_concept_id per variable,\n"
+        "                        # falling back to the pipeline default used by every other domain.\n"
+        "                        type_concept_id = TYPE_FIXED_MAP.get(variable.lower(), 32879)\n"
         "\n"
         "                        override = OVERRIDE_MAP.get(variable.lower())\n"
         "                        if override:\n"
@@ -4480,7 +4516,7 @@ def _generate_stem_table_script(project) -> str:
         "                            'start_datetime': start_datetime,\n"
         "                            'end_date': None,\n"
         "                            'end_datetime': None,\n"
-        "                            'type_concept_id': 32879,\n"
+        "                            'type_concept_id': type_concept_id,\n"
         "                            'operator_concept_id': operator_concept_id,\n"
         "                            'value_as_number': value_as_number,\n"
         "                            'value_as_string': value_as_string,\n"
@@ -4577,10 +4613,10 @@ def _generate_stem_table_script(project) -> str:
         f"SIG_COL_MAP = {sgc_repr}\n"
         f"LOT_NUMBER_COL_MAP = {lnc_repr}\n"
         f"STOP_REASON_COL_MAP = {src_repr}\n"
-        f"ROUTE_COL_MAP = {rtc_repr}\n"
-        f"DOSE_UNIT_COL_MAP = {duc_repr}\n"
-        "# Fixed (per-variable, not per-row) route concept id, since route rarely varies row-to-row.\n"
-        f"ROUTE_CONCEPT_MAP = {rcm_repr}\n"
+        "# Fixed (per-variable, not per-row) fallbacks — used when the column-based\n"
+        "# mapping/lookup for that field has nothing configured.\n"
+        f"ROUTE_FIXED_MAP = {rfx_repr}\n"
+        f"TYPE_FIXED_MAP = {tfx_repr}\n"
         "\n"
         "visit_occurrence_id_lookup = None  # built lazily on first lookup call\n"
         "\n"
@@ -4669,6 +4705,7 @@ def _generate_stem_table_script(project) -> str:
         "    vl = _load_csv(os.environ.get('ETL_MAPPING_value_mapping', ''))\n"
         "    vv = _load_csv(os.environ.get('ETL_MAPPING_variable_value_mapping', ''))\n"
         "    um = _load_csv(os.environ.get('ETL_MAPPING_unit_mapping', ''))\n"
+        "    rm = _load_csv(os.environ.get('ETL_MAPPING_route_mapping', ''))\n"
         "\n"
         "    # Build in-memory concept lookup dicts from mapping CSVs\n"
         "    var_map     = {r['variable_source_code'].lower(): int(r['target_concept_id']) for _, r in vm.iterrows()} if not vm.empty else {}\n"
@@ -4696,6 +4733,16 @@ def _generate_stem_table_script(project) -> str:
         "            v = str(r['variable_source_code']).lower()\n"
         "            unit_col_map[v]                               = str(r['unit_col'])\n"
         "            unit_concept_map[(v, str(r['unit_source_value']))] = int(r['unit_concept_id'])\n"
+        "\n"
+        "    # route_col_map:     variable → source column holding the route string\n"
+        "    # route_concept_map: (variable, route_source_value) → route_concept_id\n"
+        "    route_col_map     = {}\n"
+        "    route_concept_map = {}\n"
+        "    if not rm.empty:\n"
+        "        for _, r in rm.iterrows():\n"
+        "            v = str(r['variable_source_code']).lower()\n"
+        "            route_col_map[v]                                 = str(r['route_col'])\n"
+        "            route_concept_map[(v, str(r['route_source_value']))] = int(r['route_concept_id'])\n"
         "\n"
         "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"

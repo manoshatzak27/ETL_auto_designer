@@ -81,6 +81,7 @@ def generate_mapping_csvs(
     var_value_rows: list[dict] = []
     custom_rows: list[dict] = []
     unit_rows: list[dict] = []
+    route_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
         strategy = decision.get("strategy", "skip")
@@ -113,7 +114,7 @@ def generate_mapping_csvs(
                     if vc["concept_id"] >= CUSTOM_CONCEPT_THRESHOLD:
                         custom_rows.append(_custom_row(vc, custom_vocabulary_id))
 
-        # --- unit_mapping.csv  (measurement/observation unit_source_value → unit_concept_id) ---
+        # --- unit_mapping.csv  (measurement/observation/drug dose unit_source_value → unit_concept_id) ---
         unit_mapping = decision.get("unit_mapping") or {}
         unit_col: str | None = unit_mapping.get("unit_col")
         unit_concepts: dict = unit_mapping.get("unit_concepts") or {}
@@ -125,6 +126,20 @@ def generate_mapping_csvs(
                         "unit_col": unit_col,
                         "unit_source_value": unit_val,
                         "unit_concept_id": int(unit_cid),
+                    })
+
+        # --- route_mapping.csv  (drug_exposure route_source_value → route_concept_id) ---
+        route_mapping = decision.get("route_mapping") or {}
+        route_col: str | None = route_mapping.get("route_col")
+        route_concepts: dict = route_mapping.get("route_concepts") or {}
+        if route_col and route_concepts:
+            for route_val, route_cid in route_concepts.items():
+                if route_cid:
+                    route_rows.append({
+                        "variable_source_code": variable,
+                        "route_col": route_col,
+                        "route_source_value": route_val,
+                        "route_concept_id": int(route_cid),
                     })
 
     files: dict[str, str] = {}
@@ -160,6 +175,12 @@ def generate_mapping_csvs(
         p = str(output_path / "unit_mapping.csv")
         df.to_csv(p, index=False, encoding="utf-8")
         files["unit_mapping"] = p
+
+    if route_rows:
+        df = pd.DataFrame(route_rows).sort_values(["variable_source_code", "route_source_value"])
+        p = str(output_path / "route_mapping.csv")
+        df.to_csv(p, index=False, encoding="utf-8")
+        files["route_mapping"] = p
 
     return files
 

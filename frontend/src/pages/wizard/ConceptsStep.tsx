@@ -55,6 +55,13 @@ interface UnitMapping {
   unit_concepts: Record<string, number>  // unit_source_value → unit_concept_id
 }
 
+interface RouteMapping {
+  route_col: string | null
+  route_concepts: Record<string, number>  // route_source_value → route_concept_id
+}
+
+const EMPTY_ROUTE_MAPPING: RouteMapping = { route_col: null, route_concepts: {} }
+
 interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
@@ -66,19 +73,23 @@ interface VariableDecision {
   // script is generated.
   extra_instructions?: string
   // Drug Exposure (domain_id 3) only: names of sibling columns in the same
-  // source file whose values are pulled in as this variable's drug_exposure
-  // fields (e.g. a dosage column next to a drug-name column). route_concept_id
-  // is fixed per variable (not per-row) since route rarely varies row-to-row.
+  // source file whose values are pulled in verbatim as this variable's
+  // drug_exposure fields (e.g. a dosage column next to a drug-name column).
   quantity_col?: string | null
   days_supply_col?: string | null
   refills_col?: string | null
   sig_col?: string | null
   lot_number_col?: string | null
   stop_reason_col?: string | null
-  route_col?: string | null
-  dose_unit_col?: string | null
-  route_concept_id?: number | null
-  route_concept_name?: string | null
+  // Route and Unit (dose unit — unit_mapping, shared with Measurement/Observation) each
+  // support either a single fixed concept for the whole variable (col: null, one entry
+  // in concepts) or a per-row lookup via a chosen column's distinct values (0 = explicitly
+  // not mapped), toggled in the UI.
+  route_mapping?: RouteMapping
+  // Fixed only — drug_type_concept_id for every row of this variable, must resolve to
+  // the OMOP "Type Concept" domain. Falls back to the pipeline default (32879) when unset.
+  type_concept_id?: number | null
+  type_concept_name?: string | null
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -985,65 +996,189 @@ function ValueMappingTable({
 
 const EMPTY_UNIT_MAPPING: UnitMapping = { unit_col: null, unit_concepts: {} }
 
-// Read the single fixed-unit concept out of a UnitMapping (or null if none / legacy
-// column-based). Hardcoded units are stored as a one-entry dict keyed by the
-// concept name so the backend's _infer_stem_overrides picks it up cleanly.
-function getFixedUnit(um: UnitMapping | undefined | null): { id: number; name: string } | null {
-  if (!um || um.unit_col) return null
-  const entries = Object.entries(um.unit_concepts || {}).filter(([, v]) => typeof v === 'number' && v > 0)
+// Read the single fixed concept out of a column-or-fixed mapping (Unit, Route) — or
+// null if none was set, or the mapping is in per-column mode. Fixed concepts are
+// stored as a one-entry dict keyed by the concept name.
+function getFixedConcept(col: string | null, concepts: Record<string, number>): { id: number; name: string } | null {
+  if (col) return null
+  const entries = Object.entries(concepts || {}).filter(([, v]) => typeof v === 'number' && v > 0)
   if (entries.length !== 1) return null
   return { name: entries[0][0], id: entries[0][1] }
+}
+
+function getFixedUnit(um: UnitMapping | undefined | null): { id: number; name: string } | null {
+  return um ? getFixedConcept(um.unit_col, um.unit_concepts) : null
+}
+
+// Static (non-interpolated) color themes — Tailwind's JIT compiler can't see classes
+// built via string interpolation, so every variant used anywhere must be spelled out
+// literally somewhere in the source. These are shared by every fixed-or-per-column
+// concept card (Unit, Route).
+interface FixedConceptTheme {
+  chipBg: string
+  chipBorder: string
+  chipText: string
+  chipSubtext: string
+  iconText: string
+  inputBorder: string
+  ring: string
+  button: string
+  clear: string
+  link: string
+}
+
+const SKY_THEME: FixedConceptTheme = {
+  chipBg: 'bg-sky-100', chipBorder: 'border-sky-300', chipText: 'text-sky-900', chipSubtext: 'text-sky-700',
+  iconText: 'text-sky-700', inputBorder: 'border-sky-200', ring: 'focus:ring-sky-400',
+  button: 'bg-sky-600 hover:bg-sky-700', clear: 'text-sky-500 hover:text-sky-700', link: 'text-sky-700 hover:text-sky-900',
+}
+
+const PURPLE_THEME: FixedConceptTheme = {
+  chipBg: 'bg-purple-100', chipBorder: 'border-purple-300', chipText: 'text-purple-900', chipSubtext: 'text-purple-700',
+  iconText: 'text-purple-700', inputBorder: 'border-purple-200', ring: 'focus:ring-purple-400',
+  button: 'bg-purple-600 hover:bg-purple-700', clear: 'text-purple-500 hover:text-purple-700', link: 'text-purple-700 hover:text-purple-900',
+}
+
+// Manual concept-id entry for a single fixed concept (applies to every row of the
+// variable) — used by Unit and Route's "Fixed value" mode, and by Type (fixed-only).
+// When `validateDomain` is given, the concept is looked up and checked before being
+// accepted; otherwise a manually-typed name skips the lookup entirely (fast path).
+function FixedConceptInput({
+  id,
+  name,
+  onSet,
+  onClear,
+  theme,
+  validateDomain,
+  helpLink,
+}: {
+  id: number | null | undefined
+  name: string | null | undefined
+  onSet: (id: number, name: string) => void
+  onClear: () => void
+  theme: FixedConceptTheme
+  validateDomain?: (domainStr: string | null) => string | null
+  helpLink?: { label: string; url: (query: string) => string }
+}) {
+  const [manualId, setManualId] = useState('')
+  const [manualName, setManualName] = useState('')
+  const [lookingUp, setLookingUp] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const apply = () => {
+    const parsedId = parseInt(manualId, 10)
+    if (isNaN(parsedId) || parsedId < 1) return
+    setError(null)
+
+    if (!validateDomain && manualName.trim()) {
+      onSet(parsedId, manualName.trim())
+      setManualId(''); setManualName('')
+      return
+    }
+
+    setLookingUp(true)
+    lookupConceptDomain(parsedId)
+      .then(res => {
+        if (validateDomain) {
+          const err = validateDomain(res.found ? res.domain_id : null)
+          if (err) { setError(err); return }
+        }
+        const resolvedName = manualName.trim() || res.concept_name || `Concept ${parsedId}`
+        onSet(parsedId, resolvedName)
+        setManualId(''); setManualName('')
+      })
+      .catch(() => {
+        if (validateDomain) { setError("Couldn't verify this concept's domain — try again."); return }
+        onSet(parsedId, manualName.trim() || `Concept ${parsedId}`)
+        setManualId(''); setManualName('')
+      })
+      .finally(() => setLookingUp(false))
+  }
+
+  if (id) {
+    return (
+      <div className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs', theme.chipBg, theme.chipBorder)}>
+        <CheckCircle className={clsx('w-3.5 h-3.5 flex-shrink-0', theme.iconText)} />
+        <span className={clsx('font-semibold', theme.chipText)}>{name}</span>
+        <span className={theme.chipSubtext}>({id})</span>
+        <button onClick={onClear} className={clsx('ml-auto', theme.clear)} title="Clear">
+          <X className="w-3 h-3" />
+        </button>
+      </div>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <input
+          type="number"
+          value={manualId}
+          onChange={e => { setManualId(e.target.value); setError(null) }}
+          onKeyDown={e => e.key === 'Enter' && apply()}
+          placeholder="Concept ID"
+          className={clsx('border rounded px-2 py-1 text-xs w-24 bg-white focus:outline-none focus:ring-1', theme.inputBorder, theme.ring)}
+        />
+        <input
+          type="text"
+          value={manualName}
+          onChange={e => setManualName(e.target.value)}
+          onKeyDown={e => e.key === 'Enter' && apply()}
+          placeholder="Name (optional)"
+          className={clsx('border rounded px-2 py-1 text-xs flex-1 min-w-[120px] bg-white focus:outline-none focus:ring-1', theme.inputBorder, theme.ring)}
+        />
+        <button
+          onClick={apply}
+          disabled={!manualId || lookingUp}
+          className={clsx('px-2 py-1 text-xs text-white rounded disabled:opacity-30 flex items-center gap-1', theme.button)}
+        >
+          {lookingUp && <Loader2 className="w-3 h-3 animate-spin" />}
+          Set
+        </button>
+      </div>
+      {error && (
+        <p className="text-[11px] text-red-600 flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          {error}
+        </p>
+      )}
+      {helpLink && (
+        <a
+          href={helpLink.url(manualName.trim())}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={clsx('text-[11px] hover:underline w-fit', theme.link)}
+        >
+          ↗ {helpLink.label}
+        </a>
+      )}
+    </div>
+  )
 }
 
 function UnitMappingSection({
   unitMapping,
   onChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
 }: {
   unitMapping: UnitMapping
   onChange: (u: UnitMapping) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
 }) {
-  const [manualId, setManualId] = useState('')
-  const [manualName, setManualName] = useState('')
-  const [lookingUpName, setLookingUpName] = useState(false)
+  const [mode, setMode] = useState<'fixed' | 'column'>(unitMapping.unit_col ? 'column' : 'fixed')
+  const fixed = getFixedConcept(unitMapping.unit_col, unitMapping.unit_concepts)
 
-  const fixed = getFixedUnit(unitMapping)
-
-  const applyManual = () => {
-    const id = parseInt(manualId, 10)
-    if (isNaN(id) || id < 1) return
-    if (manualName.trim()) {
-      onChange({ unit_col: null, unit_concepts: { [manualName.trim()]: id } })
-      setManualId('')
-      setManualName('')
-      return
+  const validateUnitDomain = (domainStr: string | null): string | null => {
+    if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    if (domainStr.toLowerCase() !== 'unit') {
+      return `"${domainStr}" is not a Unit concept. Pick a concept from the Unit domain.`
     }
-    setLookingUpName(true)
-    lookupConceptDomain(id)
-      .then(res => {
-        const name = res.concept_name || `Concept ${id}`
-        onChange({ unit_col: null, unit_concepts: { [name]: id } })
-      })
-      .catch(() => {
-        onChange({ unit_col: null, unit_concepts: { [`Concept ${id}`]: id } })
-      })
-      .finally(() => {
-        setLookingUpName(false)
-        setManualId('')
-        setManualName('')
-      })
+    return null
   }
-
-  const clear = () => {
-    onChange({ unit_col: null, unit_concepts: {} })
-    setManualId('')
-    setManualName('')
-  }
-
-  // Pre-fill the Athena query with whatever the user has typed as the name
-  // so the link jumps closer to what they're looking for.
-  const athenaUrl =
-    'https://athena.ohdsi.org/search-terms/terms?vocabulary=UCUM&page=1&pageSize=15&query=' +
-    encodeURIComponent(manualName.trim())
 
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-sky-200 bg-sky-50/40 p-3">
@@ -1052,60 +1187,59 @@ function UnitMappingSection({
         <p className="text-xs font-semibold text-sky-800">
           Unit <span className="font-normal text-sky-600">(optional)</span>
         </p>
-        <span className="ml-auto text-[10px] text-sky-500">
-          fills <code className="bg-sky-100 px-1 rounded">unit_concept_id</code>
-        </span>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?domain=Unit&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-sky-600 hover:text-sky-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
       </div>
       <p className="text-[11px] text-sky-700/90">
-        Hardcode the OMOP UCUM unit for this variable (e.g. mmHg, mg/dL). Leave blank if the value is unitless.
+        {mode === 'fixed'
+          ? 'Hardcode the OMOP UCUM unit for this variable (e.g. mmHg, mg/dL). Leave blank if the value is unitless.'
+          : 'Pick a column holding the unit for each row (e.g. mg vs. mL per record), then map each of its distinct values to a concept id — 0 marks a value as explicitly not mapped.'}
       </p>
 
-      {fixed ? (
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-sky-100 border border-sky-300 text-xs">
-          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 text-sky-700" />
-          <span className="font-semibold text-sky-900">{fixed.name}</span>
-          <span className="text-sky-700">({fixed.id})</span>
-          <button onClick={clear} className="ml-auto text-sky-500 hover:text-sky-700" title="Clear unit">
-            <X className="w-3 h-3" />
-          </button>
-        </div>
+      <div className="flex rounded border border-sky-200 overflow-hidden text-[11px] w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('fixed')}
+          className={clsx('px-2 py-1', mode === 'fixed' ? 'bg-sky-600 text-white' : 'text-sky-600 hover:bg-sky-50')}
+        >
+          Fixed value
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('column')}
+          className={clsx('px-2 py-1 border-l border-sky-200', mode === 'column' ? 'bg-sky-600 text-white' : 'text-sky-600 hover:bg-sky-50')}
+        >
+          From column
+        </button>
+      </div>
+
+      {mode === 'fixed' ? (
+        <FixedConceptInput
+          id={fixed?.id}
+          name={fixed?.name}
+          onSet={(id, name) => onChange({ unit_col: null, unit_concepts: { [name]: id } })}
+          onClear={() => onChange({ unit_col: null, unit_concepts: {} })}
+          theme={SKY_THEME}
+          validateDomain={validateUnitDomain}
+        />
       ) : (
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <input
-              type="number"
-              value={manualId}
-              onChange={e => setManualId(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && applyManual()}
-              placeholder="Concept ID"
-              className="border border-sky-200 rounded px-2 py-1 text-xs w-24 bg-white focus:outline-none focus:ring-1 focus:ring-sky-400"
-            />
-            <input
-              type="text"
-              value={manualName}
-              onChange={e => setManualName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && applyManual()}
-              placeholder="Name (optional)"
-              className="border border-sky-200 rounded px-2 py-1 text-xs flex-1 min-w-[120px] bg-white focus:outline-none focus:ring-1 focus:ring-sky-400"
-            />
-            <button
-              onClick={applyManual}
-              disabled={!manualId || lookingUpName}
-              className="px-2 py-1 text-xs bg-sky-600 text-white rounded disabled:opacity-30 hover:bg-sky-700 flex items-center gap-1"
-            >
-              {lookingUpName && <Loader2 className="w-3 h-3 animate-spin" />}
-              Set
-            </button>
-          </div>
-          <a
-            href={athenaUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-[11px] text-sky-700 hover:text-sky-900 hover:underline w-fit"
-          >
-            ↗ Find UCUM concepts on Athena
-          </a>
-        </div>
+        <ColumnValueIdMapper
+          col={unitMapping.unit_col}
+          concepts={unitMapping.unit_concepts}
+          onColChange={col => onChange({ unit_col: col, unit_concepts: {} })}
+          onConceptsChange={concepts => onChange({ ...unitMapping, unit_concepts: concepts })}
+          columnInfos={columnInfos}
+          fileColumns={fileColumns}
+          excludeColumn={excludeColumn}
+          accentClass="bg-sky-100 text-sky-800"
+          validateDomain={validateUnitDomain}
+        />
       )}
     </div>
   )
@@ -1113,8 +1247,10 @@ function UnitMappingSection({
 
 // Sibling-column fields that get pulled verbatim into a drug_exposure row.
 // Keyed by the VariableDecision field that stores the chosen source column.
+// Route and Dose unit are NOT here — they get their own per-value concept
+// mapping (RouteMapping / the shared UnitMapping) instead of a raw passthrough.
 const DRUG_COLUMN_FIELDS: {
-  key: 'quantity_col' | 'days_supply_col' | 'refills_col' | 'sig_col' | 'lot_number_col' | 'stop_reason_col' | 'route_col' | 'dose_unit_col'
+  key: 'quantity_col' | 'days_supply_col' | 'refills_col' | 'sig_col' | 'lot_number_col' | 'stop_reason_col'
   label: string
   hint: string
 }[] = [
@@ -1124,71 +1260,494 @@ const DRUG_COLUMN_FIELDS: {
   { key: 'sig_col',         label: 'Sig / instructions',  hint: 'fills sig' },
   { key: 'lot_number_col',  label: 'Lot number',          hint: 'fills lot_number' },
   { key: 'stop_reason_col', label: 'Stop reason',         hint: 'fills stop_reason' },
-  { key: 'route_col',       label: 'Route (verbatim)',    hint: 'fills route_source_value' },
-  { key: 'dose_unit_col',   label: 'Dose unit (verbatim)', hint: 'fills dose_unit_source_value — deprecated CDM field' },
 ]
 
-function RouteConceptInput({
-  conceptId,
-  conceptName,
+// Searchable column picker for a single Drug Exposure field — a text input lives inside
+// the open dropdown itself so a column can be found by typing, rather than scrolling a
+// (potentially hundreds-long) plain <select>.
+function DrugFieldColumnSelect({
+  value,
   onChange,
+  options,
+  claims = {},
+  ownVariable = '',
+  fieldKey = '',
 }: {
-  conceptId: number | null | undefined
-  conceptName: string | null | undefined
-  onChange: (id: number | null, name: string | null) => void
+  value: string | null | undefined
+  onChange: (v: string | null) => void
+  options: string[]
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
+  fieldKey?: string
 }) {
-  const [manualId, setManualId] = useState('')
-  const [lookingUp, setLookingUp] = useState(false)
+  const [open, setOpen] = useState(false)
+  const [query, setQuery] = useState('')
+  const rootRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
 
-  const apply = () => {
-    const id = parseInt(manualId, 10)
-    if (isNaN(id) || id < 1) return
-    setLookingUp(true)
-    lookupConceptDomain(id)
-      .then(res => onChange(id, res.concept_name || `Concept ${id}`))
-      .catch(() => onChange(id, `Concept ${id}`))
-      .finally(() => { setLookingUp(false); setManualId('') })
-  }
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
 
-  if (conceptId) {
-    return (
-      <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-purple-100 border border-purple-300 text-xs">
-        <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 text-purple-700" />
-        <span className="font-semibold text-purple-900">{conceptName}</span>
-        <span className="text-purple-700">({conceptId})</span>
-        <button onClick={() => onChange(null, null)} className="ml-auto text-purple-500 hover:text-purple-700" title="Clear route concept">
-          <X className="w-3 h-3" />
-        </button>
-      </div>
-    )
+  useEffect(() => {
+    if (!open) return
+    setQuery('')
+    const id = requestAnimationFrame(() => inputRef.current?.focus())
+    return () => cancelAnimationFrame(id)
+  }, [open])
+
+  const q = query.trim().toLowerCase()
+  const filtered = q ? options.filter(c => c.toLowerCase().includes(q)) : options
+
+  const choose = (v: string | null) => {
+    onChange(v)
+    setOpen(false)
   }
 
   return (
-    <div className="flex items-center gap-1.5">
-      <input
-        type="number"
-        value={manualId}
-        onChange={e => setManualId(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && apply()}
-        placeholder="Concept ID"
-        className="border border-purple-200 rounded px-2 py-1 text-xs w-28 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
-      />
+    <div ref={rootRef} className="relative">
       <button
-        onClick={apply}
-        disabled={!manualId || lookingUp}
-        className="px-2 py-1 text-xs bg-purple-600 text-white rounded disabled:opacity-30 hover:bg-purple-700 flex items-center gap-1"
+        type="button"
+        onClick={() => setOpen(o => !o)}
+        className="w-full flex items-center justify-between gap-1 border border-purple-200 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
       >
-        {lookingUp && <Loader2 className="w-3 h-3 animate-spin" />}
-        Set
+        <span className={clsx('truncate', !value && 'text-muted-foreground')} title={value ?? undefined}>{value || '— none —'}</span>
+        <ChevronDown className="w-3 h-3 flex-shrink-0 text-purple-400" />
       </button>
+      {open && (
+        <div className="absolute z-50 mt-1 w-[28rem] max-w-[80vw] max-h-64 rounded-lg border border-purple-200 bg-white shadow-lg flex flex-col">
+          <input
+            ref={inputRef}
+            type="text"
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="Search columns…"
+            className="border-b border-purple-100 px-2 py-1.5 text-xs focus:outline-none flex-shrink-0"
+          />
+          <div className="overflow-y-auto overflow-x-hidden">
+            <div
+              onClick={() => choose(null)}
+              className="px-2 py-1.5 text-xs cursor-pointer hover:bg-purple-50 text-muted-foreground"
+            >
+              — none —
+            </div>
+            {filtered.map(c => {
+              const claim = claims[c]
+              const claimedElsewhere = !!claim && !(claim.variable === ownVariable && claim.fieldKey === fieldKey)
+              const label = `${c}${claimedElsewhere ? ` (used as ${claim.label} for ${claim.variable})` : ''}`
+              return (
+                <div
+                  key={c}
+                  onClick={() => !claimedElsewhere && choose(c)}
+                  title={label}
+                  className={clsx(
+                    'px-2 py-1.5 text-xs truncate',
+                    claimedElsewhere ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer hover:bg-purple-50',
+                    c === value && 'bg-purple-100 font-medium',
+                  )}
+                >
+                  {label}
+                </div>
+              )
+            })}
+            {filtered.length === 0 && (
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">No matching columns</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }
 
+// One row of a column-based concept mapping (Unit's "per column" mode, Route mapping):
+// a single distinct value of the chosen column, with a manual concept-id entry — 0
+// means "explicitly not mapped", mirroring the same convention used for value_concepts.
+function SimpleConceptIdRow({
+  value,
+  conceptId,
+  onSet,
+  onClear,
+  accentClass,
+  validateDomain,
+}: {
+  value: string
+  conceptId: number | null | undefined
+  onSet: (id: number) => void
+  onClear: () => void
+  accentClass: string
+  // When provided, an id > 0 is looked up and checked before being accepted — a
+  // wrong/unresolvable domain is rejected with an inline message instead of set.
+  // 0 ("not mapped") always skips validation.
+  validateDomain?: (domainStr: string | null) => string | null
+}) {
+  const [manualId, setManualId] = useState('')
+  const [name, setName] = useState<string | null>(null)
+  const [lookingUp, setLookingUp] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!conceptId) { setName(null); return }
+    let cancelled = false
+    setLookingUp(true)
+    lookupConceptDomain(conceptId)
+      .then(res => { if (!cancelled) setName(res.concept_name || null) })
+      .catch(() => { if (!cancelled) setName(null) })
+      .finally(() => { if (!cancelled) setLookingUp(false) })
+    return () => { cancelled = true }
+  }, [conceptId])
+
+  const apply = () => {
+    const id = parseInt(manualId, 10)
+    if (isNaN(id) || id < 0) return
+    setError(null)
+
+    if (id === 0 || !validateDomain) {
+      onSet(id)
+      setManualId('')
+      return
+    }
+
+    setLookingUp(true)
+    lookupConceptDomain(id)
+      .then(res => {
+        const err = validateDomain(res.found ? res.domain_id : null)
+        if (err) { setError(err); return }
+        onSet(id)
+        setManualId('')
+      })
+      .catch(() => setError("Couldn't verify this concept's domain — try again."))
+      .finally(() => setLookingUp(false))
+  }
+
+  const isSet = conceptId !== null && conceptId !== undefined
+  const isUnmapped = conceptId === 0
+
+  return (
+    <div className="flex flex-col gap-1 px-2 py-1.5">
+      <div className="flex items-center gap-1.5 text-xs">
+        <span className="font-mono flex-1 min-w-0 truncate" title={value}>{value}</span>
+        {isSet && (
+          <span className={clsx(
+            'flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] flex-shrink-0',
+            isUnmapped ? 'bg-gray-100 text-gray-600' : accentClass,
+          )}>
+            <span className="max-w-[9rem] truncate">
+              {lookingUp ? <Loader2 className="w-3 h-3 animate-spin flex-shrink-0" /> : (isUnmapped ? '0 · Not mapped' : `${name ?? 'Concept'} (${conceptId})`)}
+            </span>
+            <button
+              onClick={onClear}
+              className="flex-shrink-0 transition-transform duration-150 hover:scale-125 hover:opacity-70 active:scale-95"
+              title="Clear"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </span>
+        )}
+        <input
+          type="number"
+          value={manualId}
+          onChange={e => { setManualId(e.target.value); setError(null) }}
+          onKeyDown={e => e.key === 'Enter' && apply()}
+          placeholder="ID"
+          className="border border-border rounded px-1.5 py-0.5 text-xs w-16 flex-shrink-0 bg-white focus:outline-none focus:ring-1 focus:ring-ring"
+        />
+        <button
+          onClick={apply}
+          disabled={!manualId || lookingUp}
+          className="px-1.5 py-0.5 text-[11px] rounded flex-shrink-0 bg-primary text-primary-foreground disabled:opacity-30 hover:bg-primary/90"
+        >
+          Set
+        </button>
+      </div>
+      {error && (
+        <p className="text-[11px] text-red-600 flex items-start gap-1">
+          <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+          {error}
+        </p>
+      )}
+    </div>
+  )
+}
+
+// Column picker + per-distinct-value concept-id mapping, shared by Unit's "per column"
+// mode and Route mapping: pick a sibling column, then map each of ITS distinct values
+// to a concept id (0 = not mapped) — resolved per row at generation time, unlike the
+// other Drug Exposure fields which just pass a column's raw value straight through.
+function ColumnValueIdMapper({
+  col,
+  concepts,
+  onColChange,
+  onConceptsChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
+  accentClass,
+  validateDomain,
+}: {
+  col: string | null
+  concepts: Record<string, number>
+  onColChange: (col: string | null) => void
+  onConceptsChange: (concepts: Record<string, number>) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
+  accentClass: string
+  validateDomain?: (domainStr: string | null) => string | null
+}) {
+  const options = fileColumns.filter(c => c !== excludeColumn)
+  const info = col ? columnInfos[col] : null
+
+  return (
+    <div className="flex flex-col gap-2">
+      <DrugFieldColumnSelect value={col} onChange={onColChange} options={options} />
+      {col && !info && (
+        <p className="text-[11px] text-amber-700">
+          Distinct values for <code className="bg-amber-100 px-1 rounded">{col}</code> aren't loaded —
+          it may belong to a different source file.
+        </p>
+      )}
+      {col && info && info.distinct_values.length === 0 && (
+        <p className="text-[11px] text-muted-foreground">This column has no distinct values to map.</p>
+      )}
+      {col && info && info.distinct_values.length > 0 && (() => {
+        const total = info.distinct_values.length
+        const mappedCount = info.distinct_values.filter(v => v in concepts).length
+        const percent = Math.round((mappedCount / total) * 100)
+        return (
+          <>
+            <div className="flex items-center justify-between">
+              <span className="text-[11px] text-muted-foreground">{mappedCount}/{total} values reviewed</span>
+              <span className={clsx(
+                'text-[10px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0',
+                percent === 100 ? 'bg-green-100 text-green-700' : percent > 0 ? 'bg-orange-100 text-orange-700' : 'bg-muted text-muted-foreground',
+              )}>
+                {percent}%
+              </span>
+            </div>
+            <div className="flex flex-col divide-y divide-border/60 border border-border rounded-lg max-h-56 overflow-y-auto bg-white">
+              {info.distinct_values.map(v => (
+                <SimpleConceptIdRow
+                  key={v}
+                  value={v}
+                  conceptId={concepts[v]}
+                  onSet={id => onConceptsChange({ ...concepts, [v]: id })}
+                  onClear={() => {
+                    const next = { ...concepts }
+                    delete next[v]
+                    onConceptsChange(next)
+                  }}
+                  accentClass={accentClass}
+                  validateDomain={validateDomain}
+                />
+              ))}
+            </div>
+          </>
+        )
+      })()}
+    </div>
+  )
+}
+
+// Route (Drug Exposure) — same Fixed-value / From-column toggle as Unit, purple-themed
+// to match the rest of the Drug Exposure fields.
+function RouteMappingSection({
+  routeMapping,
+  onChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
+}: {
+  routeMapping: RouteMapping
+  onChange: (r: RouteMapping) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
+}) {
+  const [mode, setMode] = useState<'fixed' | 'column'>(routeMapping.route_col ? 'column' : 'fixed')
+  const fixed = getFixedConcept(routeMapping.route_col, routeMapping.route_concepts)
+
+  const validateRouteDomain = (domainStr: string | null): string | null => {
+    if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    if (domainStr.toLowerCase() !== 'route') {
+      return `"${domainStr}" is not a Route concept. Pick a concept from the Route domain.`
+    }
+    return null
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-purple-200 bg-purple-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Pill className="w-4 h-4 text-purple-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-purple-800">
+          Route <span className="font-normal text-purple-600">(optional)</span>
+        </p>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?domain=Route&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-purple-600 hover:text-purple-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
+      </div>
+      <p className="text-[11px] text-purple-700/90">
+        {mode === 'fixed'
+          ? 'Hardcode the OMOP route for this variable (e.g. Oral, Intravenous).'
+          : 'Pick a column holding the route for each row (e.g. PO vs. IV per record), then map each of its distinct values to a concept id — 0 marks a value as explicitly not mapped.'}
+      </p>
+
+      <div className="flex rounded border border-purple-200 overflow-hidden text-[11px] w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('fixed')}
+          className={clsx('px-2 py-1', mode === 'fixed' ? 'bg-purple-600 text-white' : 'text-purple-600 hover:bg-purple-50')}
+        >
+          Fixed value
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('column')}
+          className={clsx('px-2 py-1 border-l border-purple-200', mode === 'column' ? 'bg-purple-600 text-white' : 'text-purple-600 hover:bg-purple-50')}
+        >
+          From column
+        </button>
+      </div>
+
+      {mode === 'fixed' ? (
+        <FixedConceptInput
+          id={fixed?.id}
+          name={fixed?.name}
+          onSet={(id, name) => onChange({ route_col: null, route_concepts: { [name]: id } })}
+          onClear={() => onChange({ route_col: null, route_concepts: {} })}
+          theme={PURPLE_THEME}
+          validateDomain={validateRouteDomain}
+        />
+      ) : (
+        <ColumnValueIdMapper
+          col={routeMapping.route_col}
+          concepts={routeMapping.route_concepts}
+          onColChange={col => onChange({ route_col: col, route_concepts: {} })}
+          onConceptsChange={concepts => onChange({ ...routeMapping, route_concepts: concepts })}
+          columnInfos={columnInfos}
+          fileColumns={fileColumns}
+          excludeColumn={excludeColumn}
+          accentClass="bg-purple-100 text-purple-800"
+          validateDomain={validateRouteDomain}
+        />
+      )}
+    </div>
+  )
+}
+
+// Type (drug_type_concept_id) — fixed-only: one concept id applies to every row of the
+// variable. Must resolve to the OMOP "Type Concept" domain; anything else is rejected
+// before it's applied, mirroring the same domain-validation pattern used for value mapping.
+function TypeConceptCard({
+  conceptId,
+  conceptName,
+  onSet,
+  onClear,
+}: {
+  conceptId: number | null | undefined
+  conceptName: string | null | undefined
+  onSet: (id: number, name: string) => void
+  onClear: () => void
+}) {
+  const validateDomain = (domainStr: string | null): string | null => {
+    if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    if (domainStr.toLowerCase() !== 'type concept') {
+      return `"${domainStr}" is not a Type Concept. Pick a concept from the Type Concept domain (see link below).`
+    }
+    return null
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-purple-200 bg-purple-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Tag className="w-4 h-4 text-purple-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-purple-800">
+          Type
+        </p>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-purple-600 hover:text-purple-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
+      </div>
+      <p className="text-[11px] text-purple-700/90">
+        Hardcode the provenance of this variable's drug records (e.g. Prescription written,
+        Physician administered). Leave blank to use the pipeline default (EHR, 32879).
+      </p>
+      <FixedConceptInput
+        id={conceptId}
+        name={conceptName}
+        onSet={onSet}
+        onClear={onClear}
+        theme={PURPLE_THEME}
+        validateDomain={validateDomain}
+      />
+    </div>
+  )
+}
+
+// A single simple sibling-column field (Quantity, Days supply, Refills, Sig, Lot
+// number, Stop reason) as its own standalone card — just a column picker, no
+// per-value concept mapping.
+function SimpleColumnFieldCard({
+  field,
+  value,
+  onChange,
+  options,
+  claims,
+  ownVariable,
+}: {
+  field: (typeof DRUG_COLUMN_FIELDS)[number]
+  value: string | null | undefined
+  onChange: (v: string | null) => void
+  options: string[]
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable: string
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-purple-200 bg-purple-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <FileText className="w-4 h-4 text-purple-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-purple-800">
+          {field.label} <span className="font-normal text-purple-600">(optional)</span>
+        </p>
+      </div>
+      <p className="text-[11px] text-purple-700/90">
+        Pull this field from another column in the same source row.
+      </p>
+      <DrugFieldColumnSelect
+        value={value}
+        onChange={onChange}
+        options={options}
+        claims={claims}
+        ownVariable={ownVariable}
+        fieldKey={field.key}
+      />
+      <span className="text-[10px] text-purple-500">{field.hint}</span>
+    </div>
+  )
+}
+
+// Drug Exposure fields — each one its own card, in a fixed order: Type, Stop reason,
+// Refills, Quantity, Days supply, Sig, Route, Unit, Lot number.
 function DrugExposureFieldsSection({
   decision,
   onChange,
   fileColumns,
+  columnInfos,
   excludeColumn,
   ownVariable,
   claims,
@@ -1196,72 +1755,59 @@ function DrugExposureFieldsSection({
   decision: VariableDecision
   onChange: (d: VariableDecision) => void
   fileColumns: string[]
+  columnInfos: Record<string, ColumnInfo>
   excludeColumn: string
   ownVariable: string
   claims: Record<string, { variable: string; fieldKey: string; label: string }>
 }) {
-  const [open, setOpen] = useState(false)
   const options = fileColumns.filter(c => c !== excludeColumn)
-  const setCount = DRUG_COLUMN_FIELDS.filter(f => decision[f.key]).length + (decision.route_concept_id ? 1 : 0)
+  const routeMapping = decision.route_mapping ?? EMPTY_ROUTE_MAPPING
+  const unitMapping = decision.unit_mapping ?? EMPTY_UNIT_MAPPING
+
+  const fieldByKey = (key: (typeof DRUG_COLUMN_FIELDS)[number]['key']) =>
+    DRUG_COLUMN_FIELDS.find(f => f.key === key)!
+
+  const simpleField = (key: (typeof DRUG_COLUMN_FIELDS)[number]['key']) => (
+    <SimpleColumnFieldCard
+      field={fieldByKey(key)}
+      value={decision[key]}
+      onChange={v => onChange({ ...decision, [key]: v })}
+      options={options}
+      claims={claims}
+      ownVariable={ownVariable}
+    />
+  )
 
   return (
-    <div className="rounded-lg border border-purple-200 bg-purple-50/40 overflow-hidden">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="w-full flex items-center gap-2 px-3 py-2.5 hover:bg-purple-100/50 transition-colors"
-      >
-        <Pill className="w-4 h-4 text-purple-600 flex-shrink-0" />
-        <p className="text-xs font-semibold text-purple-800 text-left">
-          Drug Exposure fields <span className="font-normal text-purple-600">(optional)</span>
-          {setCount > 0 && <span className="ml-2 text-purple-500">{setCount} set</span>}
-        </p>
-        {open ? <ChevronUp className="w-3.5 h-3.5 text-purple-500 ml-auto flex-shrink-0" /> : <ChevronDown className="w-3.5 h-3.5 text-purple-500 ml-auto flex-shrink-0" />}
-      </button>
+    <div className="flex flex-col gap-2.5">
+      <p className="text-xs font-semibold text-muted-foreground">Drug Exposure fields (optional)</p>
 
-      {open && (
-        <div className="px-3 pb-3 flex flex-col gap-3 border-t border-purple-200 pt-3">
-          <p className="text-[11px] text-purple-700/90">
-            Pull these drug_exposure fields from other columns in the same source row (e.g. a
-            dosage or sig column next to this drug-name column).
-          </p>
-          <div className="grid grid-cols-2 gap-2.5">
-            {DRUG_COLUMN_FIELDS.map(f => (
-              <div key={f.key} className="flex flex-col gap-1">
-                <label className="text-[11px] font-medium text-purple-800">{f.label}</label>
-                <select
-                  value={decision[f.key] ?? ''}
-                  onChange={e => onChange({ ...decision, [f.key]: e.target.value || null })}
-                  className="border border-purple-200 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
-                >
-                  <option value="">— none —</option>
-                  {options.map(c => {
-                    const claim = claims[c]
-                    const claimedElsewhere = !!claim && !(claim.variable === ownVariable && claim.fieldKey === f.key)
-                    return (
-                      <option key={c} value={c} disabled={claimedElsewhere}>
-                        {c}{claimedElsewhere ? ` (used as ${claim.label} for ${claim.variable})` : ''}
-                      </option>
-                    )
-                  })}
-                </select>
-                <span className="text-[10px] text-purple-500">{f.hint}</span>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-1 pt-2 border-t border-purple-200/70">
-            <label className="text-[11px] font-medium text-purple-800">
-              Route concept ID <span className="font-normal text-purple-600">— fixed for this variable, fills route_concept_id</span>
-            </label>
-            <RouteConceptInput
-              conceptId={decision.route_concept_id}
-              conceptName={decision.route_concept_name}
-              onChange={(id, name) => onChange({ ...decision, route_concept_id: id, route_concept_name: name })}
-            />
-          </div>
-        </div>
-      )}
+      <TypeConceptCard
+        conceptId={decision.type_concept_id}
+        conceptName={decision.type_concept_name}
+        onSet={(id, name) => onChange({ ...decision, type_concept_id: id, type_concept_name: name })}
+        onClear={() => onChange({ ...decision, type_concept_id: null, type_concept_name: null })}
+      />
+      {simpleField('stop_reason_col')}
+      {simpleField('refills_col')}
+      {simpleField('quantity_col')}
+      {simpleField('days_supply_col')}
+      {simpleField('sig_col')}
+      <RouteMappingSection
+        routeMapping={routeMapping}
+        onChange={r => onChange({ ...decision, route_mapping: r })}
+        columnInfos={columnInfos}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+      />
+      <UnitMappingSection
+        unitMapping={unitMapping}
+        onChange={u => onChange({ ...decision, unit_mapping: u })}
+        columnInfos={columnInfos}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+      />
+      {simpleField('lot_number_col')}
     </div>
   )
 }
@@ -1325,6 +1871,7 @@ function VariableRow({
   onChange,
   batchMode,
   fileColumns,
+  columnInfos,
   drugFieldClaims,
 }: {
   column: string
@@ -1336,6 +1883,7 @@ function VariableRow({
   onChange: (d: VariableDecision) => void
   batchMode: boolean
   fileColumns: string[]
+  columnInfos: Record<string, ColumnInfo>
   drugFieldClaims: Record<string, { variable: string; fieldKey: string; label: string }>
 }) {
   const lockedBy = drugFieldClaims[column] ?? null
@@ -1432,7 +1980,8 @@ function VariableRow({
 
   return (
     <div className={clsx(
-      'border rounded-lg overflow-hidden transition-colors',
+      'border rounded-lg transition-colors',
+      !open && 'overflow-hidden',
       checked && 'ring-2 ring-primary',
       decision.strategy === 'skip' ? 'border-border/50' : 'border-border',
       open ? 'shadow-sm' : '',
@@ -1680,11 +2229,15 @@ function VariableRow({
             </div>
           )}
 
-          {/* Unit (optional) — shown for Measurement / Observation under the concept */}
+          {/* Unit (optional) — shown for Measurement / Observation. For Drug Exposure it's
+              rendered inside DrugExposureFieldsSection instead, in the requested field order. */}
           {(decision.domain_id === 1 || decision.domain_id === 2) && decision.strategy !== 'skip' && (
             <UnitMappingSection
               unitMapping={decision.unit_mapping ?? EMPTY_UNIT_MAPPING}
               onChange={u => onChange({ ...decision, unit_mapping: u })}
+              columnInfos={columnInfos}
+              fileColumns={fileColumns}
+              excludeColumn={column}
             />
           )}
 
@@ -1694,6 +2247,7 @@ function VariableRow({
               decision={decision}
               onChange={onChange}
               fileColumns={fileColumns}
+              columnInfos={columnInfos}
               excludeColumn={column}
               ownVariable={column}
               claims={drugFieldClaims}
@@ -2092,6 +2646,9 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     let n = 0
     if ((d.strategy === 'map_variable' || d.strategy === 'map_both') && d.variable_concept) n += 1
     if (d.strategy === 'map_values' || d.strategy === 'map_both') n += Object.keys(d.value_concepts).length
+    if (d.type_concept_id) n += 1
+    if (d.route_mapping) n += Object.keys(d.route_mapping.route_concepts).length
+    if (d.unit_mapping) n += Object.keys(d.unit_mapping.unit_concepts).length
     return sum + n
   }, 0)
 
@@ -2347,6 +2904,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 onChange={d => setDecision(col, d)}
                 batchMode={batchMode}
                 fileColumns={cols}
+                columnInfos={columnInfos}
                 drugFieldClaims={drugFieldClaims}
               />
             ))}
