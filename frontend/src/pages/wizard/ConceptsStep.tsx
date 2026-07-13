@@ -1006,10 +1006,6 @@ function getFixedConcept(col: string | null, concepts: Record<string, number>): 
   return { name: entries[0][0], id: entries[0][1] }
 }
 
-function getFixedUnit(um: UnitMapping | undefined | null): { id: number; name: string } | null {
-  return um ? getFixedConcept(um.unit_col, um.unit_concepts) : null
-}
-
 // Static (non-interpolated) color themes — Tailwind's JIT compiler can't see classes
 // built via string interpolation, so every variant used anywhere must be spelled out
 // literally somewhere in the source. These are shared by every fixed-or-per-column
@@ -2008,18 +2004,66 @@ function VariableRow({
             {sm.icon}{sm.label}
           </span>
 
-          {/* Unit indicator — shown when a fixed unit_concept_id was assigned */}
+          {/* Unit indicator — shown when a unit mapping (fixed or from-column) is configured */}
           {(() => {
-            const fixed = getFixedUnit(decision.unit_mapping)
-            if (!fixed) return null
-            return (
-              <span
-                className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200 flex-shrink-0"
-                title={`Unit concept: ${fixed.name} (${fixed.id})`}
-              >
-                unit: <span className="font-mono">{fixed.name}</span>
-              </span>
-            )
+            const um = decision.unit_mapping
+            if (!um) return null
+            const fixed = getFixedConcept(um.unit_col, um.unit_concepts)
+            if (fixed) {
+              return (
+                <span
+                  className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200 flex-shrink-0"
+                  title={`Unit concept: ${fixed.name} (${fixed.id})`}
+                >
+                  unit: <span className="font-mono">{fixed.name}</span>
+                </span>
+              )
+            }
+            if (um.unit_col) {
+              const mappedCount = Object.keys(um.unit_concepts).length
+              const total = columnInfos[um.unit_col]?.distinct_values.length ?? 0
+              const percent = total > 0 ? Math.round((mappedCount / total) * 100) : 0
+              return (
+                <span
+                  className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-sky-100 text-sky-700 border border-sky-200 flex-shrink-0"
+                  title={`Unit mapped from column "${um.unit_col}" — ${mappedCount}/${total} value${total === 1 ? '' : 's'} reviewed`}
+                >
+                  unit: {percent}%
+                </span>
+              )
+            }
+            return null
+          })()}
+
+          {/* Route indicator — shown when a route mapping (fixed or from-column) is configured */}
+          {(() => {
+            const rm = decision.route_mapping
+            if (!rm) return null
+            const fixed = getFixedConcept(rm.route_col, rm.route_concepts)
+            if (fixed) {
+              return (
+                <span
+                  className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200 flex-shrink-0"
+                  title={`Route concept: ${fixed.name} (${fixed.id})`}
+                >
+                  route: <span className="font-mono">{fixed.name}</span>
+                </span>
+              )
+            }
+            if (rm.route_col) {
+              const mappedCount = Object.keys(rm.route_concepts).length
+              const total = columnInfos[rm.route_col]?.distinct_values.length ?? 0
+              const percent = total > 0 ? Math.round((mappedCount / total) * 100) : 0
+              return (
+                <span
+                  className="flex items-center gap-1 text-[10px] font-medium px-2 py-0.5 rounded-full bg-purple-100 text-purple-700 border border-purple-200 flex-shrink-0"
+                  title={`Route mapped from column "${rm.route_col}" — ${mappedCount}/${total} value${total === 1 ? '' : 's'} reviewed`}
+                >
+                  route: {percent}%
+                </span>
+              )
+            }
+            return null
           })()}
 
           {/* Extra instructions (AI) indicator */}
