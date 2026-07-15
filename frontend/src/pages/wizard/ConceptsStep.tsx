@@ -1158,12 +1158,16 @@ function UnitMappingSection({
   columnInfos,
   fileColumns,
   excludeColumn,
+  claims,
+  ownVariable,
 }: {
   unitMapping: UnitMapping
   onChange: (u: UnitMapping) => void
   columnInfos: Record<string, ColumnInfo>
   fileColumns: string[]
   excludeColumn: string
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
 }) {
   const [mode, setMode] = useState<'fixed' | 'column'>(unitMapping.unit_col ? 'column' : 'fixed')
   const fixed = getFixedConcept(unitMapping.unit_col, unitMapping.unit_concepts)
@@ -1235,6 +1239,9 @@ function UnitMappingSection({
           excludeColumn={excludeColumn}
           accentClass="bg-sky-100 text-sky-800"
           validateDomain={validateUnitDomain}
+          claims={claims}
+          ownVariable={ownVariable}
+          fieldKey="unit_col"
         />
       )}
     </div>
@@ -1485,6 +1492,9 @@ function ColumnValueIdMapper({
   excludeColumn,
   accentClass,
   validateDomain,
+  claims,
+  ownVariable,
+  fieldKey,
 }: {
   col: string | null
   concepts: Record<string, number>
@@ -1495,13 +1505,23 @@ function ColumnValueIdMapper({
   excludeColumn: string
   accentClass: string
   validateDomain?: (domainStr: string | null) => string | null
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
+  fieldKey?: string
 }) {
   const options = fileColumns.filter(c => c !== excludeColumn)
   const info = col ? columnInfos[col] : null
 
   return (
     <div className="flex flex-col gap-2">
-      <DrugFieldColumnSelect value={col} onChange={onColChange} options={options} />
+      <DrugFieldColumnSelect
+        value={col}
+        onChange={onColChange}
+        options={options}
+        claims={claims}
+        ownVariable={ownVariable}
+        fieldKey={fieldKey}
+      />
       {col && !info && (
         <p className="text-[11px] text-amber-700">
           Distinct values for <code className="bg-amber-100 px-1 rounded">{col}</code> aren't loaded —
@@ -1558,12 +1578,16 @@ function RouteMappingSection({
   columnInfos,
   fileColumns,
   excludeColumn,
+  claims,
+  ownVariable,
 }: {
   routeMapping: RouteMapping
   onChange: (r: RouteMapping) => void
   columnInfos: Record<string, ColumnInfo>
   fileColumns: string[]
   excludeColumn: string
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
 }) {
   const [mode, setMode] = useState<'fixed' | 'column'>(routeMapping.route_col ? 'column' : 'fixed')
   const fixed = getFixedConcept(routeMapping.route_col, routeMapping.route_concepts)
@@ -1635,6 +1659,9 @@ function RouteMappingSection({
           excludeColumn={excludeColumn}
           accentClass="bg-purple-100 text-purple-800"
           validateDomain={validateRouteDomain}
+          claims={claims}
+          ownVariable={ownVariable}
+          fieldKey="route_col"
         />
       )}
     </div>
@@ -1795,6 +1822,8 @@ function DrugExposureFieldsSection({
         columnInfos={columnInfos}
         fileColumns={fileColumns}
         excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
       />
       <UnitMappingSection
         unitMapping={unitMapping}
@@ -1802,6 +1831,8 @@ function DrugExposureFieldsSection({
         columnInfos={columnInfos}
         fileColumns={fileColumns}
         excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
       />
       {simpleField('lot_number_col')}
     </div>
@@ -2282,6 +2313,8 @@ function VariableRow({
               columnInfos={columnInfos}
               fileColumns={fileColumns}
               excludeColumn={column}
+              claims={drugFieldClaims}
+              ownVariable={column}
             />
           )}
 
@@ -2668,6 +2701,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         const col = d[f.key]
         if (col && !claims[col]) claims[col] = { variable, fieldKey: f.key, label: f.label }
       }
+      const unitCol = d.unit_mapping?.unit_col
+      if (unitCol && !claims[unitCol]) claims[unitCol] = { variable, fieldKey: 'unit_col', label: 'Unit' }
+      const routeCol = d.route_mapping?.route_col
+      if (routeCol && !claims[routeCol]) claims[routeCol] = { variable, fieldKey: 'route_col', label: 'Route' }
     }
     return claims
   }, [decisions])
