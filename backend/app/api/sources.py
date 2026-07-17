@@ -135,6 +135,7 @@ async def upload_sources(
         raise HTTPException(status_code=400, detail="No CSV/TSV files found in the uploaded content.")
 
     # Build a dict keyed by filename so re-uploading a file replaces its entry
+    had_existing_files = bool(project.source_files)
     existing: dict[str, dict] = {f["filename"]: f for f in (project.source_files or [])}
     for path in raw_paths:
         schema = infer_schema(str(path))
@@ -151,7 +152,11 @@ async def upload_sources(
     merged = list(existing.values())
     project.source_files = merged
     _sync_legacy_fields(project, merged)
-    _reset_project_state(project)
+    # Only wipe downstream mapping/config/execution state on the *first* upload for
+    # this project. Adding an extra file to an already-configured project should
+    # preserve existing concept decisions, mappings, and generated code.
+    if not had_existing_files:
+        _reset_project_state(project)
     db.commit()
     db.refresh(project)
     return project
