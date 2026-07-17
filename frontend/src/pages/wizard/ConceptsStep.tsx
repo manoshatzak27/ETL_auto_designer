@@ -1084,6 +1084,17 @@ function FixedConceptInput({
         if (validateDomain) {
           const err = validateDomain(res.found ? res.domain_id : null)
           if (err) { setError(err); return }
+          // This name is stored as the source_value written into the OMOP output (e.g.
+          // unit_source_value) — never substitute a placeholder like "Concept 8840" for
+          // it silently, that would corrupt the generated data.
+          const resolvedName = manualName.trim() || res.concept_name
+          if (!resolvedName) {
+            setError("This concept has no name in CONCEPT.csv — type one in the Name field.")
+            return
+          }
+          onSet(parsedId, resolvedName)
+          setManualId(''); setManualName('')
+          return
         }
         const resolvedName = manualName.trim() || res.concept_name || `Concept ${parsedId}`
         onSet(parsedId, resolvedName)

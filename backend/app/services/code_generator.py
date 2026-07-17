@@ -4160,10 +4160,14 @@ def _infer_stem_overrides(project) -> list[dict]:
     Rules (v1):
       - Skip variables with strategy == 'skip' or no decision.
       - Any variable whose unit_mapping carries exactly one unit concept_id and
-        no unit_col emits { variable, field: 'unit_concept_id', value: <concept_id> }
-        — not domain-restricted: map_values variables (e.g. Drug Exposure's dose
-        unit) never populate domain_id at the decision level in the first place,
-        and applying the override is a harmless no-op for domains that don't use it.
+        no unit_col emits { variable, field: 'unit_concept_id', value: <concept_id>,
+        unit_source_value: <unit name> } — not domain-restricted: map_values
+        variables (e.g. Drug Exposure's dose unit) never populate domain_id at
+        the decision level in the first place, and applying the override is a
+        harmless no-op for domains that don't use it. The unit name (the
+        unit_concepts key the user picked the fixed concept for) is carried
+        through so unit_source_value is populated the same way it would be for
+        a per-row unit column, instead of staying null.
       - No legacy hardcoded overrides; every entry traces back to data.
 
     The extensible hook for future inferred-override rules.
@@ -4179,13 +4183,15 @@ def _infer_stem_overrides(project) -> list[dict]:
         if um.get("unit_col"):
             continue  # handled at runtime via unit_mapping.csv
         unit_concepts = um.get("unit_concepts") or {}
-        ids = [v for v in unit_concepts.values() if isinstance(v, int) and v > 0]
-        if len(ids) != 1:
+        valid = [(k, v) for k, v in unit_concepts.items() if isinstance(v, int) and v > 0]
+        if len(valid) != 1:
             continue
+        unit_name, unit_cid = valid[0]
         inferred.append({
             "variable": variable,
             "field": "unit_concept_id",
-            "value": ids[0],
+            "value": unit_cid,
+            "unit_source_value": unit_name,
         })
     return inferred
 
@@ -4536,6 +4542,9 @@ def _generate_stem_table_script(project) -> str:
         "                        if override:\n"
         "                            if override.get('field') == 'unit_concept_id' and override.get('value') is not None:\n"
         "                                unit_concept_id = int(override['value'])\n"
+        "                                if override.get('unit_source_value') is not None:\n"
+        "                                    unit_source_value = str(override['unit_source_value'])\n"
+        "                                    dose_unit_source_value = unit_source_value\n"
         "                            if override.get('value_as_string') is not None:\n"
         "                                value_as_string = str(override['value_as_string'])\n"
         "                            if override.get('value_map'):\n"
