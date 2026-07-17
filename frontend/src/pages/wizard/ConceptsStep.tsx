@@ -1978,9 +1978,9 @@ function ExtraInstructionsInput({
       value={draft}
       onChange={e => { setDraft(e.target.value); scheduleCommit(e.target.value) }}
       onBlur={flush}
-      rows={2}
+      rows={4}
       placeholder={`e.g. "Convert ${column} from Fahrenheit to Celsius before loading."`}
-      className="font-mono text-xs resize-y min-h-0"
+      className="font-mono text-xs resize-y"
     />
   )
 }
