@@ -48,6 +48,16 @@ class ProjectResponse(BaseModel):
         return v if isinstance(v, list) else []
 
 
+class UploadConflict(BaseModel):
+    column: str
+    reason: str
+
+
+class UploadSourcesResponse(BaseModel):
+    project: ProjectResponse
+    conflicts: list[UploadConflict] = []
+
+
 class ProjectSummary(BaseModel):
     id: str
     name: str

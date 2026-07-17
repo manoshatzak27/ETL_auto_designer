@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models.project import Project
-from app.schemas.project import ProjectResponse
+from app.schemas.project import ProjectResponse, UploadSourcesResponse
 from app.services.schema_inferrer import infer_schema, detect_pid_transform
 from app.config import settings
 
@@ -79,6 +79,49 @@ def _reset_project_state(project: Project) -> None:
     project.output_files = []
 
 
+def _decision_is_meaningful(decision: Any) -> bool:
+    """A decision that was never touched by the user (still 'skip', no mappings)
+    isn't worth flagging as a conflict even if its column disappears."""
+    if not isinstance(decision, dict):
+        return False
+    if decision.get("strategy") not in (None, "", "skip"):
+        return True
+    if decision.get("variable_concept"):
+        return True
+    if decision.get("value_concepts"):
+        return True
+    if (decision.get("unit_mapping") or {}).get("unit_concepts"):
+        return True
+    if (decision.get("route_mapping") or {}).get("route_concepts"):
+        return True
+    return False
+
+
+def _find_decision_conflicts(concept_decisions: dict, removed_columns: set[str]) -> list[dict]:
+    """concept_decisions is keyed by bare column name. When a replaced file drops
+    columns, find decisions that reference those columns — either as the mapped
+    column itself, or as the sibling column supplying unit/route values — so the
+    user can be told exactly what needs remapping."""
+    if not removed_columns:
+        return []
+    conflicts: list[dict] = []
+    for col, decision in (concept_decisions or {}).items():
+        if not _decision_is_meaningful(decision):
+            continue
+        reasons = []
+        if col in removed_columns:
+            reasons.append(f"column '{col}' no longer exists in the updated file")
+        unit_col = (decision.get("unit_mapping") or {}).get("unit_col")
+        if unit_col and unit_col in removed_columns:
+            reasons.append(f"its unit column '{unit_col}' no longer exists in the updated file")
+        route_col = (decision.get("route_mapping") or {}).get("route_col")
+        if route_col and route_col in removed_columns:
+            reasons.append(f"its route column '{route_col}' no longer exists in the updated file")
+        if reasons:
+            conflicts.append({"column": col, "reason": "; ".join(reasons)})
+    return conflicts
+
+
 def _sync_legacy_fields(project: Project, source_files: list[dict]) -> None:
     """Keep the old single-file columns in sync with the first entry in source_files."""
     if source_files:
@@ -98,7 +141,7 @@ def _sync_legacy_fields(project: Project, source_files: list[dict]) -> None:
         project.source_row_count = 0
 
 
-@router.post("/{project_id}/upload-sources", response_model=ProjectResponse)
+@router.post("/{project_id}/upload-sources", response_model=UploadSourcesResponse)
 async def upload_sources(
     project_id: str,
     files: List[UploadFile] = File(...),
@@ -137,8 +180,14 @@ async def upload_sources(
     # Build a dict keyed by filename so re-uploading a file replaces its entry
     had_existing_files = bool(project.source_files)
     existing: dict[str, dict] = {f["filename"]: f for f in (project.source_files or [])}
+    # Track files that are being replaced (same filename already present) so we
+    # can diff their old vs. new columns and warn about mapping choices that no
+    # longer apply, instead of silently dropping or hiding them.
+    replaced_old_entries: dict[str, dict] = {}
     for path in raw_paths:
         schema = infer_schema(str(path))
+        if path.name in existing:
+            replaced_old_entries[path.name] = existing[path.name]
         existing[path.name] = {
             "filename": path.name,
             "path": str(path),
@@ -153,13 +202,23 @@ async def upload_sources(
     project.source_files = merged
     _sync_legacy_fields(project, merged)
     # Only wipe downstream mapping/config/execution state on the *first* upload for
-    # this project. Adding an extra file to an already-configured project should
-    # preserve existing concept decisions, mappings, and generated code.
+    # this project. Adding an extra file, or replacing one with a newer version,
+    # should preserve existing concept decisions, mappings, and generated code —
+    # concept_decisions is keyed by column name, so unaffected columns keep their
+    # mapping automatically.
     if not had_existing_files:
         _reset_project_state(project)
+
+    removed_columns: set[str] = set()
+    for filename, old_entry in replaced_old_entries.items():
+        old_cols = set(old_entry.get("columns") or [])
+        new_cols = set(existing[filename].get("columns") or [])
+        removed_columns |= (old_cols - new_cols)
+    conflicts = _find_decision_conflicts(project.concept_decisions or {}, removed_columns)
+
     db.commit()
     db.refresh(project)
-    return project
+    return {"project": project, "conflicts": conflicts}
 
 
 @router.delete("/{project_id}/source-files/{index}", response_model=ProjectResponse)

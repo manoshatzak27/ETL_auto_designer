@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { uploadSources, deleteSourceFile, updateTableConfig } from '../../api/client'
+import { uploadSources, deleteSourceFile, updateTableConfig, type UploadConflict } from '../../api/client'
 import type { Project, SourceFile } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
@@ -57,6 +57,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [conflicts, setConflicts] = useState<UploadConflict[]>([])
   const [togglingTable, setTogglingTable] = useState<string | null>(null)
   const [togglingMultiRow, setTogglingMultiRow] = useState(false)
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null)
@@ -72,9 +73,11 @@ export default function SourceStep({ project, onUpdate }: Props) {
     if (!files.length) return
     setUploading(true)
     setError('')
+    setConflicts([])
     try {
-      const updated = await uploadSources(project.id, files)
+      const { project: updated, conflicts: newConflicts } = await uploadSources(project.id, files)
       onUpdate(updated)
+      setConflicts(newConflicts)
     } catch {
       setError('Upload failed. Please try again.')
     } finally {
@@ -194,6 +197,21 @@ export default function SourceStep({ project, onUpdate }: Props) {
         )}
 
         {error && <p className="text-sm text-destructive">{error}</p>}
+
+        {conflicts.length > 0 && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+            <p className="font-semibold">
+              The updated file changed {conflicts.length === 1 ? 'a column' : 'some columns'} used in previous mapping choices — please review and remap:
+            </p>
+            <ul className="mt-1.5 list-disc pl-5">
+              {conflicts.map(c => (
+                <li key={c.column}>
+                  <span className="font-mono">{c.column}</span> — {c.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {/* Per-file cards */}
         {hasSource && (

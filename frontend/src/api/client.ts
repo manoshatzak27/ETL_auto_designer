@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { SourceFileContent } from '../types'
+import type { SourceFileContent, Project } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -18,10 +18,20 @@ export const uploadSource = (projectId: string, file: File) => {
   return api.post(`/projects/${projectId}/upload-source`, fd).then(r => r.data)
 }
 
+export interface UploadConflict {
+  column: string
+  reason: string
+}
+
+export interface UploadSourcesResult {
+  project: Project
+  conflicts: UploadConflict[]
+}
+
 export const uploadSources = (projectId: string, files: File[]) => {
   const fd = new FormData()
   for (const f of files) fd.append('files', f)
-  return api.post(`/projects/${projectId}/upload-sources`, fd).then(r => r.data)
+  return api.post<UploadSourcesResult>(`/projects/${projectId}/upload-sources`, fd).then(r => r.data)
 }
 
 export const deleteSourceFile = (projectId: string, index: number) =>
