@@ -13,6 +13,7 @@ import clsx from 'clsx'
 
 const WARN_ROW_THRESHOLD = 20
 const PREVIEW_ROW_LIMIT = 20
+const COLUMN_PREVIEW_LIMIT = 12
 
 function formatFileSize(bytes: number | undefined): string {
   if (bytes == null) return 'unknown size'
@@ -423,6 +424,10 @@ interface SourceFileCardProps {
 }
 
 function SourceFileCard({ file, index, deleting, onDelete, onView }: SourceFileCardProps) {
+  const [columnsExpanded, setColumnsExpanded] = useState(false)
+  const hasMoreColumns = file.columns.length > COLUMN_PREVIEW_LIMIT
+  const visibleColumns = columnsExpanded || !hasMoreColumns ? file.columns : file.columns.slice(0, COLUMN_PREVIEW_LIMIT)
+
   return (
     <Card className={clsx('flex flex-col gap-3 p-4 transition-opacity', deleting && 'opacity-50 pointer-events-none')}>
       <div className="flex items-center gap-2">
@@ -465,12 +470,28 @@ function SourceFileCard({ file, index, deleting, onDelete, onView }: SourceFileC
       <div>
         <p className="mb-1.5 text-xs text-muted-foreground">Columns ({file.columns.length})</p>
         <div className="flex flex-wrap gap-1.5">
-          {file.columns.map(col => (
+          {visibleColumns.map(col => (
             <span key={col} className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-secondary-foreground">
               {col}
             </span>
           ))}
+          {hasMoreColumns && !columnsExpanded && (
+            <button
+              onClick={() => setColumnsExpanded(true)}
+              className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-primary hover:underline"
+            >
+              +{file.columns.length - COLUMN_PREVIEW_LIMIT} more
+            </button>
+          )}
         </div>
+        {hasMoreColumns && columnsExpanded && (
+          <button
+            onClick={() => setColumnsExpanded(false)}
+            className="mt-1.5 text-xs text-primary hover:underline"
+          >
+            Show less
+          </button>
+        )}
       </div>
     </Card>
   )
