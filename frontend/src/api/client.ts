@@ -9,6 +9,7 @@ export const createProject = (name: string, description = '') =>
   api.post('/projects/', { name, description }).then(r => r.data)
 export const getProject = (id: string) => api.get(`/projects/${id}`).then(r => r.data)
 export const deleteProject = (id: string) => api.delete(`/projects/${id}`)
+export const copyProject = (id: string) => api.post(`/projects/${id}/copy`).then(r => r.data)
 
 // ---- Source upload ----
 export const uploadSource = (projectId: string, file: File) => {

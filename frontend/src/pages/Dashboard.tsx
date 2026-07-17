@@ -1,10 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listProjects, createProject, deleteProject } from '../api/client'
+import { listProjects, createProject, deleteProject, copyProject } from '../api/client'
 import type { ProjectSummary } from '../types'
 import {
   Plus,
   Trash2,
+  Copy,
   ChevronRight,
   Database,
   Clock,
@@ -37,6 +38,7 @@ export default function Dashboard() {
 
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [copyingId, setCopyingId] = useState<string | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -77,6 +79,16 @@ export default function Dashboard() {
       }
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleCopy = async (p: ProjectSummary) => {
+    setCopyingId(p.id)
+    try {
+      await copyProject(p.id)
+      load()
+    } finally {
+      setCopyingId(null)
     }
   }
 
@@ -205,6 +217,20 @@ export default function Dashboard() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    title="Duplicate project"
+                    disabled={copyingId === p.id}
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleCopy(p)
+                    }}
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                  >
+                    {copyingId === p.id ? <Loader2 className="animate-spin" /> : <Copy />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Delete project"
                     onClick={e => {
                       e.stopPropagation()
                       setDeleteTarget(p)
