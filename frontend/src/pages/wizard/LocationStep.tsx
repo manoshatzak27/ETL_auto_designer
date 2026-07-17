@@ -8,13 +8,11 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
 import { FileText } from 'lucide-react'
 
 interface ColumnInfo { distinct_values: string[] }
@@ -131,17 +129,6 @@ export default function LocationStep({ project, onUpdate }: Props) {
   const stepUsed = useMemo(() => extractMappedCols(activeCfg), [activeCfg])
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
-
-  // ── Domain validation ──────────────────────────────────────────────────
-  const personCountryIds = countryMode === 'column'
-    ? Object.values(activeCfg.country_concept_id_map)
-    : activeCfg.country_concept_id_default > 0 ? [activeCfg.country_concept_id_default] : []
-  const personCountryViolations = useDomainValidation(personCountryIds, 'Geography')
-
-  const csCountryIds = csCountryMode === 'column'
-    ? Object.values(activeCfg.cs_country_concept_id_map)
-    : activeCfg.cs_country_concept_id_default > 0 ? [activeCfg.cs_country_concept_id_default] : []
-  const csCountryViolations = useDomainValidation(csCountryIds, 'Geography')
 
   // ── Apply a LocationFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: LocationFileConfig, infos: Record<string, ColumnInfo>) => {
@@ -644,6 +631,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                           sourceValues={countryValues.length > 0 ? countryValues : Object.keys(activeCfg.country_concept_id_map)}
                           mapping={activeCfg.country_concept_id_map}
                           onChange={m => setActiveCfg(prev => ({ ...prev, country_concept_id_map: m }))}
+                          expectedDomain="Geography"
                         />
                       </div>
                     )}
@@ -657,6 +645,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                         onChange={v => setActiveCfg(prev => ({ ...prev, country_concept_id_default: v ?? 0 }))}
                         onConceptName={name => { if (name) setActiveCfg(prev => ({ ...prev, country_source_value: name })) }}
                         placeholder="e.g. 4330442"
+                        expectedDomain="Geography"
                       />
                       <p className="text-xs text-muted-foreground mt-1">Applied to all person rows (0 = unknown).</p>
                     </div>
@@ -673,7 +662,6 @@ export default function LocationStep({ project, onUpdate }: Props) {
                     </div>
                   </div>
                 )}
-                <DomainWarning violations={personCountryViolations} expectedDomain="Geography" />
               </Card>
 
               <Card className="flex flex-col gap-3 p-6">
@@ -794,6 +782,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                           sourceValues={csCountryValues.length > 0 ? csCountryValues : Object.keys(activeCfg.cs_country_concept_id_map)}
                           mapping={activeCfg.cs_country_concept_id_map}
                           onChange={m => setActiveCfg(prev => ({ ...prev, cs_country_concept_id_map: m }))}
+                          expectedDomain="Geography"
                         />
                       </div>
                     )}
@@ -807,6 +796,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                         onChange={v => setActiveCfg(prev => ({ ...prev, cs_country_concept_id_default: v ?? 0 }))}
                         onConceptName={name => { if (name) setActiveCfg(prev => ({ ...prev, cs_country_source_value: name })) }}
                         placeholder="e.g. 4330442"
+                        expectedDomain="Geography"
                       />
                       <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows (0 = unknown).</p>
                     </div>
@@ -823,7 +813,6 @@ export default function LocationStep({ project, onUpdate }: Props) {
                     </div>
                   </div>
                 )}
-                <DomainWarning violations={csCountryViolations} expectedDomain="Geography" />
               </Card>
 
               <Card className="flex flex-col gap-3 p-6">

@@ -7,11 +7,9 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
 import { FileText, Info } from 'lucide-react'
 
 interface ColumnInfo { distinct_values: string[] }
@@ -64,8 +62,6 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   const stepUsed = useMemo(() => extractMappedCols(activeCfg), [activeCfg])
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
-
-  const posViolations = useDomainValidation(Object.values(activeCfg.place_of_service_value_map ?? {}), 'Visit')
 
   // ── Location-controlled patient identifier ─────────────────────────────
   const locCfg = (project.etl_config?.location ?? {}) as LocationConfig
@@ -505,9 +501,9 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
                   mapping={activeCfg.place_of_service_value_map ?? {}}
                   onChange={map => setActiveCfg(prev => ({ ...prev, place_of_service_value_map: map }))}
                   hint="Assign an OMOP concept ID to each distinct place-of-service value."
+                  expectedDomain="Visit"
                 />
               )}
-              <DomainWarning violations={posViolations} expectedDomain="Visit" />
             </Card>
           </>
         )}

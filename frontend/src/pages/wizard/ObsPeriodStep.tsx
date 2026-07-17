@@ -6,14 +6,12 @@ import type { Project, ObservationPeriodConfig, ObsPeriodFallbackEntry } from '.
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import SingleConceptInput from '../../components/SingleConceptInput'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
 import { useSourceFile } from '../../hooks/useSourceFile'
 import { Plus, X } from 'lucide-react'
 
@@ -47,10 +45,6 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
-  const periodTypeViolations = useDomainValidation(
-    cfg.period_type_concept_id > 0 ? [cfg.period_type_concept_id] : [],
-    'Type Concept',
-  )
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period', ['visit_occurrence']), [project.etl_config])
 
   useEffect(() => {
@@ -318,6 +312,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
               value={cfg.period_type_concept_id || null}
               onChange={v => setCfg(prev => ({ ...prev, period_type_concept_id: v ?? 0 }))}
               placeholder="e.g. 32879"
+              expectedDomain="Type Concept"
             />
             <a
               href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="
@@ -327,7 +322,6 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
             >
               Accepted Concepts (Athena)
             </a>
-            <DomainWarning violations={periodTypeViolations} expectedDomain="Type Concept" />
           </div>
         </Card>
 

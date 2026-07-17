@@ -8,13 +8,11 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
 import { FileText, Info } from 'lucide-react'
 
 interface Props {
@@ -87,17 +85,6 @@ export default function ProviderStep({ project, onUpdate }: Props) {
   const locAutoIncrement = locCfg.person_id_auto_increment ?? false
   const locPidCol = !locAutoIncrement ? (locCfg.file_configs?.[activeFilename]?.person_id_col ?? '') : ''
   const pidLockedFromLocation = locAutoIncrement || !!locPidCol
-
-  const specialtyIds = specialtyMode === 'column'
-    ? Object.values(activeCfg.specialty_concept_value_map ?? {})
-    : activeCfg.prefix_specialty_concept_id ? [activeCfg.prefix_specialty_concept_id] : []
-  const specialtyViolations = useDomainValidation(specialtyIds, 'Provider')
-
-  const genderDefaultId = activeCfg.gender_concept_id_default ?? 0
-  const genderIds = genderMode === 'column'
-    ? Object.values(activeCfg.gender_concept_value_map ?? {})
-    : genderDefaultId > 0 ? [genderDefaultId] : []
-  const genderViolations = useDomainValidation(genderIds, 'Gender')
 
   const distinctVals = (col: string): string[] => columnInfos[col]?.distinct_values ?? []
 
@@ -601,6 +588,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                       mapping={activeCfg.specialty_concept_value_map ?? {}}
                       onChange={m => setActiveCfg(prev => ({ ...prev, specialty_concept_value_map: m }))}
                       hint="Assign an OMOP Provider-domain concept ID to each specialty value."
+                      expectedDomain="Provider"
                     />
                   )}
                 </div>
@@ -621,12 +609,12 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                       value={activeCfg.prefix_specialty_concept_id ?? null}
                       onChange={v => setActiveCfg(prev => ({ ...prev, prefix_specialty_concept_id: v }))}
                       placeholder="e.g. 38004477"
+                      expectedDomain="Provider"
                     />
                     <p className="text-xs text-muted-foreground">OMOP Provider-domain concept ID for the prefix specialty.</p>
                   </div>
                 </div>
               )}
-              <DomainWarning violations={specialtyViolations} expectedDomain="Provider" />
             </Card>
 
             {/* Gender */}
@@ -669,6 +657,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                         mapping={activeCfg.gender_concept_value_map ?? {}}
                         onChange={m => setActiveCfg(prev => ({ ...prev, gender_concept_value_map: m }))}
                         hint="Assign an OMOP Gender-domain concept ID to each gender value."
+                        expectedDomain="Gender"
                       />
                     </div>
                   )}
@@ -680,11 +669,11 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                     value={activeCfg.gender_concept_id_default || null}
                     onChange={v => setActiveCfg(prev => ({ ...prev, gender_concept_id_default: v ?? 0 }))}
                     placeholder="e.g. 8507"
+                    expectedDomain="Gender"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
                 </div>
               )}
-              <DomainWarning violations={genderViolations} expectedDomain="Gender" />
             </Card>
           </>
         )}

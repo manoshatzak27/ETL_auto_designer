@@ -8,14 +8,12 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
 import { FileText, Info } from 'lucide-react'
 
 interface ColumnInfo { distinct_values: string[] }
@@ -85,27 +83,6 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const stepUsed = useMemo(() => extractMappedCols(activeCfg), [activeCfg])
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
-
-  // ── Domain validation ─────────────────────────────────────────────────
-  const genderDefaultId = activeCfg.mappings.gender_concept_id.default ?? 0
-  const genderConceptIds = genderMode === 'column'
-    ? Object.values(activeCfg.mappings.gender_concept_id.value_map)
-    : genderDefaultId > 0 ? [genderDefaultId] : []
-  const genderViolations = useDomainValidation(genderConceptIds, 'Gender')
-
-  const raceMap = activeCfg.mappings.race_concept_id as RaceEthnicityMapping
-  const raceDefaultId = raceMap?.default ?? 0
-  const raceConceptIds = raceMode === 'column'
-    ? Object.values(raceMap?.value_map ?? {})
-    : raceDefaultId > 0 ? [raceDefaultId] : []
-  const raceViolations = useDomainValidation(raceConceptIds, 'Race')
-
-  const ethMap = activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping
-  const ethDefaultId = ethMap?.default ?? 0
-  const ethConceptIds = ethnicityMode === 'column'
-    ? Object.values(ethMap?.value_map ?? {})
-    : ethDefaultId > 0 ? [ethDefaultId] : []
-  const ethViolations = useDomainValidation(ethConceptIds, 'Ethnicity')
 
   // ── Location-step patient identifier lock ────────────────────────────
   const locCfg = (project.etl_config?.location ?? {}) as LocationConfig
@@ -664,6 +641,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                         sourceValues={genderValues.length > 0 ? genderValues : Object.keys(activeCfg.mappings.gender_concept_id.value_map)}
                         mapping={activeCfg.mappings.gender_concept_id.value_map}
                         onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
+                        expectedDomain="Gender"
                       />
                     </div>
                   )}
@@ -675,11 +653,11 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     value={activeCfg.mappings.gender_concept_id.default || null}
                     onChange={v => setField(['mappings', 'gender_concept_id', 'default'], v ?? 0)}
                     placeholder="e.g. 8507"
+                    expectedDomain="Gender"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
                 </div>
               )}
-              <DomainWarning violations={genderViolations} expectedDomain="Gender" />
             </Card>
 
             {/* Date of Birth */}
@@ -770,6 +748,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                         sourceValues={raceValues.length > 0 ? raceValues : Object.keys((activeCfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
                         mapping={(activeCfg.mappings.race_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
                         onChange={m => setField(['mappings', 'race_concept_id', 'value_map'], m)}
+                        expectedDomain="Race"
                       />
                     </div>
                   )}
@@ -781,11 +760,11 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     value={(activeCfg.mappings.race_concept_id as RaceEthnicityMapping)?.default || null}
                     onChange={v => setField(['mappings', 'race_concept_id', 'default'], v ?? 0)}
                     placeholder="e.g. 8527"
+                    expectedDomain="Race"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
                 </div>
               )}
-              <DomainWarning violations={raceViolations} expectedDomain="Race" />
             </Card>
 
             {/* Ethnicity */}
@@ -819,6 +798,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                         sourceValues={ethnicityValues.length > 0 ? ethnicityValues : Object.keys((activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {})}
                         mapping={(activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.value_map ?? {}}
                         onChange={m => setField(['mappings', 'ethnicity_concept_id', 'value_map'], m)}
+                        expectedDomain="Ethnicity"
                       />
                     </div>
                   )}
@@ -830,11 +810,11 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     value={(activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.default || null}
                     onChange={v => setField(['mappings', 'ethnicity_concept_id', 'default'], v ?? 0)}
                     placeholder="e.g. 38003564"
+                    expectedDomain="Ethnicity"
                   />
                   <p className="mt-1 text-xs text-muted-foreground">0 = unknown.</p>
                 </div>
               )}
-              <DomainWarning violations={ethViolations} expectedDomain="Ethnicity" />
             </Card>
           </>
         )}

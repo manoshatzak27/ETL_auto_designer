@@ -9,94 +9,138 @@ interface Props {
   mapping: Record<string, number>
   onChange: (mapping: Record<string, number>) => void
   hint?: string
+  /** If set, concept IDs outside this domain are rejected instead of accepted. */
+  expectedDomain?: string
 }
 
 function ConceptCell({
   conceptId,
   onChange,
+  expectedDomain,
 }: {
   conceptId: number | undefined
   onChange: (v: number | undefined) => void
+  expectedDomain?: string
 }) {
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [domain, setDomain] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
+  const [notFound, setNotFound] = useState(false)
+  const [commitError, setCommitError] = useState<string | null>(null)
 
   useEffect(() => {
     if (!conceptId || conceptId < 1) {
       setDomain(null)
       setFailed(false)
+      setNotFound(false)
       return
     }
     setLookingUp(true)
     setDomain(null)
     setFailed(false)
+    setNotFound(false)
     lookupConceptDomain(conceptId)
       .then(res => {
         if (res.found && res.domain_id) setDomain(res.domain_id)
-        else setDomain(null)
+        else { setDomain(null); setNotFound(true) }
       })
       .catch(() => setFailed(true))
       .finally(() => setLookingUp(false))
   }, [conceptId])
 
-  const commit = () => {
+  const mismatch = !!expectedDomain && !!domain && domain.toLowerCase() !== expectedDomain.toLowerCase()
+
+  const commit = async () => {
     const id = parseInt(pending)
     if (isNaN(id) || id < 1) return
-    onChange(id)
-    setPending('')
+    setCommitError(null)
+    if (!expectedDomain) {
+      onChange(id)
+      setPending('')
+      return
+    }
+    setLookingUp(true)
+    try {
+      const res = await lookupConceptDomain(id)
+      if (!res.found) {
+        setCommitError('Not found in vocabulary')
+        return
+      }
+      if (res.domain_id && res.domain_id.toLowerCase() !== expectedDomain.toLowerCase()) {
+        setCommitError(`Wrong domain: "${res.domain_id}", expected "${expectedDomain}"`)
+        return
+      }
+      onChange(id)
+      setPending('')
+    } catch {
+      setCommitError('Lookup failed — retry')
+    } finally {
+      setLookingUp(false)
+    }
   }
 
   if (conceptId && conceptId > 0) {
+    const invalid = mismatch || notFound
     return (
-      <div className="flex items-center gap-1.5">
-        <div className="flex items-center gap-1.5 px-2 py-1 rounded-lg bg-green-50 border border-green-200 text-green-800 text-xs flex-1 min-w-0">
-          <CheckCircle className="w-3 h-3 flex-shrink-0" />
-          <span className="font-semibold font-mono">{conceptId}</span>
-          {lookingUp ? (
-            <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 ml-1 text-green-600" />
-          ) : domain ? (
-            <span className="ml-1 text-[10px] text-indigo-700 bg-indigo-100 px-1 rounded">{domain}</span>
-          ) : failed ? (
-            <AlertTriangle className="w-3 h-3 flex-shrink-0 ml-1 text-amber-500" title="Domain lookup failed" />
-          ) : null}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-1.5">
+          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs flex-1 min-w-0 ${invalid ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+            {invalid ? <AlertTriangle className="w-3 h-3 flex-shrink-0" /> : <CheckCircle className="w-3 h-3 flex-shrink-0" />}
+            <span className="font-semibold font-mono">{conceptId}</span>
+            {lookingUp ? (
+              <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 ml-1 text-green-600" />
+            ) : domain ? (
+              <span className={`ml-1 text-[10px] px-1 rounded ${mismatch ? 'text-amber-700 bg-amber-100' : 'text-indigo-700 bg-indigo-100'}`}>{domain}</span>
+            ) : failed ? (
+              <AlertTriangle className="w-3 h-3 flex-shrink-0 ml-1 text-amber-500" title="Domain lookup failed" />
+            ) : null}
+          </div>
+          <button
+            type="button"
+            onClick={() => onChange(undefined)}
+            className="text-muted-foreground hover:text-destructive flex-shrink-0"
+            title="Clear"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={() => onChange(undefined)}
-          className="text-muted-foreground hover:text-destructive flex-shrink-0"
-          title="Clear"
-        >
-          <X className="w-3.5 h-3.5" />
-        </button>
+        {!lookingUp && mismatch && (
+          <p className="text-[11px] text-amber-700">Expected "{expectedDomain}", got "{domain}"</p>
+        )}
+        {!lookingUp && notFound && (
+          <p className="text-[11px] text-amber-700">Not found in vocabulary</p>
+        )}
       </div>
     )
   }
 
   return (
-    <div className="flex items-center gap-1.5">
-      <input
-        type="number"
-        value={pending}
-        onChange={e => setPending(e.target.value)}
-        onKeyDown={e => e.key === 'Enter' && commit()}
-        placeholder="e.g. 8507"
-        className="border border-border rounded px-2 py-1 text-xs flex-1 min-w-0 h-8 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
-      />
-      <button
-        type="button"
-        onClick={commit}
-        disabled={!pending}
-        className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90 flex-shrink-0 h-8"
-      >
-        Set
-      </button>
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          value={pending}
+          onChange={e => { setPending(e.target.value); setCommitError(null) }}
+          onKeyDown={e => e.key === 'Enter' && commit()}
+          placeholder="e.g. 8507"
+          className="border border-border rounded px-2 py-1 text-xs flex-1 min-w-0 h-8 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+        />
+        <button
+          type="button"
+          onClick={commit}
+          disabled={!pending || lookingUp}
+          className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90 flex-shrink-0 h-8"
+        >
+          {lookingUp ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Set'}
+        </button>
+      </div>
+      {commitError && <p className="text-[11px] text-destructive">{commitError}</p>}
     </div>
   )
 }
 
-export default function ValueConceptMapper({ label, sourceValues, mapping, onChange, hint }: Props) {
+export default function ValueConceptMapper({ label, sourceValues, mapping, onChange, hint, expectedDomain }: Props) {
   const handleChange = (val: string, conceptId: number | undefined) => {
     const next = { ...mapping }
     if (conceptId !== undefined && conceptId > 0) {
@@ -129,6 +173,7 @@ export default function ValueConceptMapper({ label, sourceValues, mapping, onCha
                   <ConceptCell
                     conceptId={mapping[val]}
                     onChange={id => handleChange(val, id)}
+                    expectedDomain={expectedDomain}
                   />
                 </td>
               </tr>

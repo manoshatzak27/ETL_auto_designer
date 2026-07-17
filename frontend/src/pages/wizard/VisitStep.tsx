@@ -7,7 +7,6 @@ import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Plus, Trash2, ExternalLink, FileText } from 'lucide-react'
@@ -15,7 +14,6 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
 
 interface Props {
   project: Project
@@ -134,16 +132,6 @@ export default function VisitStep({ project, onUpdate }: Props) {
       if (visitSourceCol && c === visitSourceCol) return false
       return true
     })
-
-  const allVisitConceptIds = cfg.visit_definitions.flatMap((vd, i) =>
-    getMode(conceptModes, i) === 'column' ? Object.values(vd.visit_concept_value_map ?? {}) : [],
-  )
-  const visitConceptViolations = useDomainValidation(allVisitConceptIds, 'Visit')
-
-  const allTypeConceptIds = cfg.visit_definitions.flatMap((vd, i) =>
-    getMode(typeModes, i) === 'column' ? Object.values(vd.visit_type_value_map ?? {}) : [],
-  )
-  const typeConceptViolations = useDomainValidation(allTypeConceptIds, 'Type Concept')
 
   // ── Apply a saved per-file config to UI state ─────────────────────────────
   const applyFileConfig = (fc: PerFileVisitConfig | undefined) => {
@@ -464,16 +452,6 @@ export default function VisitStep({ project, onUpdate }: Props) {
 
         <div className="flex flex-col gap-6">
           {cfg.visit_definitions.map((vd, i) => {
-            const vdVisitIds = getMode(conceptModes, i) === 'column'
-              ? Object.values(vd.visit_concept_value_map ?? {}) : []
-            const vdVisitViolations = new Map(
-              [...visitConceptViolations.entries()].filter(([id]) => vdVisitIds.includes(id)),
-            )
-            const vdTypeIds = getMode(typeModes, i) === 'column'
-              ? Object.values(vd.visit_type_value_map ?? {}) : []
-            const vdTypeViolations = new Map(
-              [...typeConceptViolations.entries()].filter(([id]) => vdTypeIds.includes(id)),
-            )
             return (
               <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
                 {/* Visit header */}
@@ -601,6 +579,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           mapping={vd.visit_concept_value_map ?? {}}
                           onChange={m => updateVisit(i, 'visit_concept_value_map', m)}
                           hint="Assign an OMOP Visit concept ID to each source value."
+                          expectedDomain="Visit"
                         />
                       )}
                     </div>
@@ -612,7 +591,6 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       </Select>
                     </div>
                   )}
-                  <DomainWarning violations={vdVisitViolations} expectedDomain="Visit" />
                 </Card>
 
                 {/* ── Group 3: visit_type_concept_id ─────────────────────── */}
@@ -650,6 +628,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           mapping={vd.visit_type_value_map ?? {}}
                           onChange={m => updateVisit(i, 'visit_type_value_map', m)}
                           hint="Assign an OMOP Type concept ID to each source value."
+                          expectedDomain="Type Concept"
                         />
                       )}
                     </div>
@@ -661,7 +640,6 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       </Select>
                     </div>
                   )}
-                  <DomainWarning violations={vdTypeViolations} expectedDomain="Type Concept" />
                 </Card>
 
                 {/* Inpatient fields */}
@@ -688,6 +666,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           mapping={vd.admitted_from_value_map ?? {}}
                           onChange={m => updateVisit(i, 'admitted_from_value_map', m)}
                           hint="Assign an OMOP Visit concept ID. Use 0 for home / self-referred."
+                          expectedDomain="Visit"
                         />
                       )}
                       <div className="grid grid-cols-2 gap-4">
@@ -733,6 +712,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           mapping={vd.discharged_to_value_map ?? {}}
                           onChange={m => updateVisit(i, 'discharged_to_value_map', m)}
                           hint="Assign an OMOP Visit concept ID. Use 0 for home."
+                          expectedDomain="Visit"
                         />
                       )}
                       <div className="grid grid-cols-2 gap-4">
