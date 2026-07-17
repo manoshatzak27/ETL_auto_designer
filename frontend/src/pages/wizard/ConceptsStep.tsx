@@ -90,6 +90,12 @@ interface VariableDecision {
   // the OMOP "Type Concept" domain. Falls back to the pipeline default (32879) when unset.
   type_concept_id?: number | null
   type_concept_name?: string | null
+  // Override the visit-derived start date/time (and set an end date/time, which otherwise
+  // stays empty) from sibling columns, parsed with the given strptime format — shared by
+  // both columns. Leaving the format blank falls back to '%Y-%m-%d'.
+  start_datetime_col?: string | null
+  end_datetime_col?: string | null
+  datetime_format?: string | null
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -1764,6 +1770,80 @@ function SimpleColumnFieldCard({
   )
 }
 
+// Start/End datetime (Drug Exposure) — two sibling-column pickers plus a single strptime
+// format shared by both, overriding the visit-derived start date/time and populating an
+// end date/time (which otherwise stays empty for every domain).
+function DateTimeFieldsCard({
+  decision,
+  onChange,
+  fileColumns,
+  excludeColumn,
+  claims,
+  ownVariable,
+}: {
+  decision: VariableDecision
+  onChange: (d: VariableDecision) => void
+  fileColumns: string[]
+  excludeColumn: string
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable: string
+}) {
+  const options = fileColumns.filter(c => c !== excludeColumn)
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-purple-200 bg-purple-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Hash className="w-4 h-4 text-purple-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-purple-800">
+          Start / End datetime <span className="font-normal text-purple-600">(optional)</span>
+        </p>
+      </div>
+      <p className="text-[11px] text-purple-700/90">
+        Pick columns holding the start/end datetime for each row, parsed with the format
+        below (shared by both). Overrides the visit-derived start date and fills the
+        otherwise-empty end date. Leave the format blank to use the default (%Y-%m-%d).
+      </p>
+      <div className="grid grid-cols-2 gap-2.5">
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-purple-800">Start datetime column</label>
+          <DrugFieldColumnSelect
+            value={decision.start_datetime_col}
+            onChange={v => onChange({ ...decision, start_datetime_col: v })}
+            options={options}
+            claims={claims}
+            ownVariable={ownVariable}
+            fieldKey="start_datetime_col"
+          />
+          <span className="text-[10px] text-purple-500">fills drug_exposure_start_date(time)</span>
+        </div>
+        <div className="flex flex-col gap-1">
+          <label className="text-[11px] font-medium text-purple-800">End datetime column</label>
+          <DrugFieldColumnSelect
+            value={decision.end_datetime_col}
+            onChange={v => onChange({ ...decision, end_datetime_col: v })}
+            options={options}
+            claims={claims}
+            ownVariable={ownVariable}
+            fieldKey="end_datetime_col"
+          />
+          <span className="text-[10px] text-purple-500">fills drug_exposure_end_date(time)</span>
+        </div>
+      </div>
+      <div className="flex flex-col gap-1">
+        <label className="text-[11px] font-medium text-purple-800">Datetime format</label>
+        <input
+          type="text"
+          value={decision.datetime_format ?? ''}
+          onChange={e => onChange({ ...decision, datetime_format: e.target.value || null })}
+          placeholder="%Y-%m-%d %H:%M:%S"
+          className="border border-purple-200 rounded px-2 py-1 text-xs bg-white font-mono focus:outline-none focus:ring-1 focus:ring-purple-400"
+        />
+        <span className="text-[10px] text-purple-500">Python strptime format, applied to both columns above.</span>
+      </div>
+    </div>
+  )
+}
+
 // Drug Exposure fields — each one its own card, in a fixed order: Type, Stop reason,
 // Refills, Quantity, Days supply, Sig, Route, Unit, Lot number.
 function DrugExposureFieldsSection({
@@ -1835,6 +1915,14 @@ function DrugExposureFieldsSection({
         ownVariable={ownVariable}
       />
       {simpleField('lot_number_col')}
+      <DateTimeFieldsCard
+        decision={decision}
+        onChange={onChange}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
     </div>
   )
 }
@@ -2705,6 +2793,12 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       if (unitCol && !claims[unitCol]) claims[unitCol] = { variable, fieldKey: 'unit_col', label: 'Unit' }
       const routeCol = d.route_mapping?.route_col
       if (routeCol && !claims[routeCol]) claims[routeCol] = { variable, fieldKey: 'route_col', label: 'Route' }
+      if (d.start_datetime_col && !claims[d.start_datetime_col]) {
+        claims[d.start_datetime_col] = { variable, fieldKey: 'start_datetime_col', label: 'Start datetime' }
+      }
+      if (d.end_datetime_col && !claims[d.end_datetime_col]) {
+        claims[d.end_datetime_col] = { variable, fieldKey: 'end_datetime_col', label: 'End datetime' }
+      }
     }
     return claims
   }, [decisions])

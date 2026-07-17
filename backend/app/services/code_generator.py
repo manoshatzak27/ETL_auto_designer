@@ -4338,6 +4338,17 @@ def _generate_stem_table_script(project) -> str:
         if isinstance(d, dict) and d.get("type_concept_id")
     }
 
+    # Start/End datetime: sibling columns overriding the visit-derived start date and
+    # filling the otherwise-always-empty end date, parsed with a per-variable strptime
+    # format shared by both columns.
+    start_dt_col_map = _drug_col_map("start_datetime_col")
+    end_dt_col_map = _drug_col_map("end_datetime_col")
+    datetime_format_map: dict[str, str] = {
+        k.lower(): d["datetime_format"]
+        for k, d in (project.concept_decisions or {}).items()
+        if isinstance(d, dict) and d.get("datetime_format")
+    }
+
     qcm_repr = repr(quantity_col_map)
     dsc_repr = repr(days_supply_col_map)
     rfc_repr = repr(refills_col_map)
@@ -4346,6 +4357,9 @@ def _generate_stem_table_script(project) -> str:
     src_repr = repr(stop_reason_col_map)
     rfx_repr = repr(route_fixed_map)
     tfx_repr = repr(type_fixed_map)
+    sdc_repr = repr(start_dt_col_map)
+    edc_repr = repr(end_dt_col_map)
+    dtf_repr = repr(datetime_format_map)
 
     # Inner per-row processing body — indented 8 spaces (inside the per-file for-loop).
     inner_rows = (
@@ -4404,7 +4418,10 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "                        start_date = None\n"
         "                        start_datetime = None\n"
-        "                        if date_col:\n"
+        "                        # Drug Exposure (domain_id 3) never inherits its start date from the\n"
+        "                        # visit's own date column — only from Start/End datetime below (or it\n"
+        "                        # stays unset). Every other domain keeps the existing visit-derived date.\n"
+        "                        if date_col and domain_map.get(variable.lower()) != 3:\n"
         "                            _raw_date = row.get(date_col)\n"
         "                            _date_str = str(_raw_date).strip() if pd.notnull(_raw_date) else ''\n"
         "                            if not _date_str or _date_str == 'nan':\n"
@@ -4412,6 +4429,36 @@ def _generate_stem_table_script(project) -> str:
         "                            _dt = datetime.strptime(_date_str, date_fmt)\n"
         "                            start_date = _dt.date()\n"
         "                            start_datetime = _dt\n"
+        "\n"
+        "                        # Start/End datetime (Drug Exposure): sibling columns override the\n"
+        "                        # visit-derived start date and fill the otherwise-empty end date.\n"
+        "                        _dt_fmt = DATETIME_FORMAT_MAP.get(variable.lower()) or '%Y-%m-%d'\n"
+        "                        _start_dt_col = START_DATETIME_COL_MAP.get(variable.lower())\n"
+        "                        if _start_dt_col:\n"
+        "                            _raw_start_dt = row.get(_start_dt_col)\n"
+        "                            if pd.notnull(_raw_start_dt) and str(_raw_start_dt).strip() not in ('', 'nan'):\n"
+        "                                try:\n"
+        "                                    _parsed_start = datetime.strptime(str(_raw_start_dt).strip(), _dt_fmt)\n"
+        "                                    start_date = _parsed_start.date()\n"
+        "                                    start_datetime = _parsed_start\n"
+        "                                except ValueError:\n"
+        "                                    print(f'WARNING: variable {variable!r} — start datetime {_raw_start_dt!r} does not match format {_dt_fmt!r}; keeping visit-derived date')\n"
+        "                            else:\n"
+        "                                print(f'WARNING: variable {variable!r} — start datetime column {_start_dt_col!r} is empty for this row; keeping visit-derived date')\n"
+        "                        end_date = None\n"
+        "                        end_datetime = None\n"
+        "                        _end_dt_col = END_DATETIME_COL_MAP.get(variable.lower())\n"
+        "                        if _end_dt_col:\n"
+        "                            _raw_end_dt = row.get(_end_dt_col)\n"
+        "                            if pd.notnull(_raw_end_dt) and str(_raw_end_dt).strip() not in ('', 'nan'):\n"
+        "                                try:\n"
+        "                                    _parsed_end = datetime.strptime(str(_raw_end_dt).strip(), _dt_fmt)\n"
+        "                                    end_date = _parsed_end.date()\n"
+        "                                    end_datetime = _parsed_end\n"
+        "                                except ValueError:\n"
+        "                                    print(f'WARNING: variable {variable!r} — end datetime {_raw_end_dt!r} does not match format {_dt_fmt!r}')\n"
+        "                            else:\n"
+        "                                print(f'WARNING: variable {variable!r} — end datetime column {_end_dt_col!r} is empty for this row; end date left unset')\n"
         "\n"
         "                        label_norm = visit_label.lower().replace(' ', '_')\n"
         "                        visit_record_source_value = f'{person_source_value}-{label_norm}'\n"
@@ -4514,8 +4561,8 @@ def _generate_stem_table_script(project) -> str:
         "                            'concept_id': concept_id if concept_id else 0,\n"
         "                            'start_date': start_date,\n"
         "                            'start_datetime': start_datetime,\n"
-        "                            'end_date': None,\n"
-        "                            'end_datetime': None,\n"
+        "                            'end_date': end_date,\n"
+        "                            'end_datetime': end_datetime,\n"
         "                            'type_concept_id': type_concept_id,\n"
         "                            'operator_concept_id': operator_concept_id,\n"
         "                            'value_as_number': value_as_number,\n"
@@ -4617,6 +4664,9 @@ def _generate_stem_table_script(project) -> str:
         "# mapping/lookup for that field has nothing configured.\n"
         f"ROUTE_FIXED_MAP = {rfx_repr}\n"
         f"TYPE_FIXED_MAP = {tfx_repr}\n"
+        f"START_DATETIME_COL_MAP = {sdc_repr}\n"
+        f"END_DATETIME_COL_MAP = {edc_repr}\n"
+        f"DATETIME_FORMAT_MAP = {dtf_repr}\n"
         "\n"
         "visit_occurrence_id_lookup = None  # built lazily on first lookup call\n"
         "\n"
@@ -4898,14 +4948,21 @@ def _generate_domain_script(table: str) -> str:
         )
     elif table == "drug_exposure":
         row_lines = (
+            "            _start_date = _ss(row.get('start_date'))\n"
             "            _end_date = _ss(row.get('end_date'))\n"
+            "            if _start_date is None or _end_date is None:\n"
+            "                _missing = ', '.join(\n"
+            "                    n for n, v in (('start_date', _start_date), ('end_date', _end_date)) if v is None\n"
+            "                )\n"
+            "                print(f'WARNING: dropping drug_exposure row (person_id={person_id}) — missing {_missing}')\n"
+            "                continue\n"
             "            rows.append({\n"
             "                'drug_exposure_id': rec_id,\n"
             "                'person_id': person_id,\n"
             "                'drug_concept_id': _si(row.get('concept_id'), 0),\n"
-            "                'drug_exposure_start_date': _ss(row.get('start_date')),\n"
+            "                'drug_exposure_start_date': _start_date,\n"
             "                'drug_exposure_start_datetime': _ss(row.get('start_datetime')),\n"
-            "                'drug_exposure_end_date': _end_date or _ss(row.get('start_date')),\n"
+            "                'drug_exposure_end_date': _end_date,\n"
             "                'drug_exposure_end_datetime': _ss(row.get('end_datetime')),\n"
             "                'verbatim_end_date': _end_date,\n"
             "                'drug_type_concept_id': _si(row.get('type_concept_id'), 32879),\n"
