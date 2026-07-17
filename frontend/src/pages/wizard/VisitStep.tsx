@@ -85,6 +85,7 @@ const ATHENA = {
 }
 
 const INPATIENT_CONCEPT_IDS = new Set([9201, 262, 42898160])
+const VISIT_VALUES_PREVIEW_LIMIT = 8
 
 function AthenaLink({ href }: { href: string }) {
   return (
@@ -112,6 +113,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
   const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>(['column'])
   const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>(['column'])
+  const [visitValuesExpanded, setVisitValuesExpanded] = useState(false)
 
   const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
 
@@ -439,13 +441,53 @@ export default function VisitStep({ project, onUpdate }: Props) {
               </div>
             </div>
             {!cfg.auto_number_visits && (
-              <FieldMapper
-                label="Visit identifier column"
-                sourceColumns={availCols(cfg.visit_source_col ?? '')}
-                value={cfg.visit_source_col ?? ''}
-                onChange={v => setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))}
-                hint="Column whose values identify the visit type (e.g. 'baseline', 'followup')."
-              />
+              <div className="flex flex-col gap-3">
+                <FieldMapper
+                  label="Visit identifier column"
+                  sourceColumns={availCols(cfg.visit_source_col ?? '')}
+                  value={cfg.visit_source_col ?? ''}
+                  onChange={v => {
+                    setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))
+                    setVisitValuesExpanded(false)
+                  }}
+                  hint="Column whose values identify the visit type (e.g. 'baseline', 'followup')."
+                />
+                {cfg.visit_source_col && (() => {
+                  const vals = distinctVals(cfg.visit_source_col!)
+                  const hasMore = vals.length > VISIT_VALUES_PREVIEW_LIMIT
+                  const visible = visitValuesExpanded || !hasMore ? vals : vals.slice(0, VISIT_VALUES_PREVIEW_LIMIT)
+                  return (
+                    <div className="flex flex-col gap-1.5">
+                      <p className="text-xs text-muted-foreground">
+                        {vals.length} distinct value{vals.length === 1 ? '' : 's'} found in this column:
+                      </p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {visible.map(v => (
+                          <span key={v} className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-foreground">
+                            {v}
+                          </span>
+                        ))}
+                        {hasMore && !visitValuesExpanded && (
+                          <button
+                            onClick={() => setVisitValuesExpanded(true)}
+                            className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-primary hover:underline"
+                          >
+                            +{vals.length - VISIT_VALUES_PREVIEW_LIMIT} more
+                          </button>
+                        )}
+                      </div>
+                      {hasMore && visitValuesExpanded && (
+                        <button
+                          onClick={() => setVisitValuesExpanded(false)}
+                          className="self-start text-xs text-primary hover:underline"
+                        >
+                          Show less
+                        </button>
+                      )}
+                    </div>
+                  )
+                })()}
+              </div>
             )}
           </Card>
         )}
