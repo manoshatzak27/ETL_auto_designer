@@ -98,7 +98,14 @@ export default function WizardLayout({
 
       {/* Footer navigation */}
       <footer className="flex items-center justify-between border-t border-border bg-card/60 px-6 py-4">
-        <Button variant="outline" onClick={onBack} disabled={!onBack}>
+        <Button
+          variant="outline"
+          onClick={async () => {
+            await onBeforeStepChange?.()
+            onBack?.()
+          }}
+          disabled={!onBack}
+        >
           Back
         </Button>
         {onNext && (
