@@ -9,9 +9,10 @@ interface Props {
   onChange: (val: string) => void
   required?: boolean
   hint?: string
+  disabled?: boolean
 }
 
-export default function FieldMapper({ label, sourceColumns, value, onChange, required, hint }: Props) {
+export default function FieldMapper({ label, sourceColumns, value, onChange, required, hint, disabled }: Props) {
   useEffect(() => {
     if (value !== '' && !sourceColumns.includes(value)) {
       onChange('')
@@ -25,7 +26,7 @@ export default function FieldMapper({ label, sourceColumns, value, onChange, req
         {required && <span className="ml-1 text-destructive text-base font-bold leading-none">*</span>}
       </Label>
       {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
-      <Select value={sourceColumns.includes(value) ? value : ''} onChange={e => onChange(e.target.value)}>
+      <Select value={sourceColumns.includes(value) ? value : ''} onChange={e => onChange(e.target.value)} disabled={disabled}>
         <option value="">— not mapped —</option>
         {sourceColumns.map(col => (
           <option key={col} value={col}>{col}</option>

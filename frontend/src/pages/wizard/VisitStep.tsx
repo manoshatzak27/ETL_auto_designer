@@ -22,6 +22,11 @@ interface Props {
 
 interface ColumnInfo { distinct_values: string[] }
 
+const TIME_FORMAT_TOKENS = ['%H', '%I', '%M', '%S', '%f', '%p', '%X']
+function dateFormatHasTime(fmt: string): boolean {
+  return TIME_FORMAT_TOKENS.some(tok => fmt.includes(tok))
+}
+
 const DEFAULT_VISIT: VisitDefinition = {
   label: '',
   date_col: '',
@@ -494,6 +499,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
 
         <div className="flex flex-col gap-6">
           {cfg.visit_definitions.map((vd, i) => {
+            const dateHasTime = dateFormatHasTime(vd.date_format ?? '%Y-%m-%d')
             return (
               <div key={i} className="flex flex-col gap-4 rounded-lg border border-border bg-secondary/70 p-4">
                 {/* Visit header */}
@@ -542,6 +548,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       sourceColumns={availCols(vd.time_col ?? '')}
                       value={vd.time_col ?? ''}
                       onChange={v => updateVisit(i, 'time_col', v || undefined)}
+                      disabled={dateHasTime}
+                      hint={dateHasTime ? 'Start date already includes a time — this field is ignored.' : undefined}
                     />
                     <FieldMapper
                       label="End date (optional)"
@@ -554,6 +562,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       sourceColumns={availCols(vd.end_time_col ?? '')}
                       value={vd.end_time_col ?? ''}
                       onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
+                      disabled={dateHasTime}
+                      hint={dateHasTime ? 'End date already includes a time — this field is ignored.' : undefined}
                     />
                   </div>
 
@@ -576,6 +586,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         onChange={e => updateVisit(i, 'time_format', e.target.value || '%H:%M:%S')}
                         placeholder="%H:%M:%S"
                         className="mt-1 font-mono"
+                        disabled={dateHasTime}
                       />
                     </div>
                   </div>
@@ -583,6 +594,11 @@ export default function VisitStep({ project, onUpdate }: Props) {
                   <p className="text-xs text-muted-foreground -mt-1">
                     Python strptime formats. End date blank → same as start date. Missing time → midnight (00:00:00).
                     Examples: <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>, <code className="bg-muted px-1 rounded">%H:%M</code>.
+                    {dateHasTime && (
+                      <>
+                        {' '}The date format includes a time component, so start/end time will be parsed directly from the date field(s).
+                      </>
+                    )}
                   </p>
                 </Card>
 
