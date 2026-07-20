@@ -30,7 +30,14 @@ function ConceptCell({
   const [commitError, setCommitError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!conceptId || conceptId < 1) {
+    if (conceptId === undefined || conceptId < 0) {
+      setDomain(null)
+      setFailed(false)
+      setNotFound(false)
+      return
+    }
+    if (conceptId === 0) {
+      // 0 is the OMOP "no matching concept" sentinel, not a real vocabulary entry.
       setDomain(null)
       setFailed(false)
       setNotFound(false)
@@ -53,9 +60,9 @@ function ConceptCell({
 
   const commit = async () => {
     const id = parseInt(pending)
-    if (isNaN(id) || id < 1) return
+    if (isNaN(id) || id < 0) return
     setCommitError(null)
-    if (!expectedDomain) {
+    if (!expectedDomain || id === 0) {
       onChange(id)
       setPending('')
       return
@@ -80,16 +87,24 @@ function ConceptCell({
     }
   }
 
-  if (conceptId && conceptId > 0) {
+  if (conceptId !== undefined && conceptId >= 0) {
     const invalid = mismatch || notFound
+    const isZero = conceptId === 0
+    const boxClasses = isZero
+      ? 'bg-muted border-border text-muted-foreground'
+      : invalid
+        ? 'bg-amber-50 border-amber-200 text-amber-800'
+        : 'bg-green-50 border-green-200 text-green-800'
     return (
       <div className="flex flex-col gap-1">
         <div className="flex items-center gap-1.5">
-          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs flex-1 min-w-0 ${invalid ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+          <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs flex-1 min-w-0 ${boxClasses}`}>
             {invalid ? <AlertTriangle className="w-3 h-3 flex-shrink-0" /> : <CheckCircle className="w-3 h-3 flex-shrink-0" />}
             <span className="font-semibold font-mono">{conceptId}</span>
             {lookingUp ? (
               <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 ml-1 text-green-600" />
+            ) : isZero ? (
+              <span className="ml-1 text-[10px] px-1 rounded bg-muted-foreground/10 text-muted-foreground">Not mapped</span>
             ) : domain ? (
               <span className={`ml-1 text-[10px] px-1 rounded ${mismatch ? 'text-amber-700 bg-amber-100' : 'text-indigo-700 bg-indigo-100'}`}>{domain}</span>
             ) : failed ? (
@@ -143,7 +158,7 @@ function ConceptCell({
 export default function ValueConceptMapper({ label, sourceValues, mapping, onChange, hint, expectedDomain }: Props) {
   const handleChange = (val: string, conceptId: number | undefined) => {
     const next = { ...mapping }
-    if (conceptId !== undefined && conceptId > 0) {
+    if (conceptId !== undefined && conceptId >= 0) {
       next[val] = conceptId
     } else {
       delete next[val]
