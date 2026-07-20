@@ -5,6 +5,7 @@ import zipfile
 from pathlib import Path
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -257,6 +258,15 @@ def _find_source_file_entry(project: Project, filename: str) -> dict:
     if not Path(entry["path"]).exists():
         raise HTTPException(status_code=404, detail="Source file missing from disk")
     return entry
+
+
+@router.get("/{project_id}/source-files/{filename}/download")
+def download_source_file(project_id: str, filename: str, db: Session = Depends(get_db)):
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    entry = _find_source_file_entry(project, filename)
+    return FileResponse(entry["path"], filename=entry["filename"], media_type="text/csv")
 
 
 class SourceFileContentResponse(BaseModel):

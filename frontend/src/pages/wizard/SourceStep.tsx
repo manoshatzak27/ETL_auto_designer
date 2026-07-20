@@ -1,10 +1,10 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { uploadSources, deleteSourceFile, updateTableConfig, type UploadConflict } from '../../api/client'
+import { uploadSources, deleteSourceFile, downloadSourceFile, updateTableConfig, type UploadConflict } from '../../api/client'
 import type { Project, SourceFile } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
-import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3, Trash2, Table2 } from 'lucide-react'
+import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3, Trash2, Table2, Download } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import VocabLoaderCard from '../../components/VocabLoaderCard'
@@ -231,6 +231,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
                 deleting={deletingIndex === idx}
                 onDelete={handleDelete}
                 onView={handleView}
+                onDownload={file => downloadSourceFile(project.id, file.filename)}
               />
             ))}
           </div>
@@ -421,9 +422,10 @@ interface SourceFileCardProps {
   deleting: boolean
   onDelete: (index: number) => void
   onView: (file: SourceFile) => void
+  onDownload: (file: SourceFile) => void
 }
 
-function SourceFileCard({ file, index, deleting, onDelete, onView }: SourceFileCardProps) {
+function SourceFileCard({ file, index, deleting, onDelete, onView, onDownload }: SourceFileCardProps) {
   const [columnsExpanded, setColumnsExpanded] = useState(false)
   const hasMoreColumns = file.columns.length > COLUMN_PREVIEW_LIMIT
   const visibleColumns = columnsExpanded || !hasMoreColumns ? file.columns : file.columns.slice(0, COLUMN_PREVIEW_LIMIT)
@@ -439,6 +441,13 @@ function SourceFileCard({ file, index, deleting, onDelete, onView }: SourceFileC
           title="View / edit data"
         >
           <Table2 className="size-3.5" />
+        </button>
+        <button
+          onClick={() => onDownload(file)}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          title="Download file"
+        >
+          <Download className="size-3.5" />
         </button>
         <button
           onClick={() => onDelete(index)}

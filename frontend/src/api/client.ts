@@ -37,6 +37,10 @@ export const uploadSources = (projectId: string, files: File[]) => {
 export const deleteSourceFile = (projectId: string, index: number) =>
   api.delete(`/projects/${projectId}/source-files/${index}`).then(r => r.data)
 
+export const downloadSourceFile = (projectId: string, filename: string) => {
+  window.open(`/api/projects/${projectId}/source-files/${encodeURIComponent(filename)}/download`, '_blank')
+}
+
 export const uploadMappingCsv = (projectId: string, mappingType: string, file: File) => {
   const fd = new FormData()
   fd.append('file', file)
