@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+import pandas as pd
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectResponse, UploadSourcesResponse
@@ -123,6 +124,131 @@ def _find_decision_conflicts(concept_decisions: dict, removed_columns: set[str])
     return conflicts
 
 
+def _snapshot_column_values(entry: dict, columns: set[str]) -> dict[str, set[str]]:
+    """Read the distinct values present in `columns` for a source file entry.
+    Used to detect values that appear for the first time when a file is
+    replaced by a newer version, so previously-made per-value concept
+    mappings can be flagged as incomplete instead of silently leaving the
+    new values unmapped in the generated ETL."""
+    path = Path(entry.get("path", ""))
+    if not columns or not path.exists():
+        return {}
+    try:
+        df = pd.read_csv(
+            path,
+            sep=entry.get("delimiter", ","),
+            encoding=entry.get("encoding", "utf-8"),
+            dtype=str,
+            on_bad_lines="skip",
+            usecols=lambda c: c in columns,
+        )
+    except Exception:
+        return {}
+    return {col: set(df[col].dropna().unique().tolist()) for col in df.columns}
+
+
+# Table configs (etl_config, keyed by OMOP table) are untyped JSON on the
+# backend — each wizard step (Person, Provider, Care Site, Location, Visit)
+# defines its own per-value concept maps (e.g. gender_concept_id.value_map,
+# gender_concept_value_map, place_of_service_value_map, country_concept_id_map,
+# visit_concept_value_map) with an inconsistent field-naming convention. Rather
+# than hardcoding every table's shape, these two helpers find them generically
+# by pairing a dict-of-numbers field with a same-named (ignoring boilerplate
+# tokens like "source"/"col"/"map") sibling string field holding the source
+# column it depends on.
+_CONFIG_FIELD_FILLER_TOKENS = {"source", "value", "col", "column", "map", "concept", "id", "of"}
+
+
+def _significant_tokens(key: str) -> tuple[str, ...]:
+    return tuple(t for t in key.lower().split("_") if t and t not in _CONFIG_FIELD_FILLER_TOKENS)
+
+
+def _find_config_value_maps(node: Any) -> list[tuple[str, dict]]:
+    """Recursively scan a table-config subtree for (source_column, value_map)
+    pairs, e.g. `{"source_col": "gender", "value_map": {"M": 8507, ...}}` or
+    `{"gender_source_value_col": "gender", "gender_concept_value_map": {...}}`."""
+    found: list[tuple[str, dict]] = []
+    if isinstance(node, dict):
+        map_fields = {
+            k: v for k, v in node.items()
+            if isinstance(v, dict) and v and all(isinstance(vv, (int, float)) and not isinstance(vv, bool) for vv in v.values())
+        }
+        col_fields = {
+            k: v for k, v in node.items()
+            if isinstance(v, str) and v and ("col" in k.lower() or "column" in k.lower())
+        }
+        for map_key, value_map in map_fields.items():
+            map_tokens = _significant_tokens(map_key)
+            for col_key, col_val in col_fields.items():
+                if _significant_tokens(col_key) == map_tokens:
+                    found.append((col_val, value_map))
+                    break
+        for v in node.values():
+            found.extend(_find_config_value_maps(v))
+    elif isinstance(node, list):
+        for item in node:
+            found.extend(_find_config_value_maps(item))
+    return found
+
+
+def _iter_file_scoped_configs(etl_config: dict, filename: str):
+    """Yield table-config subtrees scoped to one source file. Person/Provider/
+    Care Site/Location key `file_configs` by filename directly; Visit uses a
+    list of per-file entries carrying a `source_filename` field."""
+    for table_cfg in (etl_config or {}).values():
+        if not isinstance(table_cfg, dict):
+            continue
+        file_configs = table_cfg.get("file_configs")
+        if isinstance(file_configs, dict):
+            entry = file_configs.get(filename)
+            if isinstance(entry, dict):
+                yield entry
+        elif isinstance(file_configs, list):
+            for entry in file_configs:
+                if isinstance(entry, dict) and entry.get("source_filename") == filename:
+                    yield entry
+
+
+def _value_mapped_columns_for_file(etl_config: dict, filename: str) -> set[str]:
+    """Source columns that already have a per-value concept map configured
+    (non-empty) for a specific file, across all OMOP table configs."""
+    cols: set[str] = set()
+    for scoped_cfg in _iter_file_scoped_configs(etl_config, filename):
+        for source_col, value_map in _find_config_value_maps(scoped_cfg):
+            if source_col and value_map:
+                cols.add(source_col)
+    return cols
+
+
+def _find_new_value_conflicts(
+    old_value_snapshots: dict[str, dict[str, set[str]]],
+    new_entries: dict[str, dict],
+) -> list[dict]:
+    """Diff pre-replacement value snapshots (captured before the new file
+    overwrote the old one on disk, see `_snapshot_column_values`) against the
+    new file's values for the same columns. Values present only in the new
+    file haven't been mapped yet — flag them the same way removed columns
+    are flagged, so the user notices instead of the new values silently
+    falling through unmapped in the generated ETL."""
+    conflicts: list[dict] = []
+    for filename, old_values in old_value_snapshots.items():
+        new_entry = new_entries.get(filename)
+        if not new_entry or not old_values:
+            continue
+        new_values = _snapshot_column_values(new_entry, set(old_values.keys()))
+        for col, old_vals in old_values.items():
+            added = sorted(new_values.get(col, set()) - old_vals)
+            if not added:
+                continue
+            preview = ", ".join(repr(v) for v in added[:5])
+            suffix = f" and {len(added) - 5} more" if len(added) > 5 else ""
+            conflicts.append({
+                "column": col,
+                "reason": f"the updated file has {len(added)} new value(s) not yet mapped: {preview}{suffix}",
+            })
+    return conflicts
+
+
 def _sync_legacy_fields(project: Project, source_files: list[dict]) -> None:
     """Keep the old single-file columns in sync with the first entry in source_files."""
     if source_files:
@@ -156,6 +282,36 @@ async def upload_sources(
     project_upload_dir = settings.get_upload_path() / project_id
     project_upload_dir.mkdir(parents=True, exist_ok=True)
 
+    # Columns with an existing per-value mapping — either a Concepts-step
+    # decision (global, keyed by column name) or a per-value concept map in
+    # one of the OMOP-table configs (Person gender/race/ethnicity, Provider
+    # gender/specialty, Care Site place-of-service, Location country, Visit
+    # visit-type — file-scoped). When a file supplying one of these columns
+    # gets replaced, we snapshot its distinct values *before* the new bytes
+    # are written to disk (the old content is gone once overwritten) so we
+    # can later detect values that only exist in the new file — see
+    # `_find_new_value_conflicts`.
+    concept_decision_columns = {
+        col
+        for col, decision in (project.concept_decisions or {}).items()
+        if isinstance(decision, dict)
+        and decision.get("strategy") in ("map_values", "map_both")
+        and decision.get("value_concepts")
+    }
+    existing_before: dict[str, dict] = {f["filename"]: f for f in (project.source_files or [])}
+    old_value_snapshots: dict[str, dict[str, set[str]]] = {}
+
+    def _snapshot_if_value_mapped(filename: str) -> None:
+        if filename in old_value_snapshots:
+            return
+        old_entry = existing_before.get(filename)
+        if not old_entry:
+            return
+        cols = concept_decision_columns | _value_mapped_columns_for_file(project.etl_config or {}, filename)
+        cols &= set(old_entry.get("columns") or [])
+        if cols:
+            old_value_snapshots[filename] = _snapshot_column_values(old_entry, cols)
+
     # Collect raw paths to process (extracts from ZIP when needed)
     raw_paths: list[Path] = []
     for upload in files:
@@ -167,10 +323,12 @@ async def upload_sources(
                 for member in zf.namelist():
                     member_path = Path(member)
                     if member_path.suffix.lower() in _SOURCE_EXTENSIONS and not member_path.name.startswith("__"):
+                        _snapshot_if_value_mapped(member_path.name)
                         dest = project_upload_dir / member_path.name
                         dest.write_bytes(zf.read(member))
                         raw_paths.append(dest)
         elif Path(safe_name).suffix.lower() in _SOURCE_EXTENSIONS:
+            _snapshot_if_value_mapped(safe_name)
             dest = project_upload_dir / safe_name
             dest.write_bytes(contents)
             raw_paths.append(dest)
@@ -216,6 +374,7 @@ async def upload_sources(
         new_cols = set(existing[filename].get("columns") or [])
         removed_columns |= (old_cols - new_cols)
     conflicts = _find_decision_conflicts(project.concept_decisions or {}, removed_columns)
+    conflicts += _find_new_value_conflicts(old_value_snapshots, existing)
 
     db.commit()
     db.refresh(project)

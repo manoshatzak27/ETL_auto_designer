@@ -137,8 +137,8 @@ export default function LocationStep({ project, onUpdate }: Props) {
     const cm = fc.country_mode ?? (fc.country_col ? 'column' : 'default')
     setCountryMode(cm)
     if (cm === 'column' && fc.country_col) {
-      const keys = Object.keys(fc.country_concept_id_map ?? {})
-      setCountryValues(keys.length > 0 ? keys : (infos[fc.country_col]?.distinct_values ?? []))
+      const fresh = infos[fc.country_col]?.distinct_values ?? []
+      setCountryValues(fresh.length > 0 ? fresh : Object.keys(fc.country_concept_id_map ?? {}))
     } else {
       setCountryValues([])
     }
@@ -146,8 +146,8 @@ export default function LocationStep({ project, onUpdate }: Props) {
     const csm = fc.cs_country_mode ?? (fc.cs_country_col ? 'column' : 'default')
     setCsCountryMode(csm)
     if (csm === 'column' && fc.cs_country_col) {
-      const keys = Object.keys(fc.cs_country_concept_id_map ?? {})
-      setCsCountryValues(keys.length > 0 ? keys : (infos[fc.cs_country_col]?.distinct_values ?? []))
+      const fresh = infos[fc.cs_country_col]?.distinct_values ?? []
+      setCsCountryValues(fresh.length > 0 ? fresh : Object.keys(fc.cs_country_concept_id_map ?? {}))
     } else {
       setCsCountryValues([])
     }
@@ -261,12 +261,12 @@ export default function LocationStep({ project, onUpdate }: Props) {
         if (activeFilenameRef.current !== newFilename) return
         setColumnInfos(infos)
         if (countryMode === 'column' && newCfg.country_col) {
-          const keys = Object.keys(newCfg.country_concept_id_map ?? {})
-          setCountryValues(keys.length > 0 ? keys : (infos[newCfg.country_col]?.distinct_values ?? []))
+          const fresh = infos[newCfg.country_col]?.distinct_values ?? []
+          setCountryValues(fresh.length > 0 ? fresh : Object.keys(newCfg.country_concept_id_map ?? {}))
         }
         if (csCountryMode === 'column' && newCfg.cs_country_col) {
-          const keys = Object.keys(newCfg.cs_country_concept_id_map ?? {})
-          setCsCountryValues(keys.length > 0 ? keys : (infos[newCfg.cs_country_col]?.distinct_values ?? []))
+          const fresh = infos[newCfg.cs_country_col]?.distinct_values ?? []
+          setCsCountryValues(fresh.length > 0 ? fresh : Object.keys(newCfg.cs_country_concept_id_map ?? {}))
         }
       }).catch(() => {})
     }

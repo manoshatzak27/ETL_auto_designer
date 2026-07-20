@@ -110,8 +110,8 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const applyFileConfig = (fc: PersonFileConfig, infos: Record<string, ColumnInfo>) => {
     const m = fc.mappings
     const getVals = (col: string, map: Record<string, number>) => {
-      const keys = Object.keys(map ?? {})
-      return keys.length > 0 ? keys : (infos[col]?.distinct_values ?? [])
+      const fresh = infos[col]?.distinct_values ?? []
+      return fresh.length > 0 ? fresh : Object.keys(map ?? {})
     }
 
     setActiveCfg(deepCopy(fc))
@@ -240,8 +240,8 @@ export default function PersonStep({ project, onUpdate }: Props) {
         // Refresh only the value lists (avoid overwriting user edits to the config)
         const m = newCfg.mappings
         const getVals = (col: string, map: Record<string, number>) => {
-          const keys = Object.keys(map ?? {})
-          return keys.length > 0 ? keys : (infos[col]?.distinct_values ?? [])
+          const fresh = infos[col]?.distinct_values ?? []
+          return fresh.length > 0 ? fresh : Object.keys(map ?? {})
         }
         if (genderMode === 'column' && m.gender_concept_id?.source_col)
           setGenderValues(getVals(m.gender_concept_id.source_col, m.gender_concept_id.value_map))

@@ -73,8 +73,8 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   const applyFileConfig = (fc: CareSiteFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
     if (fc.place_of_service_col) {
-      const keys = Object.keys(fc.place_of_service_value_map ?? {})
-      setPosValues(keys.length > 0 ? keys : (infos[fc.place_of_service_col]?.distinct_values ?? []))
+      const fresh = infos[fc.place_of_service_col]?.distinct_values ?? []
+      setPosValues(fresh.length > 0 ? fresh : Object.keys(fc.place_of_service_value_map ?? {}))
     } else {
       setPosValues([])
     }
@@ -163,8 +163,8 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
         if (activeFilenameRef.current !== newFilename) return
         setColumnInfos(infos)
         if (newCfg.place_of_service_col) {
-          const keys = Object.keys(newCfg.place_of_service_value_map ?? {})
-          setPosValues(keys.length > 0 ? keys : (infos[newCfg.place_of_service_col]?.distinct_values ?? []))
+          const fresh = infos[newCfg.place_of_service_col]?.distinct_values ?? []
+          setPosValues(fresh.length > 0 ? fresh : Object.keys(newCfg.place_of_service_value_map ?? {}))
         }
       }).catch(() => {})
     }
