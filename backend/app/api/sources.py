@@ -4,7 +4,7 @@ import shutil
 import zipfile
 from pathlib import Path
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -249,6 +249,37 @@ def _find_new_value_conflicts(
     return conflicts
 
 
+def _discard_file_mappings(project: Project, filename: str, old_columns: set[str]) -> None:
+    """Forget every mapping choice tied to one source file — used when the user
+    re-uploads an updated version of a file and chooses to discard prior
+    mapping choices instead of keeping them for review (see `_find_decision_conflicts`
+    / `_find_new_value_conflicts`, which is the "keep" path)."""
+    if project.concept_decisions:
+        decisions = dict(project.concept_decisions)
+        for col in old_columns:
+            decisions.pop(col, None)
+        project.concept_decisions = decisions
+
+    if project.etl_config:
+        etl_config = dict(project.etl_config)
+        for table_key, table_cfg in list(etl_config.items()):
+            if not isinstance(table_cfg, dict):
+                continue
+            file_configs = table_cfg.get("file_configs")
+            if isinstance(file_configs, dict) and filename in file_configs:
+                file_configs = dict(file_configs)
+                file_configs.pop(filename, None)
+                etl_config[table_key] = {**table_cfg, "file_configs": file_configs}
+            elif isinstance(file_configs, list):
+                filtered = [
+                    e for e in file_configs
+                    if not (isinstance(e, dict) and e.get("source_filename") == filename)
+                ]
+                if len(filtered) != len(file_configs):
+                    etl_config[table_key] = {**table_cfg, "file_configs": filtered}
+        project.etl_config = etl_config
+
+
 def _sync_legacy_fields(project: Project, source_files: list[dict]) -> None:
     """Keep the old single-file columns in sync with the first entry in source_files."""
     if source_files:
@@ -272,9 +303,17 @@ def _sync_legacy_fields(project: Project, source_files: list[dict]) -> None:
 async def upload_sources(
     project_id: str,
     files: List[UploadFile] = File(...),
+    keep_mappings: bool = Form(True),
     db: Session = Depends(get_db),
 ):
-    """Accept one or more CSV/TSV files, OR a single ZIP containing CSV/TSV files."""
+    """Accept one or more CSV/TSV files, OR a single ZIP containing CSV/TSV files.
+
+    `keep_mappings` applies when a file being uploaded replaces one already on
+    the project (same filename): True (default) preserves existing mapping
+    choices and flags conflicts for review; False discards every mapping
+    choice tied to the replaced file(s) instead. The frontend asks the user
+    which they want before calling this endpoint when it detects a filename
+    collision."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
@@ -302,7 +341,7 @@ async def upload_sources(
     old_value_snapshots: dict[str, dict[str, set[str]]] = {}
 
     def _snapshot_if_value_mapped(filename: str) -> None:
-        if filename in old_value_snapshots:
+        if not keep_mappings or filename in old_value_snapshots:
             return
         old_entry = existing_before.get(filename)
         if not old_entry:
@@ -368,13 +407,18 @@ async def upload_sources(
     if not had_existing_files:
         _reset_project_state(project)
 
-    removed_columns: set[str] = set()
-    for filename, old_entry in replaced_old_entries.items():
-        old_cols = set(old_entry.get("columns") or [])
-        new_cols = set(existing[filename].get("columns") or [])
-        removed_columns |= (old_cols - new_cols)
-    conflicts = _find_decision_conflicts(project.concept_decisions or {}, removed_columns)
-    conflicts += _find_new_value_conflicts(old_value_snapshots, existing)
+    if keep_mappings:
+        removed_columns: set[str] = set()
+        for filename, old_entry in replaced_old_entries.items():
+            old_cols = set(old_entry.get("columns") or [])
+            new_cols = set(existing[filename].get("columns") or [])
+            removed_columns |= (old_cols - new_cols)
+        conflicts = _find_decision_conflicts(project.concept_decisions or {}, removed_columns)
+        conflicts += _find_new_value_conflicts(old_value_snapshots, existing)
+    else:
+        for filename, old_entry in replaced_old_entries.items():
+            _discard_file_mappings(project, filename, set(old_entry.get("columns") or []))
+        conflicts = []
 
     db.commit()
     db.refresh(project)

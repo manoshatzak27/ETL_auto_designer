@@ -64,19 +64,20 @@ export default function SourceStep({ project, onUpdate }: Props) {
   const [deletingIndex, setDeletingIndex] = useState<number | null>(null)
   const [openFile, setOpenFile] = useState<{ file: SourceFile; preview: boolean } | null>(null)
   const [pendingEditFile, setPendingEditFile] = useState<SourceFile | null>(null)
+  const [pendingReplace, setPendingReplace] = useState<{ files: File[]; names: string[] } | null>(null)
 
   const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
 
   const sourceFiles: SourceFile[] = project.source_files ?? []
   const hasSource = sourceFiles.length > 0
 
-  const handleFiles = useCallback(async (files: File[]) => {
+  const doUpload = useCallback(async (files: File[], keepMappings: boolean) => {
     if (!files.length) return
     setUploading(true)
     setError('')
     setConflicts([])
     try {
-      const { project: updated, conflicts: newConflicts } = await uploadSources(project.id, files)
+      const { project: updated, conflicts: newConflicts } = await uploadSources(project.id, files, keepMappings)
       onUpdate(updated)
       setConflicts(newConflicts)
     } catch {
@@ -85,6 +86,19 @@ export default function SourceStep({ project, onUpdate }: Props) {
       setUploading(false)
     }
   }, [project.id, onUpdate])
+
+  const handleFiles = useCallback((files: File[]) => {
+    if (!files.length) return
+    const existingNames = new Set(sourceFiles.map(sf => sf.filename))
+    // ZIP contents aren't known until the backend extracts them, so only
+    // named CSV/TSV files can be checked for a same-filename update here.
+    const collidingNames = files.filter(f => existingNames.has(f.name)).map(f => f.name)
+    if (collidingNames.length > 0) {
+      setPendingReplace({ files, names: collidingNames })
+      return
+    }
+    doUpload(files, true)
+  }, [sourceFiles, doUpload])
 
   const onDrop = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -362,6 +376,41 @@ export default function SourceStep({ project, onUpdate }: Props) {
           <VocabLoaderCard />
         </div>
       </div>
+
+      {/* Updated-file detected: ask whether to keep or discard existing mapping choices */}
+      <Dialog open={!!pendingReplace} onOpenChange={open => { if (!open) setPendingReplace(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Updated file{pendingReplace && pendingReplace.names.length > 1 ? 's' : ''} detected</DialogTitle>
+            <DialogDescription>
+              {pendingReplace?.names.length === 1
+                ? <>You're uploading a new version of <span className="font-mono">{pendingReplace.names[0]}</span>.</>
+                : <>You're uploading new versions of {pendingReplace?.names.length} files: <span className="font-mono">{pendingReplace?.names.join(', ')}</span>.</>}
+              {' '}Keep the mapping choices already made for the previous version, or discard them and start fresh for this file.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              onClick={() => setPendingReplace(null)}
+              className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => { if (pendingReplace) doUpload(pendingReplace.files, false); setPendingReplace(null) }}
+              className="px-3 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-secondary"
+            >
+              Discard current mapping choices
+            </button>
+            <button
+              onClick={() => { if (pendingReplace) doUpload(pendingReplace.files, true); setPendingReplace(null) }}
+              className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            >
+              Keep current mapping choices
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Large-file warning before opening the grid editor */}
       <Dialog open={!!pendingEditFile} onOpenChange={open => { if (!open) setPendingEditFile(null) }}>

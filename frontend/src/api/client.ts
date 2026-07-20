@@ -28,9 +28,10 @@ export interface UploadSourcesResult {
   conflicts: UploadConflict[]
 }
 
-export const uploadSources = (projectId: string, files: File[]) => {
+export const uploadSources = (projectId: string, files: File[], keepMappings = true) => {
   const fd = new FormData()
   for (const f of files) fd.append('files', f)
+  fd.append('keep_mappings', String(keepMappings))
   return api.post<UploadSourcesResult>(`/projects/${projectId}/upload-sources`, fd).then(r => r.data)
 }
 
