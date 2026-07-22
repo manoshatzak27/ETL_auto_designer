@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext, memo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   getColumnValues,
@@ -129,6 +129,23 @@ interface VariableDecision {
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
+
+// Stable reference so an untouched column's fallback decision doesn't defeat
+// VariableRow's memoization by being recreated on every render.
+const DEFAULT_DECISION: VariableDecision = { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
+
+// map_values has no row-level domain picker (domain is detected per value), so a
+// column mapped that way never sets decision.domain_id itself — fall back to
+// checking whether any mapped value resolved to the domain in question. Mirrors
+// the isDrugExposure/isProcedureOccurrence/etc. checks inside VariableRow.
+function decisionMatchesDomain(d: VariableDecision | undefined, domainId: number): boolean {
+  if (!d) return false
+  if (d.domain_id === domainId) return true
+  if (d.strategy === 'map_values' || d.strategy === 'map_both') {
+    return Object.values(d.value_concepts).some(vc => vc.domain_id === domainId)
+  }
+  return false
+}
 
 const DOMAIN_OPTIONS = [
   { label: 'Measurement',          value: 1 },
@@ -2537,7 +2554,7 @@ function ExtraInstructionsInput({
 
 // ── Single variable expandable row ─────────────────────────────────────────
 
-function VariableRow({
+const VariableRow = memo(function VariableRow({
   column,
   info,
   decision,
@@ -3056,7 +3073,8 @@ function VariableRow({
       )}
     </div>
   )
-}
+})
+VariableRow.displayName = 'VariableRow'
 
 // ── Batch panel ────────────────────────────────────────────────────────────
 
@@ -3220,6 +3238,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   // Filter
   const [filter, setFilter] = useState<'all' | 'mapped' | 'skipped'>('all')
+  const [domainFilter, setDomainFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
 
   // AI / custom-concept settings
@@ -3339,8 +3358,24 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     setDecisions(prev => ({ ...prev, ...updates }))
   }, [])
 
-  const toggleSelect = (col: string, checked: boolean) => {
+  const toggleSelect = useCallback((col: string, checked: boolean) => {
     setSelectedCols(prev => checked ? [...prev, col] : prev.filter(c => c !== col))
+  }, [])
+
+  // Stable per-column callbacks so VariableRow (wrapped in memo) doesn't re-render
+  // every row on every parent state change (e.g. toggling the status filter) — with
+  // large column counts, recreating these closures on every render was the whole list.
+  const onCheckCache = useRef<Map<string, (c: boolean) => void>>(new Map())
+  const onChangeCache = useRef<Map<string, (d: VariableDecision) => void>>(new Map())
+  const getOnCheck = (col: string) => {
+    let fn = onCheckCache.current.get(col)
+    if (!fn) { fn = (c: boolean) => toggleSelect(col, c); onCheckCache.current.set(col, fn) }
+    return fn
+  }
+  const getOnChange = (col: string) => {
+    let fn = onChangeCache.current.get(col)
+    if (!fn) { fn = (d: VariableDecision) => setDecision(col, d); onChangeCache.current.set(col, fn) }
+    return fn
   }
 
   const { prev: prevSlug, next: nextSlug } = getAdjacentSlugs(project, 'concepts')
@@ -3457,6 +3492,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // Filter + search
   const filteredCols = conceptCols.filter(col => {
     if (search && !col.toLowerCase().includes(search.toLowerCase())) return false
+    // A domain is only ever recorded on a mapped column (skipped/untouched columns
+    // carry no meaningful domain_id), so picking a domain implies "mapped" and
+    // overrides the all/mapped/skipped status filter.
+    if (domainFilter !== 'all') return isColumnMapped(col) && decisionMatchesDomain(decisions[col], domainFilter)
     if (filter === 'skipped') return !drugFieldClaims[col] && decisions[col]?.strategy === 'skip'
     if (filter === 'mapped') return isColumnMapped(col)
     return true
@@ -3650,11 +3689,23 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             {(['all', 'mapped', 'skipped'] as const).map(f => (
               <button
                 key={f}
-                onClick={() => setFilter(f)}
+                onClick={() => { setFilter(f); if (f !== 'mapped') setDomainFilter('all') }}
                 className={clsx('px-2.5 py-1.5 rounded-md text-xs font-medium capitalize', filter === f ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80')}
               >{f}</button>
             ))}
           </div>
+          {filter === 'mapped' && (
+            <select
+              value={domainFilter === 'all' ? 'all' : String(domainFilter)}
+              onChange={e => setDomainFilter(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+              className="border border-border rounded-md px-2.5 py-1.5 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-ring bg-background text-foreground"
+            >
+              <option value="all">All domains</option>
+              {DOMAIN_OPTIONS.map(d => (
+                <option key={d.value} value={d.value}>{d.label}</option>
+              ))}
+            </select>
+          )}
           <button
             onClick={() => { setBatchMode(b => !b); setSelectedCols([]) }}
             className={clsx('ml-auto flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border', batchMode ? 'bg-primary text-primary-foreground border-primary' : 'border-border text-muted-foreground hover:bg-muted')}
@@ -3699,11 +3750,11 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 key={col}
                 column={col}
                 info={columnInfos[col] ?? null}
-                decision={decisions[col] ?? { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }}
+                decision={decisions[col] ?? DEFAULT_DECISION}
                 projectId={project.id}
                 checked={selectedCols.includes(col)}
-                onCheck={c => toggleSelect(col, c)}
-                onChange={d => setDecision(col, d)}
+                onCheck={getOnCheck(col)}
+                onChange={getOnChange(col)}
                 batchMode={batchMode}
                 fileColumns={cols}
                 columnInfos={columnInfos}
