@@ -96,6 +96,8 @@ def _decision_is_meaningful(decision: Any) -> bool:
         return True
     if (decision.get("route_mapping") or {}).get("route_concepts"):
         return True
+    if (decision.get("modifier_mapping") or {}).get("modifier_concepts"):
+        return True
     return False
 
 
@@ -119,6 +121,9 @@ def _find_decision_conflicts(concept_decisions: dict, removed_columns: set[str])
         route_col = (decision.get("route_mapping") or {}).get("route_col")
         if route_col and route_col in removed_columns:
             reasons.append(f"its route column '{route_col}' no longer exists in the updated file")
+        modifier_col = (decision.get("modifier_mapping") or {}).get("modifier_col")
+        if modifier_col and modifier_col in removed_columns:
+            reasons.append(f"its modifier column '{modifier_col}' no longer exists in the updated file")
         if reasons:
             conflicts.append({"column": col, "reason": "; ".join(reasons)})
     return conflicts

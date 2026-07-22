@@ -82,6 +82,7 @@ def generate_mapping_csvs(
     custom_rows: list[dict] = []
     unit_rows: list[dict] = []
     route_rows: list[dict] = []
+    modifier_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
         strategy = decision.get("strategy", "skip")
@@ -142,6 +143,20 @@ def generate_mapping_csvs(
                         "route_concept_id": int(route_cid),
                     })
 
+        # --- modifier_mapping.csv  (procedure_occurrence modifier_source_value → modifier_concept_id) ---
+        modifier_mapping = decision.get("modifier_mapping") or {}
+        modifier_col: str | None = modifier_mapping.get("modifier_col")
+        modifier_concepts: dict = modifier_mapping.get("modifier_concepts") or {}
+        if modifier_col and modifier_concepts:
+            for modifier_val, modifier_cid in modifier_concepts.items():
+                if modifier_cid:
+                    modifier_rows.append({
+                        "variable_source_code": variable,
+                        "modifier_col": modifier_col,
+                        "modifier_source_value": modifier_val,
+                        "modifier_concept_id": int(modifier_cid),
+                    })
+
     files: dict[str, str] = {}
 
     if variable_rows:
@@ -181,6 +196,12 @@ def generate_mapping_csvs(
         p = str(output_path / "route_mapping.csv")
         df.to_csv(p, index=False, encoding="utf-8")
         files["route_mapping"] = p
+
+    if modifier_rows:
+        df = pd.DataFrame(modifier_rows).sort_values(["variable_source_code", "modifier_source_value"])
+        p = str(output_path / "modifier_mapping.csv")
+        df.to_csv(p, index=False, encoding="utf-8")
+        files["modifier_mapping"] = p
 
     return files
 

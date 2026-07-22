@@ -62,6 +62,13 @@ interface RouteMapping {
 
 const EMPTY_ROUTE_MAPPING: RouteMapping = { route_col: null, route_concepts: {} }
 
+interface ModifierMapping {
+  modifier_col: string | null
+  modifier_concepts: Record<string, number>  // modifier_source_value → modifier_concept_id
+}
+
+const EMPTY_MODIFIER_MAPPING: ModifierMapping = { modifier_col: null, modifier_concepts: {} }
+
 interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
@@ -86,6 +93,9 @@ interface VariableDecision {
   // in concepts) or a per-row lookup via a chosen column's distinct values (0 = explicitly
   // not mapped), toggled in the UI.
   route_mapping?: RouteMapping
+  // Procedure Occurrence (domain_id 4) only: modifier_concept_id / modifier_source_value,
+  // same fixed-or-per-column convention as Unit/Route above.
+  modifier_mapping?: ModifierMapping
   // Fixed only — drug_type_concept_id for every row of this variable, must resolve to
   // the OMOP "Type Concept" domain. Falls back to the pipeline default (32879) when unset.
   type_concept_id?: number | null
@@ -1041,6 +1051,12 @@ const PURPLE_THEME: FixedConceptTheme = {
   button: 'bg-purple-600 hover:bg-purple-700', clear: 'text-purple-500 hover:text-purple-700', link: 'text-purple-700 hover:text-purple-900',
 }
 
+const AMBER_THEME: FixedConceptTheme = {
+  chipBg: 'bg-amber-100', chipBorder: 'border-amber-300', chipText: 'text-amber-900', chipSubtext: 'text-amber-700',
+  iconText: 'text-amber-700', inputBorder: 'border-amber-200', ring: 'focus:ring-amber-400',
+  button: 'bg-amber-600 hover:bg-amber-700', clear: 'text-amber-500 hover:text-amber-700', link: 'text-amber-700 hover:text-amber-900',
+}
+
 // Manual concept-id entry for a single fixed concept (applies to every row of the
 // variable) — used by Unit and Route's "Fixed value" mode, and by Type (fixed-only).
 // When `validateDomain` is given, the concept is looked up and checked before being
@@ -1259,6 +1275,96 @@ function UnitMappingSection({
           claims={claims}
           ownVariable={ownVariable}
           fieldKey="unit_col"
+        />
+      )}
+    </div>
+  )
+}
+
+// Modifier (Procedure Occurrence, domain_id 4) — same Fixed-value / From-column toggle as
+// Unit, amber-themed. Unlike Unit/Route there's no dedicated OMOP "Modifier" domain to
+// validate against (CPT4/HCPCS modifier concepts live in the Procedure domain alongside
+// everything else), so entries are accepted without a domain check.
+function ModifierMappingSection({
+  modifierMapping,
+  onChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
+  claims,
+  ownVariable,
+}: {
+  modifierMapping: ModifierMapping
+  onChange: (m: ModifierMapping) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
+}) {
+  const [mode, setMode] = useState<'fixed' | 'column'>(modifierMapping.modifier_col ? 'column' : 'fixed')
+  const fixed = getFixedConcept(modifierMapping.modifier_col, modifierMapping.modifier_concepts)
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-amber-200 bg-amber-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Tag className="w-4 h-4 text-amber-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-amber-800">
+          Modifier <span className="font-normal text-amber-600">(optional)</span>
+        </p>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?conceptClass=CPT4+Modifier&conceptClass=HCPCS+Modifier&standardConcept=Standard&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-amber-600 hover:text-amber-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
+      </div>
+      <p className="text-[11px] text-amber-700/90">
+        {mode === 'fixed'
+          ? 'Hardcode the modifier for this variable (e.g. Bilateral procedure), if every record shares the same one.'
+          : "Pick a column holding the modifier code for each row (e.g. a CPT4/HCPCS modifier like '-50' or '-RT'), then map each of its distinct values to a concept id — 0 marks a value as explicitly not mapped."}
+      </p>
+
+      <div className="flex rounded border border-amber-200 overflow-hidden text-[11px] w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('fixed')}
+          className={clsx('px-2 py-1', mode === 'fixed' ? 'bg-amber-600 text-white' : 'text-amber-600 hover:bg-amber-50')}
+        >
+          Fixed value
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('column')}
+          className={clsx('px-2 py-1 border-l border-amber-200', mode === 'column' ? 'bg-amber-600 text-white' : 'text-amber-600 hover:bg-amber-50')}
+        >
+          From column
+        </button>
+      </div>
+
+      {mode === 'fixed' ? (
+        <FixedConceptInput
+          id={fixed?.id}
+          name={fixed?.name}
+          onSet={(id, name) => onChange({ modifier_col: null, modifier_concepts: { [name]: id } })}
+          onClear={() => onChange({ modifier_col: null, modifier_concepts: {} })}
+          theme={AMBER_THEME}
+        />
+      ) : (
+        <ColumnValueIdMapper
+          col={modifierMapping.modifier_col}
+          concepts={modifierMapping.modifier_concepts}
+          onColChange={col => onChange({ modifier_col: col, modifier_concepts: {} })}
+          onConceptsChange={concepts => onChange({ ...modifierMapping, modifier_concepts: concepts })}
+          columnInfos={columnInfos}
+          fileColumns={fileColumns}
+          excludeColumn={excludeColumn}
+          accentClass="bg-amber-100 text-amber-800"
+          claims={claims}
+          ownVariable={ownVariable}
+          fieldKey="modifier_col"
         />
       )}
     </div>
@@ -1685,19 +1791,23 @@ function RouteMappingSection({
   )
 }
 
-// Type (drug_type_concept_id) — fixed-only: one concept id applies to every row of the
-// variable. Must resolve to the OMOP "Type Concept" domain; anything else is rejected
-// before it's applied, mirroring the same domain-validation pattern used for value mapping.
+// Type (*_type_concept_id — drug_type_concept_id, procedure_type_concept_id, ...) —
+// fixed-only: one concept id applies to every row of the variable. Must resolve to the
+// OMOP "Type Concept" domain; anything else is rejected before it's applied, mirroring
+// the same domain-validation pattern used for value mapping. Shared across domains;
+// only the description text changes to match what "provenance" means for that table.
 function TypeConceptCard({
   conceptId,
   conceptName,
   onSet,
   onClear,
+  description,
 }: {
   conceptId: number | null | undefined
   conceptName: string | null | undefined
   onSet: (id: number, name: string) => void
   onClear: () => void
+  description?: React.ReactNode
 }) {
   const validateDomain = (domainStr: string | null): string | null => {
     if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
@@ -1724,8 +1834,12 @@ function TypeConceptCard({
         </a>
       </div>
       <p className="text-[11px] text-purple-700/90">
-        Hardcode the provenance of this variable's drug records (e.g. Prescription written,
-        Physician administered). Leave blank to use the pipeline default (EHR, 32879).
+        {description ?? (
+          <>
+            Hardcode the provenance of this variable's drug records (e.g. Prescription written,
+            Physician administered). Leave blank to use the pipeline default (EHR, 32879).
+          </>
+        )}
       </p>
       <FixedConceptInput
         id={conceptId}
@@ -1781,9 +1895,11 @@ function SimpleColumnFieldCard({
   )
 }
 
-// Start/End datetime (Drug Exposure) — two sibling-column pickers plus a single strptime
-// format shared by both, overriding the visit-derived start date/time and populating an
-// end date/time (which otherwise stays empty for every domain).
+// Start/End datetime — two sibling-column pickers plus a single strptime format shared
+// by both, overriding the visit-derived start date/time and populating an end date/time
+// (which otherwise stays empty). Fully generic at the data level (start_datetime_col /
+// end_datetime_col / datetime_format apply to any variable regardless of domain); only
+// the hint text below each picker is parameterized to name the right target columns.
 function DateTimeFieldsCard({
   decision,
   onChange,
@@ -1791,6 +1907,8 @@ function DateTimeFieldsCard({
   excludeColumn,
   claims,
   ownVariable,
+  startHint = 'fills drug_exposure_start_date(time)',
+  endHint = 'fills drug_exposure_end_date(time)',
 }: {
   decision: VariableDecision
   onChange: (d: VariableDecision) => void
@@ -1798,6 +1916,8 @@ function DateTimeFieldsCard({
   excludeColumn: string
   claims: Record<string, { variable: string; fieldKey: string; label: string }>
   ownVariable: string
+  startHint?: string
+  endHint?: string
 }) {
   const options = fileColumns.filter(c => c !== excludeColumn)
 
@@ -1825,7 +1945,7 @@ function DateTimeFieldsCard({
             ownVariable={ownVariable}
             fieldKey="start_datetime_col"
           />
-          <span className="text-[10px] text-purple-500">fills drug_exposure_start_date(time)</span>
+          <span className="text-[10px] text-purple-500">{startHint}</span>
         </div>
         <div className="flex flex-col gap-1">
           <label className="text-[11px] font-medium text-purple-800">End datetime column</label>
@@ -1837,7 +1957,7 @@ function DateTimeFieldsCard({
             ownVariable={ownVariable}
             fieldKey="end_datetime_col"
           />
-          <span className="text-[10px] text-purple-500">fills drug_exposure_end_date(time)</span>
+          <span className="text-[10px] text-purple-500">{endHint}</span>
         </div>
       </div>
       <div className="flex flex-col gap-1">
@@ -1933,6 +2053,77 @@ function DrugExposureFieldsSection({
         excludeColumn={excludeColumn}
         claims={claims}
         ownVariable={ownVariable}
+      />
+    </div>
+  )
+}
+
+// Procedure Occurrence fields — Type, Quantity, Modifier, Start/End datetime. Reuses the
+// same shared cards as Drug Exposure (Type, the sibling-column quantity_col field, and
+// Start/End datetime are fully generic at the data level — only Modifier is new).
+function ProcedureFieldsSection({
+  decision,
+  onChange,
+  fileColumns,
+  columnInfos,
+  excludeColumn,
+  ownVariable,
+  claims,
+}: {
+  decision: VariableDecision
+  onChange: (d: VariableDecision) => void
+  fileColumns: string[]
+  columnInfos: Record<string, ColumnInfo>
+  excludeColumn: string
+  ownVariable: string
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+}) {
+  const options = fileColumns.filter(c => c !== excludeColumn)
+  const modifierMapping = decision.modifier_mapping ?? EMPTY_MODIFIER_MAPPING
+  const quantityField = DRUG_COLUMN_FIELDS.find(f => f.key === 'quantity_col')!
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-xs font-semibold text-muted-foreground">Procedure Occurrence fields (optional)</p>
+
+      <TypeConceptCard
+        conceptId={decision.type_concept_id}
+        conceptName={decision.type_concept_name}
+        onSet={(id, name) => onChange({ ...decision, type_concept_id: id, type_concept_name: name })}
+        onClear={() => onChange({ ...decision, type_concept_id: null, type_concept_name: null })}
+        description={
+          <>
+            Hardcode the provenance of this variable's procedure records (e.g. EHR encounter
+            record, Facility record). Leave blank to use the pipeline default (EHR, 32879).
+          </>
+        }
+      />
+      <SimpleColumnFieldCard
+        field={quantityField}
+        value={decision.quantity_col}
+        onChange={v => onChange({ ...decision, quantity_col: v })}
+        options={options}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
+      <ModifierMappingSection
+        modifierMapping={modifierMapping}
+        onChange={m => onChange({ ...decision, modifier_mapping: m })}
+        columnInfos={columnInfos}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
+      <DateTimeFieldsCard
+        decision={decision}
+        onChange={onChange}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+        startHint="fills procedure_date(time)"
+        endHint="fills procedure_end_date(time)"
       />
     </div>
   )
@@ -2068,6 +2259,11 @@ function VariableRow({
   const isDrugExposure =
     decision.domain_id === 3 ||
     (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 3))
+
+  // Same map_values fallback as isDrugExposure above, for Procedure Occurrence.
+  const isProcedureOccurrence =
+    decision.domain_id === 4 ||
+    (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 4))
 
   const mappingCompleteness = (() => {
     if (decision.strategy === 'skip') return 0
@@ -2420,6 +2616,19 @@ function VariableRow({
           {/* Drug Exposure fields (optional) — sibling-column pulls, shown for Drug Exposure */}
           {isDrugExposure && decision.strategy === 'map_values' && (
             <DrugExposureFieldsSection
+              decision={decision}
+              onChange={onChange}
+              fileColumns={fileColumns}
+              columnInfos={columnInfos}
+              excludeColumn={column}
+              ownVariable={column}
+              claims={drugFieldClaims}
+            />
+          )}
+
+          {/* Procedure Occurrence fields (optional) — Type, Quantity, Modifier, Start/End datetime */}
+          {isProcedureOccurrence && decision.strategy !== 'skip' && (
+            <ProcedureFieldsSection
               decision={decision}
               onChange={onChange}
               fileColumns={fileColumns}
@@ -2804,6 +3013,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       if (unitCol && !claims[unitCol]) claims[unitCol] = { variable, fieldKey: 'unit_col', label: 'Unit' }
       const routeCol = d.route_mapping?.route_col
       if (routeCol && !claims[routeCol]) claims[routeCol] = { variable, fieldKey: 'route_col', label: 'Route' }
+      const modifierCol = d.modifier_mapping?.modifier_col
+      if (modifierCol && !claims[modifierCol]) claims[modifierCol] = { variable, fieldKey: 'modifier_col', label: 'Modifier' }
       if (d.start_datetime_col && !claims[d.start_datetime_col]) {
         claims[d.start_datetime_col] = { variable, fieldKey: 'start_datetime_col', label: 'Start datetime' }
       }
@@ -2835,6 +3046,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     if (d.type_concept_id) n += 1
     if (d.route_mapping) n += Object.keys(d.route_mapping.route_concepts).length
     if (d.unit_mapping) n += Object.keys(d.unit_mapping.unit_concepts).length
+    if (d.modifier_mapping) n += Object.keys(d.modifier_mapping.modifier_concepts).length
     return sum + n
   }, 0)
 

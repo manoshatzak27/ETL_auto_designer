@@ -4356,6 +4356,20 @@ def _generate_stem_table_script(project) -> str:
         if len(ids) == 1:
             route_fixed_map[k.lower()] = ids[0]
 
+    # Modifier (Procedure Occurrence) "Fixed value" mode: same convention as Route —
+    # modifier_col is null and modifier_concepts carries exactly one entry, applied to
+    # every row directly since modifier_mapping.csv has nothing to look up in that case.
+    modifier_fixed_map: dict[str, int] = {}
+    for k, d in (project.concept_decisions or {}).items():
+        if not isinstance(d, dict):
+            continue
+        mm_dec = d.get("modifier_mapping") or {}
+        if mm_dec.get("modifier_col"):
+            continue
+        ids = [v for v in (mm_dec.get("modifier_concepts") or {}).values() if isinstance(v, int) and v > 0]
+        if len(ids) == 1:
+            modifier_fixed_map[k.lower()] = ids[0]
+
     # Type: fixed drug_type_concept_id per variable, falling back to the pipeline default.
     type_fixed_map: dict[str, int] = {
         k.lower(): int(d["type_concept_id"])
@@ -4381,6 +4395,7 @@ def _generate_stem_table_script(project) -> str:
     lnc_repr = repr(lot_number_col_map)
     src_repr = repr(stop_reason_col_map)
     rfx_repr = repr(route_fixed_map)
+    mfx_repr = repr(modifier_fixed_map)
     tfx_repr = repr(type_fixed_map)
     sdc_repr = repr(start_dt_col_map)
     edc_repr = repr(end_dt_col_map)
@@ -4548,6 +4563,23 @@ def _generate_stem_table_script(project) -> str:
         "                        if route_concept_id is None:\n"
         "                            route_concept_id = ROUTE_FIXED_MAP.get(variable.lower())\n"
         "\n"
+        "                        # Modifier (Procedure Occurrence): per-row lookup via modifier_mapping.csv,\n"
+        "                        # same pattern as the unit_concept_id resolution above.\n"
+        "                        modifier_concept_id = None\n"
+        "                        modifier_source_value = None\n"
+        "                        _modifier_col = modifier_col_map.get(variable.lower())\n"
+        "                        if _modifier_col:\n"
+        "                            _raw_modifier = row.get(_modifier_col)\n"
+        "                            if pd.notnull(_raw_modifier) and str(_raw_modifier).strip() not in ('', 'nan'):\n"
+        "                                modifier_source_value = str(_raw_modifier).strip()\n"
+        "                                _looked_up_modifier = modifier_concept_map.get((variable.lower(), modifier_source_value))\n"
+        "                                if _looked_up_modifier is not None:\n"
+        "                                    modifier_concept_id = _looked_up_modifier\n"
+        "                                else:\n"
+        "                                    _info(f'INFO: variable {variable!r} — modifier value {modifier_source_value!r} not in modifier_concept_map; modifier_concept_id unset')\n"
+        "                        if modifier_concept_id is None:\n"
+        "                            modifier_concept_id = MODIFIER_FIXED_MAP.get(variable.lower())\n"
+        "\n"
         "                        # Dose unit (Drug Exposure): reuses the generic unit_concept_id/\n"
         "                        # unit_source_value resolved above from unit_mapping.csv — no\n"
         "                        # separate mechanism needed.\n"
@@ -4601,7 +4633,8 @@ def _generate_stem_table_script(project) -> str:
         "                            'range_low': None,\n"
         "                            'range_high': None,\n"
         "                            'provider_id': None,\n"
-        "                            'modifier_concept_id': None,\n"
+        "                            'modifier_concept_id': modifier_concept_id,\n"
+        "                            'modifier_source_value': modifier_source_value,\n"
         "                            'quantity': quantity,\n"
         "                            'value_source_value': str(raw_value),\n"
         "                            'source_value': variable,\n"
@@ -4691,6 +4724,7 @@ def _generate_stem_table_script(project) -> str:
         "# Fixed (per-variable, not per-row) fallbacks — used when the column-based\n"
         "# mapping/lookup for that field has nothing configured.\n"
         f"ROUTE_FIXED_MAP = {rfx_repr}\n"
+        f"MODIFIER_FIXED_MAP = {mfx_repr}\n"
         f"TYPE_FIXED_MAP = {tfx_repr}\n"
         f"START_DATETIME_COL_MAP = {sdc_repr}\n"
         f"END_DATETIME_COL_MAP = {edc_repr}\n"
@@ -4784,6 +4818,7 @@ def _generate_stem_table_script(project) -> str:
         "    vv = _load_csv(os.environ.get('ETL_MAPPING_variable_value_mapping', ''))\n"
         "    um = _load_csv(os.environ.get('ETL_MAPPING_unit_mapping', ''))\n"
         "    rm = _load_csv(os.environ.get('ETL_MAPPING_route_mapping', ''))\n"
+        "    mm = _load_csv(os.environ.get('ETL_MAPPING_modifier_mapping', ''))\n"
         "\n"
         "    # Build in-memory concept lookup dicts from mapping CSVs\n"
         "    var_map     = {r['variable_source_code'].lower(): int(r['target_concept_id']) for _, r in vm.iterrows()} if not vm.empty else {}\n"
@@ -4822,6 +4857,16 @@ def _generate_stem_table_script(project) -> str:
         "            route_col_map[v]                                 = str(r['route_col'])\n"
         "            route_concept_map[(v, str(r['route_source_value']))] = int(r['route_concept_id'])\n"
         "\n"
+        "    # modifier_col_map:     variable → source column holding the modifier string\n"
+        "    # modifier_concept_map: (variable, modifier_source_value) → modifier_concept_id\n"
+        "    modifier_col_map     = {}\n"
+        "    modifier_concept_map = {}\n"
+        "    if not mm.empty:\n"
+        "        for _, r in mm.iterrows():\n"
+        "            v = str(r['variable_source_code']).lower()\n"
+        "            modifier_col_map[v]                                       = str(r['modifier_col'])\n"
+        "            modifier_concept_map[(v, str(r['modifier_source_value']))] = int(r['modifier_concept_id'])\n"
+        "\n"
         "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
@@ -4840,7 +4885,7 @@ def _generate_stem_table_script(project) -> str:
         "        'concept_id', 'start_date', 'start_datetime', 'end_date', 'end_datetime',\n"
         "        'type_concept_id', 'operator_concept_id', 'value_as_number', 'value_as_string',\n"
         "        'value_as_concept_id', 'unit_concept_id', 'unit_source_value',\n"
-        "        'range_low', 'range_high', 'provider_id', 'modifier_concept_id', 'quantity',\n"
+        "        'range_low', 'range_high', 'provider_id', 'modifier_concept_id', 'modifier_source_value', 'quantity',\n"
         "        'value_source_value', 'source_value', 'source_concept_id', 'record_source_value',\n"
         "        'days_supply', 'refills', 'sig', 'lot_number', 'stop_reason',\n"
         "        'route_source_value', 'route_concept_id', 'dose_unit_source_value',\n"
@@ -5030,7 +5075,7 @@ def _generate_domain_script(table: str) -> str:
             "                'visit_detail_id': _si(row.get('visit_detail_id')),\n"
             "                'procedure_source_value': _ss(row.get('source_value')),\n"
             "                'procedure_source_concept_id': _si(row.get('source_concept_id'), 0),\n"
-            "                'modifier_source_value': None,\n"
+            "                'modifier_source_value': _ss(row.get('modifier_source_value')),\n"
             "            })\n"
         )
     else:  # condition_occurrence
