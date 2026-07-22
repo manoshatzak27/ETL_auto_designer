@@ -84,6 +84,7 @@ def generate_mapping_csvs(
     route_rows: list[dict] = []
     modifier_rows: list[dict] = []
     condition_status_rows: list[dict] = []
+    qualifier_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
         strategy = decision.get("strategy", "skip")
@@ -172,6 +173,20 @@ def generate_mapping_csvs(
                         "condition_status_concept_id": int(status_cid),
                     })
 
+        # --- qualifier_mapping.csv  (observation qualifier_source_value → qualifier_concept_id) ---
+        qualifier_mapping = decision.get("qualifier_mapping") or {}
+        qualifier_col: str | None = qualifier_mapping.get("qualifier_col")
+        qualifier_concepts: dict = qualifier_mapping.get("qualifier_concepts") or {}
+        if qualifier_col and qualifier_concepts:
+            for qualifier_val, qualifier_cid in qualifier_concepts.items():
+                if qualifier_cid:
+                    qualifier_rows.append({
+                        "variable_source_code": variable,
+                        "qualifier_col": qualifier_col,
+                        "qualifier_source_value": qualifier_val,
+                        "qualifier_concept_id": int(qualifier_cid),
+                    })
+
     files: dict[str, str] = {}
 
     if variable_rows:
@@ -223,6 +238,12 @@ def generate_mapping_csvs(
         p = str(output_path / "condition_status_mapping.csv")
         df.to_csv(p, index=False, encoding="utf-8")
         files["condition_status_mapping"] = p
+
+    if qualifier_rows:
+        df = pd.DataFrame(qualifier_rows).sort_values(["variable_source_code", "qualifier_source_value"])
+        p = str(output_path / "qualifier_mapping.csv")
+        df.to_csv(p, index=False, encoding="utf-8")
+        files["qualifier_mapping"] = p
 
     return files
 

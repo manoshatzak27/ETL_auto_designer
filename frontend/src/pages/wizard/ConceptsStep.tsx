@@ -76,6 +76,13 @@ interface ConditionStatusMapping {
 
 const EMPTY_CONDITION_STATUS_MAPPING: ConditionStatusMapping = { condition_status_col: null, condition_status_concepts: {} }
 
+interface QualifierMapping {
+  qualifier_col: string | null
+  qualifier_concepts: Record<string, number>  // qualifier_source_value → qualifier_concept_id
+}
+
+const EMPTY_QUALIFIER_MAPPING: QualifierMapping = { qualifier_col: null, qualifier_concepts: {} }
+
 interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
@@ -106,6 +113,9 @@ interface VariableDecision {
   // Condition Occurrence (domain_id 5) only: condition_status_concept_id /
   // condition_status_source_value, same fixed-or-per-column convention.
   condition_status_mapping?: ConditionStatusMapping
+  // Observation (domain_id 2) only: qualifier_concept_id / qualifier_source_value,
+  // same fixed-or-per-column convention. No domain restriction (any Standard concept).
+  qualifier_mapping?: QualifierMapping
   // Fixed only — drug_type_concept_id for every row of this variable, must resolve to
   // the OMOP "Type Concept" domain. Falls back to the pipeline default (32879) when unset.
   type_concept_id?: number | null
@@ -1073,6 +1083,12 @@ const TEAL_THEME: FixedConceptTheme = {
   button: 'bg-teal-600 hover:bg-teal-700', clear: 'text-teal-500 hover:text-teal-700', link: 'text-teal-700 hover:text-teal-900',
 }
 
+const ROSE_THEME: FixedConceptTheme = {
+  chipBg: 'bg-rose-100', chipBorder: 'border-rose-300', chipText: 'text-rose-900', chipSubtext: 'text-rose-700',
+  iconText: 'text-rose-700', inputBorder: 'border-rose-200', ring: 'focus:ring-rose-400',
+  button: 'bg-rose-600 hover:bg-rose-700', clear: 'text-rose-500 hover:text-rose-700', link: 'text-rose-700 hover:text-rose-900',
+}
+
 // Manual concept-id entry for a single fixed concept (applies to every row of the
 // variable) — used by Unit and Route's "Fixed value" mode, and by Type (fixed-only).
 // When `validateDomain` is given, the concept is looked up and checked before being
@@ -1480,6 +1496,96 @@ function ConditionStatusMappingSection({
           claims={claims}
           ownVariable={ownVariable}
           fieldKey="condition_status_col"
+        />
+      )}
+    </div>
+  )
+}
+
+// Qualifier (Observation, domain_id 2) — same Fixed-value / From-column toggle as
+// Modifier. No dedicated OMOP domain to validate against (the docs are explicit: "no
+// restriction on the domain of these Concepts, they just need to be Standard"), so
+// entries are accepted without a domain check, rose-themed.
+function QualifierMappingSection({
+  qualifierMapping,
+  onChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
+  claims,
+  ownVariable,
+}: {
+  qualifierMapping: QualifierMapping
+  onChange: (m: QualifierMapping) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
+}) {
+  const [mode, setMode] = useState<'fixed' | 'column'>(qualifierMapping.qualifier_col ? 'column' : 'fixed')
+  const fixed = getFixedConcept(qualifierMapping.qualifier_col, qualifierMapping.qualifier_concepts)
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Tag className="w-4 h-4 text-rose-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-rose-800">
+          Qualifier <span className="font-normal text-rose-600">(optional)</span>
+        </p>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?standardConcept=Standard&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-rose-600 hover:text-rose-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
+      </div>
+      <p className="text-[11px] text-rose-700/90">
+        {mode === 'fixed'
+          ? 'Hardcode the qualifier for this variable (e.g. a degree or severity), if every record shares the same one.'
+          : "Pick a column holding the qualifier for each row (e.g. degrees, severities), then map each of its distinct values to a concept id — 0 marks a value as explicitly not mapped."}
+      </p>
+
+      <div className="flex rounded border border-rose-200 overflow-hidden text-[11px] w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('fixed')}
+          className={clsx('px-2 py-1', mode === 'fixed' ? 'bg-rose-600 text-white' : 'text-rose-600 hover:bg-rose-50')}
+        >
+          Fixed value
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('column')}
+          className={clsx('px-2 py-1 border-l border-rose-200', mode === 'column' ? 'bg-rose-600 text-white' : 'text-rose-600 hover:bg-rose-50')}
+        >
+          From column
+        </button>
+      </div>
+
+      {mode === 'fixed' ? (
+        <FixedConceptInput
+          id={fixed?.id}
+          name={fixed?.name}
+          onSet={(id, name) => onChange({ qualifier_col: null, qualifier_concepts: { [name]: id } })}
+          onClear={() => onChange({ qualifier_col: null, qualifier_concepts: {} })}
+          theme={ROSE_THEME}
+        />
+      ) : (
+        <ColumnValueIdMapper
+          col={qualifierMapping.qualifier_col}
+          concepts={qualifierMapping.qualifier_concepts}
+          onColChange={col => onChange({ qualifier_col: col, qualifier_concepts: {} })}
+          onConceptsChange={concepts => onChange({ ...qualifierMapping, qualifier_concepts: concepts })}
+          columnInfos={columnInfos}
+          fileColumns={fileColumns}
+          excludeColumn={excludeColumn}
+          accentClass="bg-rose-100 text-rose-800"
+          claims={claims}
+          ownVariable={ownVariable}
+          fieldKey="qualifier_col"
         />
       )}
     </div>
@@ -2024,6 +2130,7 @@ function DateTimeFieldsCard({
   ownVariable,
   startHint = 'fills drug_exposure_start_date(time)',
   endHint = 'fills drug_exposure_end_date(time)',
+  showEnd = true,
 }: {
   decision: VariableDecision
   onChange: (d: VariableDecision) => void
@@ -2033,6 +2140,9 @@ function DateTimeFieldsCard({
   ownVariable: string
   startHint?: string
   endHint?: string
+  // Observation has no end-date field in the CDM — hide the End datetime picker there
+  // rather than exposing a control with no effect on the generated output.
+  showEnd?: boolean
 }) {
   const options = fileColumns.filter(c => c !== excludeColumn)
 
@@ -2041,17 +2151,17 @@ function DateTimeFieldsCard({
       <div className="flex items-center gap-2">
         <Hash className="w-4 h-4 text-purple-600 flex-shrink-0" />
         <p className="text-xs font-semibold text-purple-800">
-          Start / End datetime <span className="font-normal text-purple-600">(optional)</span>
+          {showEnd ? 'Start / End datetime' : 'Start datetime'} <span className="font-normal text-purple-600">(optional)</span>
         </p>
       </div>
       <p className="text-[11px] text-purple-700/90">
-        Pick columns holding the start/end datetime for each row, parsed with the format
-        below (shared by both). Overrides the visit-derived start date and fills the
-        otherwise-empty end date. Leave the format blank to use the default (%Y-%m-%d).
+        {showEnd
+          ? 'Pick columns holding the start/end datetime for each row, parsed with the format below (shared by both). Overrides the visit-derived start date and fills the otherwise-empty end date. Leave the format blank to use the default (%Y-%m-%d).'
+          : 'Pick a column holding the datetime for each row, parsed with the format below. Overrides the visit-derived date. Leave the format blank to use the default (%Y-%m-%d).'}
       </p>
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className={clsx('grid gap-2.5', showEnd ? 'grid-cols-2' : 'grid-cols-1')}>
         <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-purple-800">Start datetime column</label>
+          <label className="text-[11px] font-medium text-purple-800">{showEnd ? 'Start datetime column' : 'Datetime column'}</label>
           <DrugFieldColumnSelect
             value={decision.start_datetime_col}
             onChange={v => onChange({ ...decision, start_datetime_col: v })}
@@ -2062,18 +2172,20 @@ function DateTimeFieldsCard({
           />
           <span className="text-[10px] text-purple-500">{startHint}</span>
         </div>
-        <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-purple-800">End datetime column</label>
-          <DrugFieldColumnSelect
-            value={decision.end_datetime_col}
-            onChange={v => onChange({ ...decision, end_datetime_col: v })}
-            options={options}
-            claims={claims}
-            ownVariable={ownVariable}
-            fieldKey="end_datetime_col"
-          />
-          <span className="text-[10px] text-purple-500">{endHint}</span>
-        </div>
+        {showEnd && (
+          <div className="flex flex-col gap-1">
+            <label className="text-[11px] font-medium text-purple-800">End datetime column</label>
+            <DrugFieldColumnSelect
+              value={decision.end_datetime_col}
+              onChange={v => onChange({ ...decision, end_datetime_col: v })}
+              options={options}
+              claims={claims}
+              ownVariable={ownVariable}
+              fieldKey="end_datetime_col"
+            />
+            <span className="text-[10px] text-purple-500">{endHint}</span>
+          </div>
+        )}
       </div>
       <div className="flex flex-col gap-1">
         <label className="text-[11px] font-medium text-purple-800">Datetime format</label>
@@ -2084,7 +2196,7 @@ function DateTimeFieldsCard({
           placeholder="%Y-%m-%d %H:%M:%S"
           className="border border-purple-200 rounded px-2 py-1 text-xs bg-white font-mono focus:outline-none focus:ring-1 focus:ring-purple-400"
         />
-        <span className="text-[10px] text-purple-500">Python strptime format, applied to both columns above.</span>
+        <span className="text-[10px] text-purple-500">{showEnd ? 'Python strptime format, applied to both columns above.' : 'Python strptime format, applied to the column above.'}</span>
       </div>
     </div>
   )
@@ -2315,6 +2427,67 @@ function ConditionOccurrenceFieldsSection({
   )
 }
 
+// Observation fields — Type, Qualifier, Start datetime. Unit is NOT here — it's already
+// shared with Measurement via the top-level Unit block (domain_id 1 or 2). Observation
+// has no end-date field in the CDM, so DateTimeFieldsCard renders with showEnd={false}.
+function ObservationFieldsSection({
+  decision,
+  onChange,
+  fileColumns,
+  columnInfos,
+  excludeColumn,
+  ownVariable,
+  claims,
+}: {
+  decision: VariableDecision
+  onChange: (d: VariableDecision) => void
+  fileColumns: string[]
+  columnInfos: Record<string, ColumnInfo>
+  excludeColumn: string
+  ownVariable: string
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+}) {
+  const qualifierMapping = decision.qualifier_mapping ?? EMPTY_QUALIFIER_MAPPING
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-xs font-semibold text-muted-foreground">Observation fields (optional)</p>
+
+      <TypeConceptCard
+        conceptId={decision.type_concept_id}
+        conceptName={decision.type_concept_name}
+        onSet={(id, name) => onChange({ ...decision, type_concept_id: id, type_concept_name: name })}
+        onClear={() => onChange({ ...decision, type_concept_id: null, type_concept_name: null })}
+        description={
+          <>
+            Hardcode the provenance of this variable's observation records (e.g. EHR
+            encounter record, Patient reported). Leave blank to use the pipeline default (EHR, 32879).
+          </>
+        }
+      />
+      <QualifierMappingSection
+        qualifierMapping={qualifierMapping}
+        onChange={m => onChange({ ...decision, qualifier_mapping: m })}
+        columnInfos={columnInfos}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
+      <DateTimeFieldsCard
+        decision={decision}
+        onChange={onChange}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+        startHint="fills observation_date(time)"
+        showEnd={false}
+      />
+    </div>
+  )
+}
+
 // ── Extra instructions (AI) — locally-buffered textarea ────────────────────
 //
 // With ~1000 columns on the page, committing every keystroke straight to the
@@ -2455,6 +2628,11 @@ function VariableRow({
   const isConditionOccurrence =
     decision.domain_id === 5 ||
     (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 5))
+
+  // Same map_values fallback as isDrugExposure above, for Observation.
+  const isObservation =
+    decision.domain_id === 2 ||
+    (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 2))
 
   const mappingCompleteness = (() => {
     if (decision.strategy === 'skip') return 0
@@ -2833,6 +3011,20 @@ function VariableRow({
           {/* Condition Occurrence fields (optional) — Type, Stop reason, Condition Status, Start/End datetime */}
           {isConditionOccurrence && decision.strategy !== 'skip' && (
             <ConditionOccurrenceFieldsSection
+              decision={decision}
+              onChange={onChange}
+              fileColumns={fileColumns}
+              columnInfos={columnInfos}
+              excludeColumn={column}
+              ownVariable={column}
+              claims={drugFieldClaims}
+            />
+          )}
+
+          {/* Observation fields (optional) — Type, Qualifier, Start datetime. Unit is shown
+              separately above (shared with Measurement). */}
+          {isObservation && decision.strategy !== 'skip' && (
+            <ObservationFieldsSection
               decision={decision}
               onChange={onChange}
               fileColumns={fileColumns}
@@ -3223,6 +3415,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       if (conditionStatusCol && !claims[conditionStatusCol]) {
         claims[conditionStatusCol] = { variable, fieldKey: 'condition_status_col', label: 'Condition Status' }
       }
+      const qualifierCol = d.qualifier_mapping?.qualifier_col
+      if (qualifierCol && !claims[qualifierCol]) claims[qualifierCol] = { variable, fieldKey: 'qualifier_col', label: 'Qualifier' }
       if (d.start_datetime_col && !claims[d.start_datetime_col]) {
         claims[d.start_datetime_col] = { variable, fieldKey: 'start_datetime_col', label: 'Start datetime' }
       }
@@ -3256,6 +3450,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     if (d.unit_mapping) n += Object.keys(d.unit_mapping.unit_concepts).length
     if (d.modifier_mapping) n += Object.keys(d.modifier_mapping.modifier_concepts).length
     if (d.condition_status_mapping) n += Object.keys(d.condition_status_mapping.condition_status_concepts).length
+    if (d.qualifier_mapping) n += Object.keys(d.qualifier_mapping.qualifier_concepts).length
     return sum + n
   }, 0)
 

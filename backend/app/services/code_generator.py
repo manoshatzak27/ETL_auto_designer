@@ -4384,6 +4384,20 @@ def _generate_stem_table_script(project) -> str:
         if len(ids) == 1:
             condition_status_fixed_map[k.lower()] = ids[0]
 
+    # Qualifier (Observation) "Fixed value" mode: same convention as Modifier/Condition
+    # Status — qualifier_col is null and qualifier_concepts carries exactly one entry,
+    # applied to every row directly.
+    qualifier_fixed_map: dict[str, int] = {}
+    for k, d in (project.concept_decisions or {}).items():
+        if not isinstance(d, dict):
+            continue
+        qm_dec = d.get("qualifier_mapping") or {}
+        if qm_dec.get("qualifier_col"):
+            continue
+        ids = [v for v in (qm_dec.get("qualifier_concepts") or {}).values() if isinstance(v, int) and v > 0]
+        if len(ids) == 1:
+            qualifier_fixed_map[k.lower()] = ids[0]
+
     # Type: fixed drug_type_concept_id per variable, falling back to the pipeline default.
     type_fixed_map: dict[str, int] = {
         k.lower(): int(d["type_concept_id"])
@@ -4411,6 +4425,7 @@ def _generate_stem_table_script(project) -> str:
     rfx_repr = repr(route_fixed_map)
     mfx_repr = repr(modifier_fixed_map)
     csfx_repr = repr(condition_status_fixed_map)
+    qfx_repr = repr(qualifier_fixed_map)
     tfx_repr = repr(type_fixed_map)
     sdc_repr = repr(start_dt_col_map)
     edc_repr = repr(end_dt_col_map)
@@ -4612,6 +4627,23 @@ def _generate_stem_table_script(project) -> str:
         "                        if condition_status_concept_id is None:\n"
         "                            condition_status_concept_id = CONDITION_STATUS_FIXED_MAP.get(variable.lower())\n"
         "\n"
+        "                        # Qualifier (Observation): per-row lookup via qualifier_mapping.csv,\n"
+        "                        # same pattern as the unit_concept_id resolution above.\n"
+        "                        qualifier_concept_id = None\n"
+        "                        qualifier_source_value = None\n"
+        "                        _qualifier_col = qualifier_col_map.get(variable.lower())\n"
+        "                        if _qualifier_col:\n"
+        "                            _raw_qualifier = row.get(_qualifier_col)\n"
+        "                            if pd.notnull(_raw_qualifier) and str(_raw_qualifier).strip() not in ('', 'nan'):\n"
+        "                                qualifier_source_value = str(_raw_qualifier).strip()\n"
+        "                                _looked_up_qualifier = qualifier_concept_map.get((variable.lower(), qualifier_source_value))\n"
+        "                                if _looked_up_qualifier is not None:\n"
+        "                                    qualifier_concept_id = _looked_up_qualifier\n"
+        "                                else:\n"
+        "                                    _info(f'INFO: variable {variable!r} — qualifier value {qualifier_source_value!r} not in qualifier_concept_map; qualifier_concept_id unset')\n"
+        "                        if qualifier_concept_id is None:\n"
+        "                            qualifier_concept_id = QUALIFIER_FIXED_MAP.get(variable.lower())\n"
+        "\n"
         "                        # Dose unit (Drug Exposure): reuses the generic unit_concept_id/\n"
         "                        # unit_source_value resolved above from unit_mapping.csv — no\n"
         "                        # separate mechanism needed.\n"
@@ -4669,6 +4701,8 @@ def _generate_stem_table_script(project) -> str:
         "                            'modifier_source_value': modifier_source_value,\n"
         "                            'condition_status_concept_id': condition_status_concept_id,\n"
         "                            'condition_status_source_value': condition_status_source_value,\n"
+        "                            'qualifier_concept_id': qualifier_concept_id,\n"
+        "                            'qualifier_source_value': qualifier_source_value,\n"
         "                            'quantity': quantity,\n"
         "                            'value_source_value': str(raw_value),\n"
         "                            'source_value': variable,\n"
@@ -4760,6 +4794,7 @@ def _generate_stem_table_script(project) -> str:
         f"ROUTE_FIXED_MAP = {rfx_repr}\n"
         f"MODIFIER_FIXED_MAP = {mfx_repr}\n"
         f"CONDITION_STATUS_FIXED_MAP = {csfx_repr}\n"
+        f"QUALIFIER_FIXED_MAP = {qfx_repr}\n"
         f"TYPE_FIXED_MAP = {tfx_repr}\n"
         f"START_DATETIME_COL_MAP = {sdc_repr}\n"
         f"END_DATETIME_COL_MAP = {edc_repr}\n"
@@ -4855,6 +4890,7 @@ def _generate_stem_table_script(project) -> str:
         "    rm = _load_csv(os.environ.get('ETL_MAPPING_route_mapping', ''))\n"
         "    mm = _load_csv(os.environ.get('ETL_MAPPING_modifier_mapping', ''))\n"
         "    csm = _load_csv(os.environ.get('ETL_MAPPING_condition_status_mapping', ''))\n"
+        "    qm = _load_csv(os.environ.get('ETL_MAPPING_qualifier_mapping', ''))\n"
         "\n"
         "    # Build in-memory concept lookup dicts from mapping CSVs\n"
         "    var_map     = {r['variable_source_code'].lower(): int(r['target_concept_id']) for _, r in vm.iterrows()} if not vm.empty else {}\n"
@@ -4913,6 +4949,16 @@ def _generate_stem_table_script(project) -> str:
         "            condition_status_col_map[v]                                             = str(r['condition_status_col'])\n"
         "            condition_status_concept_map[(v, str(r['condition_status_source_value']))] = int(r['condition_status_concept_id'])\n"
         "\n"
+        "    # qualifier_col_map:     variable → source column holding the qualifier string\n"
+        "    # qualifier_concept_map: (variable, qualifier_source_value) → qualifier_concept_id\n"
+        "    qualifier_col_map     = {}\n"
+        "    qualifier_concept_map = {}\n"
+        "    if not qm.empty:\n"
+        "        for _, r in qm.iterrows():\n"
+        "            v = str(r['variable_source_code']).lower()\n"
+        "            qualifier_col_map[v]                                       = str(r['qualifier_col'])\n"
+        "            qualifier_concept_map[(v, str(r['qualifier_source_value']))] = int(r['qualifier_concept_id'])\n"
+        "\n"
         "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
@@ -4936,6 +4982,7 @@ def _generate_stem_table_script(project) -> str:
         "        'days_supply', 'refills', 'sig', 'lot_number', 'stop_reason',\n"
         "        'route_source_value', 'route_concept_id', 'dose_unit_source_value',\n"
         "        'condition_status_concept_id', 'condition_status_source_value',\n"
+        "        'qualifier_concept_id', 'qualifier_source_value',\n"
         "    ]\n"
         "    df_out = pd.DataFrame(rows, columns=STEM_COLUMNS)\n"
         "    output_file = os.path.join(output_dir, 'stem_table.csv')\n"
@@ -5052,7 +5099,7 @@ def _generate_domain_script(table: str) -> str:
             "                'value_as_number': _sf(row.get('value_as_number')),\n"
             "                'value_as_string': _ss(row.get('value_as_string')),\n"
             "                'value_as_concept_id': _si(row.get('value_as_concept_id')),\n"
-            "                'qualifier_concept_id': None,\n"
+            "                'qualifier_concept_id': _si(row.get('qualifier_concept_id')),\n"
             "                'unit_concept_id': _si(row.get('unit_concept_id')),\n"
             "                'provider_id': _si(row.get('provider_id')),\n"
             "                'visit_occurrence_id': _si(row.get('visit_occurrence_id')),\n"
@@ -5060,7 +5107,7 @@ def _generate_domain_script(table: str) -> str:
             "                'observation_source_value': _ss(row.get('source_value')),\n"
             "                'observation_source_concept_id': _si(row.get('source_concept_id'), 0),\n"
             "                'unit_source_value': _ss(row.get('unit_source_value')),\n"
-            "                'qualifier_source_value': None,\n"
+            "                'qualifier_source_value': _ss(row.get('qualifier_source_value')),\n"
             "                'value_source_value': _ss(row.get('value_source_value')),\n"
             "                'obs_event_field_concept_id': None,\n"
             "                'observation_event_id': None,\n"

@@ -100,6 +100,8 @@ def _decision_is_meaningful(decision: Any) -> bool:
         return True
     if (decision.get("condition_status_mapping") or {}).get("condition_status_concepts"):
         return True
+    if (decision.get("qualifier_mapping") or {}).get("qualifier_concepts"):
+        return True
     return False
 
 
@@ -129,6 +131,9 @@ def _find_decision_conflicts(concept_decisions: dict, removed_columns: set[str])
         condition_status_col = (decision.get("condition_status_mapping") or {}).get("condition_status_col")
         if condition_status_col and condition_status_col in removed_columns:
             reasons.append(f"its condition status column '{condition_status_col}' no longer exists in the updated file")
+        qualifier_col = (decision.get("qualifier_mapping") or {}).get("qualifier_col")
+        if qualifier_col and qualifier_col in removed_columns:
+            reasons.append(f"its qualifier column '{qualifier_col}' no longer exists in the updated file")
         if reasons:
             conflicts.append({"column": col, "reason": "; ".join(reasons)})
     return conflicts
