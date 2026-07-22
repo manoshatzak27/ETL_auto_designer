@@ -69,6 +69,13 @@ interface ModifierMapping {
 
 const EMPTY_MODIFIER_MAPPING: ModifierMapping = { modifier_col: null, modifier_concepts: {} }
 
+interface ConditionStatusMapping {
+  condition_status_col: string | null
+  condition_status_concepts: Record<string, number>  // condition_status_source_value → condition_status_concept_id
+}
+
+const EMPTY_CONDITION_STATUS_MAPPING: ConditionStatusMapping = { condition_status_col: null, condition_status_concepts: {} }
+
 interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
@@ -96,6 +103,9 @@ interface VariableDecision {
   // Procedure Occurrence (domain_id 4) only: modifier_concept_id / modifier_source_value,
   // same fixed-or-per-column convention as Unit/Route above.
   modifier_mapping?: ModifierMapping
+  // Condition Occurrence (domain_id 5) only: condition_status_concept_id /
+  // condition_status_source_value, same fixed-or-per-column convention.
+  condition_status_mapping?: ConditionStatusMapping
   // Fixed only — drug_type_concept_id for every row of this variable, must resolve to
   // the OMOP "Type Concept" domain. Falls back to the pipeline default (32879) when unset.
   type_concept_id?: number | null
@@ -1057,6 +1067,12 @@ const AMBER_THEME: FixedConceptTheme = {
   button: 'bg-amber-600 hover:bg-amber-700', clear: 'text-amber-500 hover:text-amber-700', link: 'text-amber-700 hover:text-amber-900',
 }
 
+const TEAL_THEME: FixedConceptTheme = {
+  chipBg: 'bg-teal-100', chipBorder: 'border-teal-300', chipText: 'text-teal-900', chipSubtext: 'text-teal-700',
+  iconText: 'text-teal-700', inputBorder: 'border-teal-200', ring: 'focus:ring-teal-400',
+  button: 'bg-teal-600 hover:bg-teal-700', clear: 'text-teal-500 hover:text-teal-700', link: 'text-teal-700 hover:text-teal-900',
+}
+
 // Manual concept-id entry for a single fixed concept (applies to every row of the
 // variable) — used by Unit and Route's "Fixed value" mode, and by Type (fixed-only).
 // When `validateDomain` is given, the concept is looked up and checked before being
@@ -1365,6 +1381,105 @@ function ModifierMappingSection({
           claims={claims}
           ownVariable={ownVariable}
           fieldKey="modifier_col"
+        />
+      )}
+    </div>
+  )
+}
+
+// Condition Status (Condition Occurrence, domain_id 5) — same Fixed-value / From-column
+// toggle as Unit/Modifier, teal-themed. Unlike Modifier, "Condition Status" IS a real
+// OMOP domain, so entries are validated against it the same way Unit validates "Unit".
+function ConditionStatusMappingSection({
+  conditionStatusMapping,
+  onChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
+  claims,
+  ownVariable,
+}: {
+  conditionStatusMapping: ConditionStatusMapping
+  onChange: (m: ConditionStatusMapping) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
+}) {
+  const [mode, setMode] = useState<'fixed' | 'column'>(conditionStatusMapping.condition_status_col ? 'column' : 'fixed')
+  const fixed = getFixedConcept(conditionStatusMapping.condition_status_col, conditionStatusMapping.condition_status_concepts)
+
+  const validateConditionStatusDomain = (domainStr: string | null): string | null => {
+    if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    if (domainStr.toLowerCase() !== 'condition status') {
+      return `"${domainStr}" is not a Condition Status concept. Pick a concept from the Condition Status domain.`
+    }
+    return null
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-teal-200 bg-teal-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Tag className="w-4 h-4 text-teal-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-teal-800">
+          Condition Status <span className="font-normal text-teal-600">(optional)</span>
+        </p>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?domain=Condition+Status&standardConcept=Standard&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-teal-600 hover:text-teal-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
+      </div>
+      <p className="text-[11px] text-teal-700/90">
+        {mode === 'fixed'
+          ? 'Hardcode the point in the visit this diagnosis was given (e.g. Admitting diagnosis, Final diagnosis), if every record shares the same one.'
+          : "Pick a column holding the condition status for each row (e.g. admitting vs. discharge diagnosis), then map each of its distinct values to a concept id — 0 marks a value as explicitly not mapped."}
+      </p>
+
+      <div className="flex rounded border border-teal-200 overflow-hidden text-[11px] w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('fixed')}
+          className={clsx('px-2 py-1', mode === 'fixed' ? 'bg-teal-600 text-white' : 'text-teal-600 hover:bg-teal-50')}
+        >
+          Fixed value
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('column')}
+          className={clsx('px-2 py-1 border-l border-teal-200', mode === 'column' ? 'bg-teal-600 text-white' : 'text-teal-600 hover:bg-teal-50')}
+        >
+          From column
+        </button>
+      </div>
+
+      {mode === 'fixed' ? (
+        <FixedConceptInput
+          id={fixed?.id}
+          name={fixed?.name}
+          onSet={(id, name) => onChange({ condition_status_col: null, condition_status_concepts: { [name]: id } })}
+          onClear={() => onChange({ condition_status_col: null, condition_status_concepts: {} })}
+          theme={TEAL_THEME}
+          validateDomain={validateConditionStatusDomain}
+        />
+      ) : (
+        <ColumnValueIdMapper
+          col={conditionStatusMapping.condition_status_col}
+          concepts={conditionStatusMapping.condition_status_concepts}
+          onColChange={col => onChange({ condition_status_col: col, condition_status_concepts: {} })}
+          onConceptsChange={concepts => onChange({ ...conditionStatusMapping, condition_status_concepts: concepts })}
+          columnInfos={columnInfos}
+          fileColumns={fileColumns}
+          excludeColumn={excludeColumn}
+          accentClass="bg-teal-100 text-teal-800"
+          validateDomain={validateConditionStatusDomain}
+          claims={claims}
+          ownVariable={ownVariable}
+          fieldKey="condition_status_col"
         />
       )}
     </div>
@@ -2129,6 +2244,77 @@ function ProcedureFieldsSection({
   )
 }
 
+// Condition Occurrence fields — Type, Stop reason, Condition Status, Start/End datetime.
+// Type/Stop reason/Start-End-datetime reuse fully generic backend plumbing (same as
+// Procedure); Condition Status is new end-to-end, mirroring Modifier's mechanism.
+function ConditionOccurrenceFieldsSection({
+  decision,
+  onChange,
+  fileColumns,
+  columnInfos,
+  excludeColumn,
+  ownVariable,
+  claims,
+}: {
+  decision: VariableDecision
+  onChange: (d: VariableDecision) => void
+  fileColumns: string[]
+  columnInfos: Record<string, ColumnInfo>
+  excludeColumn: string
+  ownVariable: string
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+}) {
+  const options = fileColumns.filter(c => c !== excludeColumn)
+  const conditionStatusMapping = decision.condition_status_mapping ?? EMPTY_CONDITION_STATUS_MAPPING
+  const stopReasonField = DRUG_COLUMN_FIELDS.find(f => f.key === 'stop_reason_col')!
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-xs font-semibold text-muted-foreground">Condition Occurrence fields (optional)</p>
+
+      <TypeConceptCard
+        conceptId={decision.type_concept_id}
+        conceptName={decision.type_concept_name}
+        onSet={(id, name) => onChange({ ...decision, type_concept_id: id, type_concept_name: name })}
+        onClear={() => onChange({ ...decision, type_concept_id: null, type_concept_name: null })}
+        description={
+          <>
+            Hardcode the provenance of this variable's condition records (e.g. EHR encounter
+            record, Claim). Leave blank to use the pipeline default (EHR, 32879).
+          </>
+        }
+      />
+      <SimpleColumnFieldCard
+        field={stopReasonField}
+        value={decision.stop_reason_col}
+        onChange={v => onChange({ ...decision, stop_reason_col: v })}
+        options={options}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
+      <ConditionStatusMappingSection
+        conditionStatusMapping={conditionStatusMapping}
+        onChange={m => onChange({ ...decision, condition_status_mapping: m })}
+        columnInfos={columnInfos}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
+      <DateTimeFieldsCard
+        decision={decision}
+        onChange={onChange}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+        startHint="fills condition_start_date(time)"
+        endHint="fills condition_end_date(time)"
+      />
+    </div>
+  )
+}
+
 // ── Extra instructions (AI) — locally-buffered textarea ────────────────────
 //
 // With ~1000 columns on the page, committing every keystroke straight to the
@@ -2264,6 +2450,11 @@ function VariableRow({
   const isProcedureOccurrence =
     decision.domain_id === 4 ||
     (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 4))
+
+  // Same map_values fallback as isDrugExposure above, for Condition Occurrence.
+  const isConditionOccurrence =
+    decision.domain_id === 5 ||
+    (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 5))
 
   const mappingCompleteness = (() => {
     if (decision.strategy === 'skip') return 0
@@ -2629,6 +2820,19 @@ function VariableRow({
           {/* Procedure Occurrence fields (optional) — Type, Quantity, Modifier, Start/End datetime */}
           {isProcedureOccurrence && decision.strategy !== 'skip' && (
             <ProcedureFieldsSection
+              decision={decision}
+              onChange={onChange}
+              fileColumns={fileColumns}
+              columnInfos={columnInfos}
+              excludeColumn={column}
+              ownVariable={column}
+              claims={drugFieldClaims}
+            />
+          )}
+
+          {/* Condition Occurrence fields (optional) — Type, Stop reason, Condition Status, Start/End datetime */}
+          {isConditionOccurrence && decision.strategy !== 'skip' && (
+            <ConditionOccurrenceFieldsSection
               decision={decision}
               onChange={onChange}
               fileColumns={fileColumns}
@@ -3015,6 +3219,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       if (routeCol && !claims[routeCol]) claims[routeCol] = { variable, fieldKey: 'route_col', label: 'Route' }
       const modifierCol = d.modifier_mapping?.modifier_col
       if (modifierCol && !claims[modifierCol]) claims[modifierCol] = { variable, fieldKey: 'modifier_col', label: 'Modifier' }
+      const conditionStatusCol = d.condition_status_mapping?.condition_status_col
+      if (conditionStatusCol && !claims[conditionStatusCol]) {
+        claims[conditionStatusCol] = { variable, fieldKey: 'condition_status_col', label: 'Condition Status' }
+      }
       if (d.start_datetime_col && !claims[d.start_datetime_col]) {
         claims[d.start_datetime_col] = { variable, fieldKey: 'start_datetime_col', label: 'Start datetime' }
       }
@@ -3047,6 +3255,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     if (d.route_mapping) n += Object.keys(d.route_mapping.route_concepts).length
     if (d.unit_mapping) n += Object.keys(d.unit_mapping.unit_concepts).length
     if (d.modifier_mapping) n += Object.keys(d.modifier_mapping.modifier_concepts).length
+    if (d.condition_status_mapping) n += Object.keys(d.condition_status_mapping.condition_status_concepts).length
     return sum + n
   }, 0)
 

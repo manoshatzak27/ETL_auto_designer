@@ -4370,6 +4370,20 @@ def _generate_stem_table_script(project) -> str:
         if len(ids) == 1:
             modifier_fixed_map[k.lower()] = ids[0]
 
+    # Condition Status (Condition Occurrence) "Fixed value" mode: same convention as
+    # Modifier — condition_status_col is null and condition_status_concepts carries
+    # exactly one entry, applied to every row directly.
+    condition_status_fixed_map: dict[str, int] = {}
+    for k, d in (project.concept_decisions or {}).items():
+        if not isinstance(d, dict):
+            continue
+        csm_dec = d.get("condition_status_mapping") or {}
+        if csm_dec.get("condition_status_col"):
+            continue
+        ids = [v for v in (csm_dec.get("condition_status_concepts") or {}).values() if isinstance(v, int) and v > 0]
+        if len(ids) == 1:
+            condition_status_fixed_map[k.lower()] = ids[0]
+
     # Type: fixed drug_type_concept_id per variable, falling back to the pipeline default.
     type_fixed_map: dict[str, int] = {
         k.lower(): int(d["type_concept_id"])
@@ -4396,6 +4410,7 @@ def _generate_stem_table_script(project) -> str:
     src_repr = repr(stop_reason_col_map)
     rfx_repr = repr(route_fixed_map)
     mfx_repr = repr(modifier_fixed_map)
+    csfx_repr = repr(condition_status_fixed_map)
     tfx_repr = repr(type_fixed_map)
     sdc_repr = repr(start_dt_col_map)
     edc_repr = repr(end_dt_col_map)
@@ -4580,6 +4595,23 @@ def _generate_stem_table_script(project) -> str:
         "                        if modifier_concept_id is None:\n"
         "                            modifier_concept_id = MODIFIER_FIXED_MAP.get(variable.lower())\n"
         "\n"
+        "                        # Condition Status (Condition Occurrence): per-row lookup via\n"
+        "                        # condition_status_mapping.csv, same pattern as unit_concept_id above.\n"
+        "                        condition_status_concept_id = None\n"
+        "                        condition_status_source_value = None\n"
+        "                        _condition_status_col = condition_status_col_map.get(variable.lower())\n"
+        "                        if _condition_status_col:\n"
+        "                            _raw_condition_status = row.get(_condition_status_col)\n"
+        "                            if pd.notnull(_raw_condition_status) and str(_raw_condition_status).strip() not in ('', 'nan'):\n"
+        "                                condition_status_source_value = str(_raw_condition_status).strip()\n"
+        "                                _looked_up_condition_status = condition_status_concept_map.get((variable.lower(), condition_status_source_value))\n"
+        "                                if _looked_up_condition_status is not None:\n"
+        "                                    condition_status_concept_id = _looked_up_condition_status\n"
+        "                                else:\n"
+        "                                    _info(f'INFO: variable {variable!r} — condition status value {condition_status_source_value!r} not in condition_status_concept_map; condition_status_concept_id unset')\n"
+        "                        if condition_status_concept_id is None:\n"
+        "                            condition_status_concept_id = CONDITION_STATUS_FIXED_MAP.get(variable.lower())\n"
+        "\n"
         "                        # Dose unit (Drug Exposure): reuses the generic unit_concept_id/\n"
         "                        # unit_source_value resolved above from unit_mapping.csv — no\n"
         "                        # separate mechanism needed.\n"
@@ -4635,6 +4667,8 @@ def _generate_stem_table_script(project) -> str:
         "                            'provider_id': None,\n"
         "                            'modifier_concept_id': modifier_concept_id,\n"
         "                            'modifier_source_value': modifier_source_value,\n"
+        "                            'condition_status_concept_id': condition_status_concept_id,\n"
+        "                            'condition_status_source_value': condition_status_source_value,\n"
         "                            'quantity': quantity,\n"
         "                            'value_source_value': str(raw_value),\n"
         "                            'source_value': variable,\n"
@@ -4725,6 +4759,7 @@ def _generate_stem_table_script(project) -> str:
         "# mapping/lookup for that field has nothing configured.\n"
         f"ROUTE_FIXED_MAP = {rfx_repr}\n"
         f"MODIFIER_FIXED_MAP = {mfx_repr}\n"
+        f"CONDITION_STATUS_FIXED_MAP = {csfx_repr}\n"
         f"TYPE_FIXED_MAP = {tfx_repr}\n"
         f"START_DATETIME_COL_MAP = {sdc_repr}\n"
         f"END_DATETIME_COL_MAP = {edc_repr}\n"
@@ -4819,6 +4854,7 @@ def _generate_stem_table_script(project) -> str:
         "    um = _load_csv(os.environ.get('ETL_MAPPING_unit_mapping', ''))\n"
         "    rm = _load_csv(os.environ.get('ETL_MAPPING_route_mapping', ''))\n"
         "    mm = _load_csv(os.environ.get('ETL_MAPPING_modifier_mapping', ''))\n"
+        "    csm = _load_csv(os.environ.get('ETL_MAPPING_condition_status_mapping', ''))\n"
         "\n"
         "    # Build in-memory concept lookup dicts from mapping CSVs\n"
         "    var_map     = {r['variable_source_code'].lower(): int(r['target_concept_id']) for _, r in vm.iterrows()} if not vm.empty else {}\n"
@@ -4867,6 +4903,16 @@ def _generate_stem_table_script(project) -> str:
         "            modifier_col_map[v]                                       = str(r['modifier_col'])\n"
         "            modifier_concept_map[(v, str(r['modifier_source_value']))] = int(r['modifier_concept_id'])\n"
         "\n"
+        "    # condition_status_col_map:     variable → source column holding the condition status string\n"
+        "    # condition_status_concept_map: (variable, condition_status_source_value) → condition_status_concept_id\n"
+        "    condition_status_col_map     = {}\n"
+        "    condition_status_concept_map = {}\n"
+        "    if not csm.empty:\n"
+        "        for _, r in csm.iterrows():\n"
+        "            v = str(r['variable_source_code']).lower()\n"
+        "            condition_status_col_map[v]                                             = str(r['condition_status_col'])\n"
+        "            condition_status_concept_map[(v, str(r['condition_status_source_value']))] = int(r['condition_status_concept_id'])\n"
+        "\n"
         "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
@@ -4889,6 +4935,7 @@ def _generate_stem_table_script(project) -> str:
         "        'value_source_value', 'source_value', 'source_concept_id', 'record_source_value',\n"
         "        'days_supply', 'refills', 'sig', 'lot_number', 'stop_reason',\n"
         "        'route_source_value', 'route_concept_id', 'dose_unit_source_value',\n"
+        "        'condition_status_concept_id', 'condition_status_source_value',\n"
         "    ]\n"
         "    df_out = pd.DataFrame(rows, columns=STEM_COLUMNS)\n"
         "    output_file = os.path.join(output_dir, 'stem_table.csv')\n"
@@ -5080,6 +5127,18 @@ def _generate_domain_script(table: str) -> str:
         )
     else:  # condition_occurrence
         row_lines = (
+            "            _cond_status_cid = _si(row.get('condition_status_concept_id'))\n"
+            "            _cond_status_sv = _ss(row.get('condition_status_source_value'))\n"
+            "            if _cond_status_cid is None:\n"
+            "                # Fall back to the legacy map_both-driven value_as_concept_id path — only\n"
+            "                # when it actually resolved to something, and only together with its\n"
+            "                # paired value_source_value. value_source_value alone is populated for\n"
+            "                # every row regardless of domain, so it must never leak in on its own for\n"
+            "                # a variable with no status configured at all.\n"
+            "                _legacy_status_cid = _si(row.get('value_as_concept_id'))\n"
+            "                if _legacy_status_cid is not None:\n"
+            "                    _cond_status_cid = _legacy_status_cid\n"
+            "                    _cond_status_sv = _ss(row.get('value_source_value'))\n"
             "            rows.append({\n"
             "                'condition_occurrence_id': rec_id,\n"
             "                'person_id': person_id,\n"
@@ -5089,14 +5148,14 @@ def _generate_domain_script(table: str) -> str:
             "                'condition_end_date': _ss(row.get('end_date')),\n"
             "                'condition_end_datetime': _ss(row.get('end_datetime')),\n"
             "                'condition_type_concept_id': _si(row.get('type_concept_id'), 32879),\n"
-            "                'condition_status_concept_id': _si(row.get('value_as_concept_id')),\n"
-            "                'stop_reason': None,\n"
+            "                'condition_status_concept_id': _cond_status_cid,\n"
+            "                'stop_reason': _ss(row.get('stop_reason')),\n"
             "                'provider_id': _si(row.get('provider_id')),\n"
             "                'visit_occurrence_id': _si(row.get('visit_occurrence_id')),\n"
             "                'visit_detail_id': _si(row.get('visit_detail_id')),\n"
             "                'condition_source_value': _ss(row.get('source_value')),\n"
             "                'condition_source_concept_id': _si(row.get('source_concept_id'), 0),\n"
-            "                'condition_status_source_value': _ss(row.get('value_source_value')),\n"
+            "                'condition_status_source_value': _cond_status_sv,\n"
             "            })\n"
         )
 

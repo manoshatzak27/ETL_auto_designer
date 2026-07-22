@@ -83,6 +83,7 @@ def generate_mapping_csvs(
     unit_rows: list[dict] = []
     route_rows: list[dict] = []
     modifier_rows: list[dict] = []
+    condition_status_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
         strategy = decision.get("strategy", "skip")
@@ -157,6 +158,20 @@ def generate_mapping_csvs(
                         "modifier_concept_id": int(modifier_cid),
                     })
 
+        # --- condition_status_mapping.csv  (condition_occurrence condition_status_source_value → condition_status_concept_id) ---
+        condition_status_mapping = decision.get("condition_status_mapping") or {}
+        condition_status_col: str | None = condition_status_mapping.get("condition_status_col")
+        condition_status_concepts: dict = condition_status_mapping.get("condition_status_concepts") or {}
+        if condition_status_col and condition_status_concepts:
+            for status_val, status_cid in condition_status_concepts.items():
+                if status_cid:
+                    condition_status_rows.append({
+                        "variable_source_code": variable,
+                        "condition_status_col": condition_status_col,
+                        "condition_status_source_value": status_val,
+                        "condition_status_concept_id": int(status_cid),
+                    })
+
     files: dict[str, str] = {}
 
     if variable_rows:
@@ -202,6 +217,12 @@ def generate_mapping_csvs(
         p = str(output_path / "modifier_mapping.csv")
         df.to_csv(p, index=False, encoding="utf-8")
         files["modifier_mapping"] = p
+
+    if condition_status_rows:
+        df = pd.DataFrame(condition_status_rows).sort_values(["variable_source_code", "condition_status_source_value"])
+        p = str(output_path / "condition_status_mapping.csv")
+        df.to_csv(p, index=False, encoding="utf-8")
+        files["condition_status_mapping"] = p
 
     return files
 
