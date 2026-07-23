@@ -2159,6 +2159,13 @@ function RouteMappingSection({
 // OMOP "Type Concept" domain; anything else is rejected before it's applied, mirroring
 // the same domain-validation pattern used for value mapping. Shared across domains;
 // only the description text changes to match what "provenance" means for that table.
+// Marks a field that's required by the OMOP CDM for this domain (e.g. measurement_date,
+// drug_exposure_start_date, *_type_concept_id) — even though the wizard itself doesn't
+// block Next on it, since a fallback (visit-derived date, pipeline default type) applies.
+function RequiredMark() {
+  return <span className="text-red-600" title="Required by the OMOP CDM for this domain">*</span>
+}
+
 function TypeConceptCard({
   conceptId,
   conceptName,
@@ -2185,7 +2192,7 @@ function TypeConceptCard({
       <div className="flex items-center gap-2">
         <Tag className="w-4 h-4 text-purple-600 flex-shrink-0" />
         <p className="text-xs font-semibold text-purple-800">
-          Type
+          Type <RequiredMark />
         </p>
         <a
           href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="
@@ -2273,6 +2280,7 @@ function DateTimeFieldsCard({
   startHint = 'fills drug_exposure_start_date(time)',
   endHint = 'fills drug_exposure_end_date(time)',
   showEnd = true,
+  endRequired = false,
 }: {
   decision: VariableDecision
   onChange: (d: VariableDecision) => void
@@ -2285,6 +2293,10 @@ function DateTimeFieldsCard({
   // Observation has no end-date field in the CDM — hide the End datetime picker there
   // rather than exposing a control with no effect on the generated output.
   showEnd?: boolean
+  // Only Drug Exposure requires both start and end dates in the OMOP CDM — Procedure
+  // and Condition Occurrence's end dates are optional there, so their End picker
+  // doesn't get a required marker even though showEnd is true for them too.
+  endRequired?: boolean
 }) {
   const options = fileColumns.filter(c => c !== excludeColumn)
 
@@ -2293,7 +2305,7 @@ function DateTimeFieldsCard({
       <div className="flex items-center gap-2">
         <Hash className="w-4 h-4 text-purple-600 flex-shrink-0" />
         <p className="text-xs font-semibold text-purple-800">
-          {showEnd ? 'Start / End datetime' : 'Start datetime'} <span className="font-normal text-purple-600">(optional)</span>
+          {showEnd ? 'Start / End datetime' : 'Start datetime'}
         </p>
       </div>
       <p className="text-[11px] text-purple-700/90">
@@ -2303,7 +2315,7 @@ function DateTimeFieldsCard({
       </p>
       <div className={clsx('grid gap-2.5', showEnd ? 'grid-cols-2' : 'grid-cols-1')}>
         <div className="flex flex-col gap-1">
-          <label className="text-[11px] font-medium text-purple-800">{showEnd ? 'Start datetime column' : 'Datetime column'}</label>
+          <label className="text-[11px] font-medium text-purple-800">{showEnd ? 'Start datetime column' : 'Datetime column'} <RequiredMark /></label>
           <DrugFieldColumnSelect
             value={decision.start_datetime_col}
             onChange={v => onChange({ ...decision, start_datetime_col: v })}
@@ -2316,7 +2328,7 @@ function DateTimeFieldsCard({
         </div>
         {showEnd && (
           <div className="flex flex-col gap-1">
-            <label className="text-[11px] font-medium text-purple-800">End datetime column</label>
+            <label className="text-[11px] font-medium text-purple-800">End datetime column {endRequired && <RequiredMark />}</label>
             <DrugFieldColumnSelect
               value={decision.end_datetime_col}
               onChange={v => onChange({ ...decision, end_datetime_col: v })}
@@ -2422,6 +2434,7 @@ function DrugExposureFieldsSection({
         excludeColumn={excludeColumn}
         claims={claims}
         ownVariable={ownVariable}
+        endRequired
       />
     </div>
   )
