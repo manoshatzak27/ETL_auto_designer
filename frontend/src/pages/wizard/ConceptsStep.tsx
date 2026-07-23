@@ -468,7 +468,6 @@ function CustomConceptForm({
 
 function ConceptPicker({
   projectId,
-  label: _label,
   defaultQuery,
   value,
   onSelect,
@@ -1783,9 +1782,11 @@ function DrugFieldColumnSelect({
     return () => document.removeEventListener('mousedown', handler)
   }, [open])
 
+  // Focus the search input once it mounts into the DOM on open — a genuine effect
+  // (imperative DOM interaction), unlike resetting the query text, which is now done
+  // directly in the toggle handler below instead of reacting to `open` here.
   useEffect(() => {
     if (!open) return
-    setQuery('')
     const id = requestAnimationFrame(() => inputRef.current?.focus())
     return () => cancelAnimationFrame(id)
   }, [open])
@@ -1802,7 +1803,10 @@ function DrugFieldColumnSelect({
     <div ref={rootRef} className="relative">
       <button
         type="button"
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          setOpen(o => !o)
+          if (!open) setQuery('')
+        }}
         className="w-full flex items-center justify-between gap-1 border border-purple-200 rounded px-2 py-1 text-xs bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
       >
         <span className={clsx('truncate', !value && 'text-muted-foreground')} title={value ?? undefined}>{value || '— none —'}</span>
@@ -1881,8 +1885,13 @@ function SimpleConceptIdRow({
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    if (!conceptId) { setName(null); return }
+    // `name` is only ever read from render when conceptId is truthy (see isSet/isUnmapped
+    // below), so there's nothing to reset here — skip the lookup and leave state as-is.
+    if (!conceptId) return
     let cancelled = false
+    // Standard loading-flag-before-fetch idiom — no render-derivable equivalent exists
+    // for "a request is in flight" state.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLookingUp(true)
     lookupConceptDomain(conceptId)
       .then(res => { if (!cancelled) setName(res.concept_name || null) })
@@ -2887,6 +2896,20 @@ const VariableRow = memo(function VariableRow({
     return 0
   })()
 
+  // Fields the OMOP CDM requires for this variable's domain (see RequiredMark) that
+  // haven't been mapped yet — surfaced in the header so it's visible whether the row
+  // is expanded or collapsed, not just when looking at the field itself.
+  const missingRequiredFields: string[] = (() => {
+    if (decision.strategy === 'skip') return []
+    const inRoutedDomain = isMeasurement || isDrugExposure || isProcedureOccurrence || isConditionOccurrence || isObservation
+    if (!inRoutedDomain) return []
+    const missing: string[] = []
+    if (!decision.start_datetime_col) missing.push('Start datetime')
+    if (isDrugExposure && !decision.end_datetime_col) missing.push('End datetime')
+    if (!decision.type_concept_id) missing.push('Type')
+    return missing
+  })()
+
   const sampleValues = info?.distinct_values.slice(0, 10) ?? []
   const extraCount = (info?.distinct_count ?? 0) - 10
 
@@ -2909,6 +2932,7 @@ const VariableRow = memo(function VariableRow({
   }
 
   return (
+    <div className="relative">
     <div className={clsx(
       'border rounded-lg transition-colors',
       !open && 'overflow-hidden',
@@ -3308,6 +3332,17 @@ const VariableRow = memo(function VariableRow({
         </div>
       )}
     </div>
+
+    {/* Missing required field warning — absolutely positioned outside the panel's
+        border so it never takes horizontal space from the panel itself (which would
+        otherwise shrink every row, warning or not, to keep list widths consistent). */}
+    {missingRequiredFields.length > 0 && (
+      <div className="absolute left-full top-0 ml-2 w-40 flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
+        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+        <span>{missingRequiredFields.join(', ')} required</span>
+      </div>
+    )}
+    </div>
   )
 })
 VariableRow.displayName = 'VariableRow'
@@ -3556,6 +3591,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         return next
       })
     }).finally(() => setLoading(false))
+  // project.etl_config/project.source_files are read here but deliberately excluded —
+  // this should only reload from the server on project switch or file change, not every
+  // time the project object gets a new reference from an unrelated edit elsewhere in the wizard.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, selectedFile?.filename])
 
   // Autosave: persist decisions shortly after any change (concept set/cleared, strategy
