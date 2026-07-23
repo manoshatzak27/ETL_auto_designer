@@ -4342,6 +4342,11 @@ def _generate_stem_table_script(project) -> str:
     lot_number_col_map = _drug_col_map("lot_number_col")
     stop_reason_col_map = _drug_col_map("stop_reason_col")
 
+    # Measurement (domain_id 1): sibling columns holding the reference range low/high
+    # bounds for each row, same convention as the Drug Exposure fields above.
+    range_low_col_map = _drug_col_map("range_low_col")
+    range_high_col_map = _drug_col_map("range_high_col")
+
     # Route "Fixed value" mode: route_col is null and route_concepts carries exactly one
     # entry (see UnitMappingSection's identical fixed-mode convention) — route_mapping.csv
     # has nothing to look up in that case, so apply the single concept to every row directly.
@@ -4398,6 +4403,20 @@ def _generate_stem_table_script(project) -> str:
         if len(ids) == 1:
             qualifier_fixed_map[k.lower()] = ids[0]
 
+    # Operator (Measurement) "Fixed value" mode: same convention as Qualifier —
+    # operator_col is null and operator_concepts carries exactly one entry, applied to
+    # every row directly since operator_mapping.csv has nothing to look up in that case.
+    operator_fixed_map: dict[str, int] = {}
+    for k, d in (project.concept_decisions or {}).items():
+        if not isinstance(d, dict):
+            continue
+        om_dec = d.get("operator_mapping") or {}
+        if om_dec.get("operator_col"):
+            continue
+        ids = [v for v in (om_dec.get("operator_concepts") or {}).values() if isinstance(v, int) and v > 0]
+        if len(ids) == 1:
+            operator_fixed_map[k.lower()] = ids[0]
+
     # Type: fixed drug_type_concept_id per variable, falling back to the pipeline default.
     type_fixed_map: dict[str, int] = {
         k.lower(): int(d["type_concept_id"])
@@ -4422,10 +4441,13 @@ def _generate_stem_table_script(project) -> str:
     sgc_repr = repr(sig_col_map)
     lnc_repr = repr(lot_number_col_map)
     src_repr = repr(stop_reason_col_map)
+    rlc_repr = repr(range_low_col_map)
+    rhc_repr = repr(range_high_col_map)
     rfx_repr = repr(route_fixed_map)
     mfx_repr = repr(modifier_fixed_map)
     csfx_repr = repr(condition_status_fixed_map)
     qfx_repr = repr(qualifier_fixed_map)
+    ofx_repr = repr(operator_fixed_map)
     tfx_repr = repr(type_fixed_map)
     sdc_repr = repr(start_dt_col_map)
     edc_repr = repr(end_dt_col_map)
@@ -4558,6 +4580,7 @@ def _generate_stem_table_script(project) -> str:
         "                                else:\n"
         "                                    _info(f'INFO: variable {variable!r} — unit value {unit_source_value!r} not in unit_concept_map; unit_concept_id unchanged')\n"
         "                        operator_concept_id = None\n"
+        "                        operator_source_value = None\n"
         "                        value_as_string = mapped.get('value_as_string')\n"
         "\n"
         "                        # Drug Exposure (domain_id 3) fields pulled from sibling columns —\n"
@@ -4575,6 +4598,11 @@ def _generate_stem_table_script(project) -> str:
         "                        sig = _col_str(row, SIG_COL_MAP, variable)\n"
         "                        lot_number = _col_str(row, LOT_NUMBER_COL_MAP, variable)\n"
         "                        stop_reason = _col_str(row, STOP_REASON_COL_MAP, variable)\n"
+        "\n"
+        "                        # Reference range (Measurement) fields pulled from sibling columns —\n"
+        "                        # same no-op-elsewhere convention as the Drug Exposure fields above.\n"
+        "                        range_low = _col_float(row, RANGE_LOW_COL_MAP, variable)\n"
+        "                        range_high = _col_float(row, RANGE_HIGH_COL_MAP, variable)\n"
         "\n"
         "                        # Route (Drug Exposure): per-row lookup via route_mapping.csv, same\n"
         "                        # pattern as the unit_concept_id resolution above.\n"
@@ -4644,6 +4672,21 @@ def _generate_stem_table_script(project) -> str:
         "                        if qualifier_concept_id is None:\n"
         "                            qualifier_concept_id = QUALIFIER_FIXED_MAP.get(variable.lower())\n"
         "\n"
+        "                        # Operator (Measurement): per-row lookup via operator_mapping.csv,\n"
+        "                        # same pattern as the unit_concept_id resolution above.\n"
+        "                        _operator_col = operator_col_map.get(variable.lower())\n"
+        "                        if _operator_col:\n"
+        "                            _raw_operator = row.get(_operator_col)\n"
+        "                            if pd.notnull(_raw_operator) and str(_raw_operator).strip() not in ('', 'nan'):\n"
+        "                                operator_source_value = str(_raw_operator).strip()\n"
+        "                                _looked_up_operator = operator_concept_map.get((variable.lower(), operator_source_value))\n"
+        "                                if _looked_up_operator is not None:\n"
+        "                                    operator_concept_id = _looked_up_operator\n"
+        "                                else:\n"
+        "                                    _info(f'INFO: variable {variable!r} — operator value {operator_source_value!r} not in operator_concept_map; operator_concept_id unset')\n"
+        "                        if operator_concept_id is None:\n"
+        "                            operator_concept_id = OPERATOR_FIXED_MAP.get(variable.lower())\n"
+        "\n"
         "                        # Dose unit (Drug Exposure): reuses the generic unit_concept_id/\n"
         "                        # unit_source_value resolved above from unit_mapping.csv — no\n"
         "                        # separate mechanism needed.\n"
@@ -4689,13 +4732,14 @@ def _generate_stem_table_script(project) -> str:
         "                            'end_datetime': end_datetime,\n"
         "                            'type_concept_id': type_concept_id,\n"
         "                            'operator_concept_id': operator_concept_id,\n"
+        "                            'operator_source_value': operator_source_value,\n"
         "                            'value_as_number': value_as_number,\n"
         "                            'value_as_string': value_as_string,\n"
         "                            'value_as_concept_id': value_as_concept_id,\n"
         "                            'unit_concept_id': unit_concept_id,\n"
         "                            'unit_source_value': unit_source_value,\n"
-        "                            'range_low': None,\n"
-        "                            'range_high': None,\n"
+        "                            'range_low': range_low,\n"
+        "                            'range_high': range_high,\n"
         "                            'provider_id': None,\n"
         "                            'modifier_concept_id': modifier_concept_id,\n"
         "                            'modifier_source_value': modifier_source_value,\n"
@@ -4762,6 +4806,18 @@ def _generate_stem_table_script(project) -> str:
         "        return None\n"
         "\n"
         "\n"
+        "def _col_float(row, col_map, variable):\n"
+        "    \"\"\"Like _col_str but parsed as float; logs and returns None on a non-numeric value.\"\"\"\n"
+        "    raw = _col_str(row, col_map, variable)\n"
+        "    if raw is None:\n"
+        "        return None\n"
+        "    try:\n"
+        "        return float(raw)\n"
+        "    except (ValueError, TypeError):\n"
+        "        _info(f'INFO: variable {variable!r} — column value {raw!r} is not numeric; field left unset')\n"
+        "        return None\n"
+        "\n"
+        "\n"
         "# --- Logging setup ---\n"
         "logging.basicConfig(level=logging.INFO, format='%(message)s')\n"
         "logger = logging.getLogger(__name__)\n"
@@ -4789,12 +4845,16 @@ def _generate_stem_table_script(project) -> str:
         f"SIG_COL_MAP = {sgc_repr}\n"
         f"LOT_NUMBER_COL_MAP = {lnc_repr}\n"
         f"STOP_REASON_COL_MAP = {src_repr}\n"
+        "# Measurement (domain_id 1): variable (lowercase) → sibling column supplying each field.\n"
+        f"RANGE_LOW_COL_MAP = {rlc_repr}\n"
+        f"RANGE_HIGH_COL_MAP = {rhc_repr}\n"
         "# Fixed (per-variable, not per-row) fallbacks — used when the column-based\n"
         "# mapping/lookup for that field has nothing configured.\n"
         f"ROUTE_FIXED_MAP = {rfx_repr}\n"
         f"MODIFIER_FIXED_MAP = {mfx_repr}\n"
         f"CONDITION_STATUS_FIXED_MAP = {csfx_repr}\n"
         f"QUALIFIER_FIXED_MAP = {qfx_repr}\n"
+        f"OPERATOR_FIXED_MAP = {ofx_repr}\n"
         f"TYPE_FIXED_MAP = {tfx_repr}\n"
         f"START_DATETIME_COL_MAP = {sdc_repr}\n"
         f"END_DATETIME_COL_MAP = {edc_repr}\n"
@@ -4891,6 +4951,7 @@ def _generate_stem_table_script(project) -> str:
         "    mm = _load_csv(os.environ.get('ETL_MAPPING_modifier_mapping', ''))\n"
         "    csm = _load_csv(os.environ.get('ETL_MAPPING_condition_status_mapping', ''))\n"
         "    qm = _load_csv(os.environ.get('ETL_MAPPING_qualifier_mapping', ''))\n"
+        "    om = _load_csv(os.environ.get('ETL_MAPPING_operator_mapping', ''))\n"
         "\n"
         "    # Build in-memory concept lookup dicts from mapping CSVs\n"
         "    var_map     = {r['variable_source_code'].lower(): int(r['target_concept_id']) for _, r in vm.iterrows()} if not vm.empty else {}\n"
@@ -4959,6 +5020,16 @@ def _generate_stem_table_script(project) -> str:
         "            qualifier_col_map[v]                                       = str(r['qualifier_col'])\n"
         "            qualifier_concept_map[(v, str(r['qualifier_source_value']))] = int(r['qualifier_concept_id'])\n"
         "\n"
+        "    # operator_col_map:     variable → source column holding the operator string\n"
+        "    # operator_concept_map: (variable, operator_source_value) → operator_concept_id\n"
+        "    operator_col_map     = {}\n"
+        "    operator_concept_map = {}\n"
+        "    if not om.empty:\n"
+        "        for _, r in om.iterrows():\n"
+        "            v = str(r['variable_source_code']).lower()\n"
+        "            operator_col_map[v]                                     = str(r['operator_col'])\n"
+        "            operator_concept_map[(v, str(r['operator_source_value']))] = int(r['operator_concept_id'])\n"
+        "\n"
         "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
@@ -4975,7 +5046,7 @@ def _generate_stem_table_script(project) -> str:
         "    STEM_COLUMNS = [\n"
         "        'id', 'domain_id', 'person_id', 'visit_occurrence_id', 'visit_detail_id',\n"
         "        'concept_id', 'start_date', 'start_datetime', 'end_date', 'end_datetime',\n"
-        "        'type_concept_id', 'operator_concept_id', 'value_as_number', 'value_as_string',\n"
+        "        'type_concept_id', 'operator_concept_id', 'operator_source_value', 'value_as_number', 'value_as_string',\n"
         "        'value_as_concept_id', 'unit_concept_id', 'unit_source_value',\n"
         "        'range_low', 'range_high', 'provider_id', 'modifier_concept_id', 'modifier_source_value', 'quantity',\n"
         "        'value_source_value', 'source_value', 'source_concept_id', 'record_source_value',\n"

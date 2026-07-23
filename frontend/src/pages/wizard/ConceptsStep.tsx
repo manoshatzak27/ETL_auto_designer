@@ -83,6 +83,13 @@ interface QualifierMapping {
 
 const EMPTY_QUALIFIER_MAPPING: QualifierMapping = { qualifier_col: null, qualifier_concepts: {} }
 
+interface OperatorMapping {
+  operator_col: string | null
+  operator_concepts: Record<string, number>  // operator_source_value → operator_concept_id
+}
+
+const EMPTY_OPERATOR_MAPPING: OperatorMapping = { operator_col: null, operator_concepts: {} }
+
 interface VariableDecision {
   strategy: Strategy
   variable_concept: ConceptRef | null
@@ -116,6 +123,14 @@ interface VariableDecision {
   // Observation (domain_id 2) only: qualifier_concept_id / qualifier_source_value,
   // same fixed-or-per-column convention. No domain restriction (any Standard concept).
   qualifier_mapping?: QualifierMapping
+  // Measurement (domain_id 1) only: operator_concept_id / operator_source_value
+  // (e.g. =, >, <), same fixed-or-per-column convention, must resolve to the OMOP
+  // "Meas Value Operator" domain.
+  operator_mapping?: OperatorMapping
+  // Measurement (domain_id 1) only: sibling columns holding the reference range
+  // low/high bounds for each row, pulled in verbatim (same unit as value_as_number).
+  range_low_col?: string | null
+  range_high_col?: string | null
   // Fixed only — drug_type_concept_id for every row of this variable, must resolve to
   // the OMOP "Type Concept" domain. Falls back to the pipeline default (32879) when unset.
   type_concept_id?: number | null
@@ -1609,6 +1624,105 @@ function QualifierMappingSection({
   )
 }
 
+// Operator (Measurement) — operator_concept_id / operator_source_value (e.g. =, >, <),
+// same fixed-or-per-column convention as Qualifier above, but validated against the
+// OMOP "Meas Value Operator" domain like Route/Condition Status are.
+function OperatorMappingSection({
+  operatorMapping,
+  onChange,
+  columnInfos,
+  fileColumns,
+  excludeColumn,
+  claims,
+  ownVariable,
+}: {
+  operatorMapping: OperatorMapping
+  onChange: (m: OperatorMapping) => void
+  columnInfos: Record<string, ColumnInfo>
+  fileColumns: string[]
+  excludeColumn: string
+  claims?: Record<string, { variable: string; fieldKey: string; label: string }>
+  ownVariable?: string
+}) {
+  const [mode, setMode] = useState<'fixed' | 'column'>(operatorMapping.operator_col ? 'column' : 'fixed')
+  const fixed = getFixedConcept(operatorMapping.operator_col, operatorMapping.operator_concepts)
+
+  const validateOperatorDomain = (domainStr: string | null): string | null => {
+    if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    if (domainStr.toLowerCase() !== 'meas value operator') {
+      return `"${domainStr}" is not a Meas Value Operator concept. Pick a concept from the Meas Value Operator domain (e.g. =, >, <).`
+    }
+    return null
+  }
+
+  return (
+    <div className="flex flex-col gap-2 rounded-lg border border-rose-200 bg-rose-50/40 p-3">
+      <div className="flex items-center gap-2">
+        <Tag className="w-4 h-4 text-rose-600 flex-shrink-0" />
+        <p className="text-xs font-semibold text-rose-800">
+          Operator <span className="font-normal text-rose-600">(optional)</span>
+        </p>
+        <a
+          href="https://athena.ohdsi.org/search-terms/terms?domain=Meas+Value+Operator&standardConcept=Standard&page=1&pageSize=15&query="
+          target="_blank"
+          rel="noopener noreferrer"
+          className="ml-auto text-[10px] text-rose-600 hover:text-rose-800 hover:underline flex-shrink-0"
+        >
+          ↗ Accepted Concepts
+        </a>
+      </div>
+      <p className="text-[11px] text-rose-700/90">
+        {mode === 'fixed'
+          ? 'Hardcode the result operator for this variable (e.g. =, >), if every record shares the same one. Leave unset when results are exact numeric values.'
+          : "Pick a column holding the operator for each row (e.g. <, >, =), then map each of its distinct values to a concept id — 0 marks a value as explicitly not mapped."}
+      </p>
+
+      <div className="flex rounded border border-rose-200 overflow-hidden text-[11px] w-fit">
+        <button
+          type="button"
+          onClick={() => setMode('fixed')}
+          className={clsx('px-2 py-1', mode === 'fixed' ? 'bg-rose-600 text-white' : 'text-rose-600 hover:bg-rose-50')}
+        >
+          Fixed value
+        </button>
+        <button
+          type="button"
+          onClick={() => setMode('column')}
+          className={clsx('px-2 py-1 border-l border-rose-200', mode === 'column' ? 'bg-rose-600 text-white' : 'text-rose-600 hover:bg-rose-50')}
+        >
+          From column
+        </button>
+      </div>
+
+      {mode === 'fixed' ? (
+        <FixedConceptInput
+          id={fixed?.id}
+          name={fixed?.name}
+          onSet={(id, name) => onChange({ operator_col: null, operator_concepts: { [name]: id } })}
+          onClear={() => onChange({ operator_col: null, operator_concepts: {} })}
+          theme={ROSE_THEME}
+          validateDomain={validateOperatorDomain}
+        />
+      ) : (
+        <ColumnValueIdMapper
+          col={operatorMapping.operator_col}
+          concepts={operatorMapping.operator_concepts}
+          onColChange={col => onChange({ operator_col: col, operator_concepts: {} })}
+          onConceptsChange={concepts => onChange({ ...operatorMapping, operator_concepts: concepts })}
+          columnInfos={columnInfos}
+          fileColumns={fileColumns}
+          excludeColumn={excludeColumn}
+          accentClass="bg-rose-100 text-rose-800"
+          validateDomain={validateOperatorDomain}
+          claims={claims}
+          ownVariable={ownVariable}
+          fieldKey="operator_col"
+        />
+      )}
+    </div>
+  )
+}
+
 // Sibling-column fields that get pulled verbatim into a drug_exposure row.
 // Keyed by the VariableDecision field that stores the chosen source column.
 // Route and Dose unit are NOT here — they get their own per-value concept
@@ -1624,6 +1738,17 @@ const DRUG_COLUMN_FIELDS: {
   { key: 'sig_col',         label: 'Sig / instructions',  hint: 'fills sig' },
   { key: 'lot_number_col',  label: 'Lot number',          hint: 'fills lot_number' },
   { key: 'stop_reason_col', label: 'Stop reason',         hint: 'fills stop_reason' },
+]
+
+// Measurement (domain_id 1) sibling-column fields — reference range bounds pulled
+// in verbatim, same convention as DRUG_COLUMN_FIELDS above.
+const MEASUREMENT_COLUMN_FIELDS: {
+  key: 'range_low_col' | 'range_high_col'
+  label: string
+  hint: string
+}[] = [
+  { key: 'range_low_col',  label: 'Range low',  hint: 'fills range_low' },
+  { key: 'range_high_col', label: 'Range high', hint: 'fills range_high' },
 ]
 
 // Searchable column picker for a single Drug Exposure field — a text input lives inside
@@ -2102,7 +2227,7 @@ function SimpleColumnFieldCard({
   claims,
   ownVariable,
 }: {
-  field: (typeof DRUG_COLUMN_FIELDS)[number]
+  field: (typeof DRUG_COLUMN_FIELDS)[number] | (typeof MEASUREMENT_COLUMN_FIELDS)[number]
   value: string | null | undefined
   onChange: (v: string | null) => void
   options: string[]
@@ -2505,6 +2630,85 @@ function ObservationFieldsSection({
   )
 }
 
+function MeasurementFieldsSection({
+  decision,
+  onChange,
+  fileColumns,
+  columnInfos,
+  excludeColumn,
+  ownVariable,
+  claims,
+}: {
+  decision: VariableDecision
+  onChange: (d: VariableDecision) => void
+  fileColumns: string[]
+  columnInfos: Record<string, ColumnInfo>
+  excludeColumn: string
+  ownVariable: string
+  claims: Record<string, { variable: string; fieldKey: string; label: string }>
+}) {
+  const options = fileColumns.filter(c => c !== excludeColumn)
+  const operatorMapping = decision.operator_mapping ?? EMPTY_OPERATOR_MAPPING
+  const rangeLowField = MEASUREMENT_COLUMN_FIELDS.find(f => f.key === 'range_low_col')!
+  const rangeHighField = MEASUREMENT_COLUMN_FIELDS.find(f => f.key === 'range_high_col')!
+
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-xs font-semibold text-muted-foreground">Measurement fields (optional)</p>
+
+      <TypeConceptCard
+        conceptId={decision.type_concept_id}
+        conceptName={decision.type_concept_name}
+        onSet={(id, name) => onChange({ ...decision, type_concept_id: id, type_concept_name: name })}
+        onClear={() => onChange({ ...decision, type_concept_id: null, type_concept_name: null })}
+        description={
+          <>
+            Hardcode the provenance of this variable's measurement records (e.g. Lab result,
+            Vital sign recorded from a device). Leave blank to use the pipeline default (EHR, 32879).
+          </>
+        }
+      />
+      <OperatorMappingSection
+        operatorMapping={operatorMapping}
+        onChange={m => onChange({ ...decision, operator_mapping: m })}
+        columnInfos={columnInfos}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+      />
+      <div className="grid grid-cols-2 gap-2.5">
+        <SimpleColumnFieldCard
+          field={rangeLowField}
+          value={decision.range_low_col}
+          onChange={v => onChange({ ...decision, range_low_col: v })}
+          options={options}
+          claims={claims}
+          ownVariable={ownVariable}
+        />
+        <SimpleColumnFieldCard
+          field={rangeHighField}
+          value={decision.range_high_col}
+          onChange={v => onChange({ ...decision, range_high_col: v })}
+          options={options}
+          claims={claims}
+          ownVariable={ownVariable}
+        />
+      </div>
+      <DateTimeFieldsCard
+        decision={decision}
+        onChange={onChange}
+        fileColumns={fileColumns}
+        excludeColumn={excludeColumn}
+        claims={claims}
+        ownVariable={ownVariable}
+        startHint="fills measurement_date(time)"
+        showEnd={false}
+      />
+    </div>
+  )
+}
+
 // ── Extra instructions (AI) — locally-buffered textarea ────────────────────
 //
 // With ~1000 columns on the page, committing every keystroke straight to the
@@ -2650,6 +2854,11 @@ const VariableRow = memo(function VariableRow({
   const isObservation =
     decision.domain_id === 2 ||
     (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 2))
+
+  // Same map_values fallback as isDrugExposure above, for Measurement.
+  const isMeasurement =
+    decision.domain_id === 1 ||
+    (decision.strategy === 'map_values' && Object.values(decision.value_concepts).some(vc => vc.domain_id === 1))
 
   const mappingCompleteness = (() => {
     if (decision.strategy === 'skip') return 0
@@ -3052,6 +3261,20 @@ const VariableRow = memo(function VariableRow({
             />
           )}
 
+          {/* Measurement fields (optional) — Type, Operator, Range low/high, Start datetime.
+              Unit is shown separately above (shared with Observation). */}
+          {isMeasurement && decision.strategy !== 'skip' && (
+            <MeasurementFieldsSection
+              decision={decision}
+              onChange={onChange}
+              fileColumns={fileColumns}
+              columnInfos={columnInfos}
+              excludeColumn={column}
+              ownVariable={column}
+              claims={drugFieldClaims}
+            />
+          )}
+
           {/* Extra instructions (AI) — per-variable free-text guidance */}
           {decision.strategy !== 'skip' && (
             <div className="flex flex-col gap-1.5">
@@ -3440,6 +3663,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         const col = d[f.key]
         if (col && !claims[col]) claims[col] = { variable, fieldKey: f.key, label: f.label }
       }
+      for (const f of MEASUREMENT_COLUMN_FIELDS) {
+        const col = d[f.key]
+        if (col && !claims[col]) claims[col] = { variable, fieldKey: f.key, label: f.label }
+      }
       const unitCol = d.unit_mapping?.unit_col
       if (unitCol && !claims[unitCol]) claims[unitCol] = { variable, fieldKey: 'unit_col', label: 'Unit' }
       const routeCol = d.route_mapping?.route_col
@@ -3452,6 +3679,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       }
       const qualifierCol = d.qualifier_mapping?.qualifier_col
       if (qualifierCol && !claims[qualifierCol]) claims[qualifierCol] = { variable, fieldKey: 'qualifier_col', label: 'Qualifier' }
+      const operatorCol = d.operator_mapping?.operator_col
+      if (operatorCol && !claims[operatorCol]) claims[operatorCol] = { variable, fieldKey: 'operator_col', label: 'Operator' }
       if (d.start_datetime_col && !claims[d.start_datetime_col]) {
         claims[d.start_datetime_col] = { variable, fieldKey: 'start_datetime_col', label: 'Start datetime' }
       }

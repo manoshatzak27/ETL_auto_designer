@@ -85,6 +85,7 @@ def generate_mapping_csvs(
     modifier_rows: list[dict] = []
     condition_status_rows: list[dict] = []
     qualifier_rows: list[dict] = []
+    operator_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
         strategy = decision.get("strategy", "skip")
@@ -187,6 +188,20 @@ def generate_mapping_csvs(
                         "qualifier_concept_id": int(qualifier_cid),
                     })
 
+        # --- operator_mapping.csv  (measurement operator_source_value → operator_concept_id) ---
+        operator_mapping = decision.get("operator_mapping") or {}
+        operator_col: str | None = operator_mapping.get("operator_col")
+        operator_concepts: dict = operator_mapping.get("operator_concepts") or {}
+        if operator_col and operator_concepts:
+            for operator_val, operator_cid in operator_concepts.items():
+                if operator_cid:
+                    operator_rows.append({
+                        "variable_source_code": variable,
+                        "operator_col": operator_col,
+                        "operator_source_value": operator_val,
+                        "operator_concept_id": int(operator_cid),
+                    })
+
     files: dict[str, str] = {}
 
     if variable_rows:
@@ -244,6 +259,12 @@ def generate_mapping_csvs(
         p = str(output_path / "qualifier_mapping.csv")
         df.to_csv(p, index=False, encoding="utf-8")
         files["qualifier_mapping"] = p
+
+    if operator_rows:
+        df = pd.DataFrame(operator_rows).sort_values(["variable_source_code", "operator_source_value"])
+        p = str(output_path / "operator_mapping.csv")
+        df.to_csv(p, index=False, encoding="utf-8")
+        files["operator_mapping"] = p
 
     return files
 
