@@ -3800,15 +3800,21 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const idsAddedCount = enabledConceptCols.reduce((sum, c) => {
     const d = decisions[c]
     if (!d || d.strategy === 'skip') return sum
+    // 0 is the "explicitly not mapped" placeholder (see SimpleConceptIdRow) — it
+    // shouldn't count as an added concept id.
+    const countMapped = (concepts: Record<string, number>) =>
+      Object.values(concepts).filter(id => id !== 0).length
     let n = 0
-    if ((d.strategy === 'map_variable' || d.strategy === 'map_both') && d.variable_concept) n += 1
-    if (d.strategy === 'map_values' || d.strategy === 'map_both') n += Object.keys(d.value_concepts).length
+    if ((d.strategy === 'map_variable' || d.strategy === 'map_both') && d.variable_concept && d.variable_concept.concept_id !== 0) n += 1
+    if (d.strategy === 'map_values' || d.strategy === 'map_both') {
+      n += Object.values(d.value_concepts).filter(vc => vc.concept_id !== 0).length
+    }
     if (d.type_concept_id) n += 1
-    if (d.route_mapping) n += Object.keys(d.route_mapping.route_concepts).length
-    if (d.unit_mapping) n += Object.keys(d.unit_mapping.unit_concepts).length
-    if (d.modifier_mapping) n += Object.keys(d.modifier_mapping.modifier_concepts).length
-    if (d.condition_status_mapping) n += Object.keys(d.condition_status_mapping.condition_status_concepts).length
-    if (d.qualifier_mapping) n += Object.keys(d.qualifier_mapping.qualifier_concepts).length
+    if (d.route_mapping) n += countMapped(d.route_mapping.route_concepts)
+    if (d.unit_mapping) n += countMapped(d.unit_mapping.unit_concepts)
+    if (d.modifier_mapping) n += countMapped(d.modifier_mapping.modifier_concepts)
+    if (d.condition_status_mapping) n += countMapped(d.condition_status_mapping.condition_status_concepts)
+    if (d.qualifier_mapping) n += countMapped(d.qualifier_mapping.qualifier_concepts)
     return sum + n
   }, 0)
 
