@@ -95,6 +95,10 @@ interface VariableDecision {
   variable_concept: ConceptRef | null
   value_concepts: Record<string, ConceptRef>
   domain_id: number | null
+  // Whether this variable is included in mapping at all — ticked by default. Unticking
+  // excludes it from the "Variables to map" totals and locks the row so it can't be mapped,
+  // independent of `strategy` (which only applies once the variable is included).
+  enabled?: boolean
   unit_mapping?: UnitMapping
   // Free-text guidance for how this variable should be transformed/loaded
   // into the stem table. Folded into the AI prompt when the stem_table
@@ -2935,6 +2939,27 @@ const VariableRow = memo(function VariableRow({
     )
   }
 
+  // Unticked by the user — excluded from mapping entirely and from the "Variables to
+  // map" totals. Rendered as a locked, collapsed row (re-tick to restore full editing).
+  if (decision.enabled === false) {
+    return (
+      <div
+        className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-dashed border-border bg-muted/30 opacity-60"
+        title={`${column} is excluded from mapping — tick the box to include it again.`}
+      >
+        <input
+          type="checkbox"
+          checked={false}
+          onChange={e => onChange({ ...decision, enabled: e.target.checked })}
+          className="rounded accent-primary flex-shrink-0"
+          title="Include this variable in mapping"
+        />
+        <span className="font-mono text-sm font-medium text-muted-foreground w-64 flex-shrink-0 truncate" title={column}>{column}</span>
+        <span className="text-xs text-muted-foreground">Excluded from mapping</span>
+      </div>
+    )
+  }
+
   return (
     <div className="relative">
     <div className={clsx(
@@ -2946,6 +2971,15 @@ const VariableRow = memo(function VariableRow({
     )}>
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-2.5 bg-card">
+        <input
+          type="checkbox"
+          checked={true}
+          onChange={e => onChange({ ...decision, enabled: e.target.checked })}
+          className="rounded accent-primary flex-shrink-0"
+          onClick={e => e.stopPropagation()}
+          title="Include this variable in mapping"
+        />
+
         {batchMode && (
           <input
             type="checkbox"
@@ -3756,10 +3790,14 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return !!d && d.strategy !== 'skip' && (!!d.variable_concept || Object.keys(d.value_concepts).length > 0)
   }
 
+  // Variables the user unticked are excluded from mapping entirely, so they don't
+  // count toward "Variables to map" or any of the stats derived from that pool.
+  const enabledConceptCols = conceptCols.filter(c => decisions[c]?.enabled !== false)
+
   // Stats
-  const mappedCount = conceptCols.filter(isColumnMapped).length
-  const skippedCount = conceptCols.filter(c => !drugFieldClaims[c] && decisions[c]?.strategy === 'skip').length
-  const idsAddedCount = conceptCols.reduce((sum, c) => {
+  const mappedCount = enabledConceptCols.filter(isColumnMapped).length
+  const skippedCount = enabledConceptCols.filter(c => !drugFieldClaims[c] && decisions[c]?.strategy === 'skip').length
+  const idsAddedCount = enabledConceptCols.reduce((sum, c) => {
     const d = decisions[c]
     if (!d || d.strategy === 'skip') return sum
     let n = 0
@@ -3875,7 +3913,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               {files.map((f, idx) => {
                 const isActive = f.filename === selectedFile?.filename
                 const fileCols = f.columns ?? []
-                const fileConceptCols = fileCols.filter(c => !structuralCols.has(c))
+                const fileConceptCols = fileCols.filter(c => !structuralCols.has(c) && decisions[c]?.enabled !== false)
                 const fileMapped = fileConceptCols.filter(c => {
                   const d = decisions[c]
                   return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
@@ -3909,7 +3947,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         {/* Stats */}
         <div className="grid grid-cols-4 gap-3">
           <div className="bg-card border border-border rounded-lg p-3 text-center">
-            <p className="text-xl font-bold text-foreground">{conceptCols.length}</p>
+            <p className="text-xl font-bold text-foreground">{enabledConceptCols.length}</p>
             <p className="text-xs text-muted-foreground">Variables to map</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">

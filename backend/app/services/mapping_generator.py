@@ -88,6 +88,9 @@ def generate_mapping_csvs(
     operator_rows: list[dict] = []
 
     for variable, decision in concept_decisions.items():
+        if decision.get("enabled") is False:
+            continue
+
         strategy = decision.get("strategy", "skip")
         if strategy == "skip":
             continue
