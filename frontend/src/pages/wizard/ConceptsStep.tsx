@@ -1947,21 +1947,25 @@ function SimpleConceptIdRow({
             </button>
           </span>
         )}
-        <input
-          type="number"
-          value={manualId}
-          onChange={e => { setManualId(e.target.value); setError(null) }}
-          onKeyDown={e => e.key === 'Enter' && apply()}
-          placeholder="ID"
-          className="border border-border rounded px-1.5 py-0.5 text-xs w-16 flex-shrink-0 bg-white focus:outline-none focus:ring-1 focus:ring-ring"
-        />
-        <button
-          onClick={apply}
-          disabled={!manualId || lookingUp}
-          className="px-1.5 py-0.5 text-[11px] rounded flex-shrink-0 bg-primary text-primary-foreground disabled:opacity-30 hover:bg-primary/90"
-        >
-          Set
-        </button>
+        {!isSet && (
+          <>
+            <input
+              type="number"
+              value={manualId}
+              onChange={e => { setManualId(e.target.value); setError(null) }}
+              onKeyDown={e => e.key === 'Enter' && apply()}
+              placeholder="ID"
+              className="border border-border rounded px-1.5 py-0.5 text-xs w-16 flex-shrink-0 bg-white focus:outline-none focus:ring-1 focus:ring-ring"
+            />
+            <button
+              onClick={apply}
+              disabled={!manualId || lookingUp}
+              className="px-1.5 py-0.5 text-[11px] rounded flex-shrink-0 bg-primary text-primary-foreground disabled:opacity-30 hover:bg-primary/90"
+            >
+              Set
+            </button>
+          </>
+        )}
       </div>
       {error && (
         <p className="text-[11px] text-red-600 flex items-start gap-1">
