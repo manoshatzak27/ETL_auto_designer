@@ -56,8 +56,26 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [error, setError] = useState('')
   const [pendingScripts, setPendingScripts] = useState<Record<string, string> | null>(null)
+  const [nearPageBottom, setNearPageBottom] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+
+  // Track whether the page itself is scrolled to the bottom (footer nav visible),
+  // so the floating panel can lift above it instead of overlapping the Next button
+  useEffect(() => {
+    const checkScroll = () => {
+      const distanceFromBottom =
+        document.documentElement.scrollHeight - (window.innerHeight + window.scrollY)
+      setNearPageBottom(distanceFromBottom < 24)
+    }
+    checkScroll()
+    window.addEventListener('scroll', checkScroll, { passive: true })
+    window.addEventListener('resize', checkScroll)
+    return () => {
+      window.removeEventListener('scroll', checkScroll)
+      window.removeEventListener('resize', checkScroll)
+    }
+  }, [])
 
   // Load chat history when panel opens
   useEffect(() => {
@@ -156,7 +174,10 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
       {!open && (
         <Button
           onClick={() => setOpen(true)}
-          className="fixed bottom-20 right-6 z-40 rounded-full px-4 py-3 shadow-lg font-medium text-sm"
+          className={cn(
+            'fixed right-6 z-40 rounded-full px-4 py-3 shadow-lg font-medium text-sm transition-[bottom] duration-200',
+            nearPageBottom ? 'bottom-24' : 'bottom-6',
+          )}
         >
           <MessageSquare className="w-4 h-4" />
           Chat with AI
@@ -165,7 +186,12 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
 
       {/* Panel */}
       {open && (
-        <div className="fixed bottom-[72px] right-4 z-50 flex flex-col w-[420px] h-[580px] bg-card border border-border rounded-2xl shadow-2xl">
+        <div
+          className={cn(
+            'fixed right-4 z-50 flex flex-col w-[640px] h-[80vh] max-h-[840px] bg-card border border-border rounded-2xl shadow-2xl transition-[bottom] duration-200',
+            nearPageBottom ? 'bottom-24' : 'bottom-4',
+          )}
+        >
           {/* Header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-secondary/60 rounded-t-2xl flex-shrink-0">
             <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0">

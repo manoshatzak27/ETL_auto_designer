@@ -207,11 +207,21 @@ async def chat(
         model=settings.openai_model,
         messages=messages,
         temperature=0.3,
-        max_tokens=8192,
+        max_tokens=16000,
     )
 
-    content = response.choices[0].message.content or ""
+    choice = response.choices[0]
+    content = choice.message.content or ""
     updated_code = _extract_code(content)
+
+    # A long script can get cut off before the closing ``` fence, in which case
+    # no code is extracted — tell the user instead of silently dropping the update.
+    if updated_code is None and choice.finish_reason == "length":
+        content += (
+            "\n\n⚠️ This response was cut off before the code block finished, "
+            "so no update could be applied. Try asking again, or request the "
+            "change in smaller steps."
+        )
 
     return {
         "response": content,
