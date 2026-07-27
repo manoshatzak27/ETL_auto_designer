@@ -5378,9 +5378,16 @@ async def _apply_extra_instructions(code: str, instructions: str, table: str) ->
             },
         ],
         temperature=0.1,
-        max_tokens=8192,
+        max_tokens=16000,
     )
-    content = response.choices[0].message.content or ""
+    choice = response.choices[0]
+    content = choice.message.content or ""
+    if choice.finish_reason == "length":
+        raise ValueError(
+            f"The AI patch for the {table} script was cut off before it finished "
+            "(the script + instructions were too long for one response). "
+            "Try shortening the extra instructions or splitting them into smaller steps."
+        )
     return _strip_fences(content)
 
 
