@@ -2758,9 +2758,19 @@ function ExtraInstructionsInput({
   column: string
 }) {
   const [draft, setDraft] = useState(value)
+  const [syncedValue, setSyncedValue] = useState(value)
+  const [focused, setFocused] = useState(false)
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  useEffect(() => { setDraft(value) }, [value])
+  // Resync local draft when the parent's `value` changes for a reason other than
+  // our own edits — but never while focused, since a debounce round-trip (or an
+  // unrelated field's onChange spreading a stale `decision`) can otherwise echo
+  // back an older string mid-edit and snap the caret to the end. Done during
+  // render (not an effect) per React's "adjusting state when a prop changes".
+  if (value !== syncedValue && !focused) {
+    setSyncedValue(value)
+    setDraft(value)
+  }
 
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
@@ -2778,7 +2788,8 @@ function ExtraInstructionsInput({
     <Textarea
       value={draft}
       onChange={e => { setDraft(e.target.value); scheduleCommit(e.target.value) }}
-      onBlur={flush}
+      onFocus={() => setFocused(true)}
+      onBlur={() => { setFocused(false); flush() }}
       rows={4}
       placeholder={`e.g. "Convert ${column} from Fahrenheit to Celsius before loading."`}
       className="font-mono text-xs resize-y"
@@ -2907,15 +2918,24 @@ const VariableRow = memo(function VariableRow({
   // Fields the OMOP CDM requires for this variable's domain (see RequiredMark) that
   // haven't been mapped yet — surfaced in the header so it's visible whether the row
   // is expanded or collapsed, not just when looking at the field itself.
+  // Start datetime is excluded from this error list: when unmapped, the ETL falls
+  // back to the row's visit_occurrence date, so it's a heads-up rather than a
+  // problem — see `startDatetimeUnmapped` below.
   const missingRequiredFields: string[] = (() => {
     if (decision.strategy === 'skip') return []
     const inRoutedDomain = isMeasurement || isDrugExposure || isProcedureOccurrence || isConditionOccurrence || isObservation
     if (!inRoutedDomain) return []
     const missing: string[] = []
-    if (!decision.start_datetime_col) missing.push('Start datetime')
     if (isDrugExposure && !decision.end_datetime_col) missing.push('End datetime')
     if (!decision.type_concept_id) missing.push('Type')
     return missing
+  })()
+
+  const startDatetimeUnmapped = (() => {
+    if (decision.strategy === 'skip') return false
+    const inRoutedDomain = isMeasurement || isDrugExposure || isProcedureOccurrence || isConditionOccurrence || isObservation
+    if (!inRoutedDomain) return false
+    return !decision.start_datetime_col
   })()
 
   const sampleValues = info?.distinct_values.slice(0, 10) ?? []
@@ -3374,10 +3394,20 @@ const VariableRow = memo(function VariableRow({
     {/* Missing required field warning — absolutely positioned outside the panel's
         border so it never takes horizontal space from the panel itself (which would
         otherwise shrink every row, warning or not, to keep list widths consistent). */}
-    {missingRequiredFields.length > 0 && (
-      <div className="absolute left-full top-0 ml-2 w-40 flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
-        <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-        <span>{missingRequiredFields.join(', ')} required</span>
+    {(missingRequiredFields.length > 0 || startDatetimeUnmapped) && (
+      <div className="absolute left-full top-0 ml-2 w-44 flex flex-col gap-1">
+        {startDatetimeUnmapped && (
+          <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
+            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>Start datetime not mapped — parsed from visit occurrence</span>
+          </div>
+        )}
+        {missingRequiredFields.length > 0 && (
+          <div className="flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>{missingRequiredFields.join(', ')} required</span>
+          </div>
+        )}
       </div>
     )}
     </div>
@@ -3745,6 +3775,13 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // some variable — those columns can be seen but not mapped on their own (main list), and
   // are disabled in every OTHER Drug Exposure field picker (their own claiming field/variable
   // stays selectable so the current selection still renders).
+  // Recomputed from the whole `decisions` map, so it would otherwise get a new
+  // object reference on every single-field commit anywhere on the page (e.g.
+  // typing extra instructions in one row) — and since it's handed to every
+  // VariableRow, that reference change alone would defeat memo() for the
+  // entire list on every commit. Keep the previous reference when the actual
+  // claim contents haven't changed so unaffected rows don't re-render.
+  const drugFieldClaimsRef = useRef<Record<string, { variable: string; fieldKey: string; label: string }>>({})
   const drugFieldClaims = useMemo(() => {
     const claims: Record<string, { variable: string; fieldKey: string; label: string }> = {}
     for (const [variable, d] of Object.entries(decisions)) {
@@ -3778,6 +3815,17 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         claims[d.end_datetime_col] = { variable, fieldKey: 'end_datetime_col', label: 'End datetime' }
       }
     }
+    const prev = drugFieldClaimsRef.current
+    const prevKeys = Object.keys(prev)
+    const sameContent =
+      prevKeys.length === Object.keys(claims).length &&
+      prevKeys.every(k => {
+        const a = prev[k]
+        const b = claims[k]
+        return !!b && a.variable === b.variable && a.fieldKey === b.fieldKey && a.label === b.label
+      })
+    if (sameContent) return prev
+    drugFieldClaimsRef.current = claims
     return claims
   }, [decisions])
 
