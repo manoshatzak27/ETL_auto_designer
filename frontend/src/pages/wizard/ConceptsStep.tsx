@@ -9,7 +9,6 @@ import {
   lookupConceptDomain,
   conceptSearch,
   getApiHealth,
-  updateProjectSettings,
   updateTableConfig,
 } from '../../api/client'
 import type { Project } from '../../types'
@@ -24,6 +23,7 @@ import {
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
 import { Textarea } from '@/components/ui/textarea'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 
 interface Props {
   project: Project
@@ -201,16 +201,39 @@ const COMMON_CONCEPT_CLASSES = [
   'Disorder', 'Finding', 'Event', 'Custom',
 ] as const
 
+// Vocabulary id every newly-created custom concept starts with.
+const DEFAULT_CUSTOM_VOCABULARY = 'CUSTOM'
+
+// ── Custom concepts created project-wide ────────────────────────────────────
+
+interface CustomConceptUsage {
+  column: string
+  file: string | null
+  value?: string  // present when this usage is a per-value concept, not the variable concept
+}
+
+interface CustomConceptEntry {
+  concept_id: number
+  concept_name: string
+  concept_code?: string
+  vocabulary_id?: string
+  domain?: string
+  usages: CustomConceptUsage[]
+  // true if usages disagree on name/code/vocab — likely an accidental ID collision
+  // from before duplicate IDs were blocked at creation time
+  conflicting: boolean
+}
+
 // ── Shared per-page settings (avoid prop-drilling) ─────────────────────────
 
 interface ConceptsSettings {
   rerankerAvailable: boolean
-  customVocabularyId: string
+  usedCustomConceptIds: Map<number, CustomConceptEntry>
 }
 
 const ConceptsCtx = createContext<ConceptsSettings>({
   rerankerAvailable: false,
-  customVocabularyId: 'CUSTOM',
+  usedCustomConceptIds: new Map(),
 })
 
 const useConceptsSettings = () => useContext(ConceptsCtx)
@@ -335,27 +358,32 @@ function useConceptSearch(projectId: string) {
 
 function CustomConceptForm({
   defaultName,
-  defaultVocabularyId,
   onCancel,
   onCreate,
 }: {
   defaultName: string
-  defaultVocabularyId: string
   onCancel: () => void
   onCreate: (c: ConceptRef) => void
 }) {
-  const [conceptId, setConceptId] = useState('2000000001')
+  const { usedCustomConceptIds } = useConceptsSettings()
+  // Default to the next free custom id so most users never hit a collision —
+  // only fires if they manually type an id that's already taken (see isDuplicate below).
+  const [conceptId, setConceptId] = useState(() => {
+    const maxUsed = Math.max(2_000_000_000, ...usedCustomConceptIds.keys())
+    return String(maxUsed + 1)
+  })
   const [conceptName, setConceptName] = useState(defaultName)
   const [conceptCode, setConceptCode] = useState('')
   const [domain, setDomain] = useState<string>('Observation')
   const [conceptClass, setConceptClass] = useState('Clinical Finding')
-  const [vocabularyId, setVocabularyId] = useState(defaultVocabularyId)
+  const [vocabularyId, setVocabularyId] = useState(DEFAULT_CUSTOM_VOCABULARY)
 
   const idNum = parseInt(conceptId, 10)
   const idValid = !isNaN(idNum) && idNum >= 2_000_000_000
+  const duplicateOf = idValid ? usedCustomConceptIds.get(idNum) : undefined
   const nameValid = conceptName.trim().length > 0
   const codeValid = conceptCode.trim().length > 0
-  const canCreate = idValid && nameValid && codeValid && vocabularyId.trim().length > 0
+  const canCreate = idValid && nameValid && codeValid && vocabularyId.trim().length > 0 && !duplicateOf
 
   const submit = () => {
     if (!canCreate) return
@@ -391,6 +419,9 @@ function CustomConceptForm({
           />
           {!idValid && conceptId !== '' && (
             <span className="text-[10px] text-red-600">Must be ≥ 2,000,000,000</span>
+          )}
+          {idValid && duplicateOf && (
+            <span className="text-[10px] text-red-600">Already used for "{duplicateOf.concept_name}" — choose a different ID.</span>
           )}
         </label>
         <label className="flex flex-col gap-0.5">
@@ -489,7 +520,7 @@ function ConceptPicker({
   // the selection (input stays as typed, nothing is applied) or null to allow it.
   validateDomain?: (domainStr: string | null) => string | null
 }) {
-  const { rerankerAvailable, customVocabularyId } = useConceptsSettings()
+  const { rerankerAvailable } = useConceptsSettings()
   const cs = useConceptSearch(projectId)
   const [manualId, setManualId] = useState('')
   const [idLocked, setIdLocked] = useState(false)
@@ -788,7 +819,6 @@ function ConceptPicker({
       {showCustom && (
         <CustomConceptForm
           defaultName={defaultQuery}
-          defaultVocabularyId={customVocabularyId}
           onCancel={() => setShowCustom(false)}
           onCreate={c => {
             if (validateDomain) {
@@ -3580,31 +3610,15 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [domainFilter, setDomainFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
 
-  // AI / custom-concept settings
+  // AI settings
   const [openaiConfigured, setOpenaiConfigured] = useState(false)
-  const [customVocab, setCustomVocab] = useState(project.custom_vocabulary_id || 'CUSTOM')
-  const [editingVocab, setEditingVocab] = useState(false)
-  const [vocabDraft, setVocabDraft] = useState(customVocab)
+  const [customConceptsOpen, setCustomConceptsOpen] = useState(false)
 
   useEffect(() => {
     getApiHealth()
       .then(h => setOpenaiConfigured(!!h.openai_configured))
       .catch(() => setOpenaiConfigured(false))
   }, [])
-
-  const saveCustomVocab = async () => {
-    const v = vocabDraft.trim()
-    if (!v || v === customVocab) { setEditingVocab(false); return }
-    try {
-      const updated = await updateProjectSettings(project.id, { custom_vocabulary_id: v })
-      setCustomVocab(v)
-      onUpdate(updated)
-    } catch {
-      // ignore — keep editor open
-      return
-    }
-    setEditingVocab(false)
-  }
 
   const { cols, selectedFile, files, changeFile } = useSourceFile(project, 'concepts')
 
@@ -3881,6 +3895,62 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return sum + n
   }, 0)
 
+  // Every custom concept created anywhere in the project (all files, not just the
+  // active one — `decisions` already holds every file's columns). Grouped by
+  // concept_id so a reused id shows as one entry with multiple usages, which also
+  // doubles as the duplicate-id lookup passed to CustomConceptForm via context.
+  const customConceptsById = useMemo(() => {
+    const colToFile = new Map<string, string>()
+    for (const sf of (project.source_files || [])) {
+      for (const col of (sf.columns || [])) colToFile.set(col, sf.filename)
+    }
+
+    const isCustomRef = (c: ConceptRef) => c.concept_id !== 0 && (c.is_custom || c.concept_id >= 2_000_000_000)
+
+    const byId = new Map<number, CustomConceptEntry>()
+    const record = (c: ConceptRef, usage: CustomConceptUsage) => {
+      const existing = byId.get(c.concept_id)
+      if (!existing) {
+        byId.set(c.concept_id, {
+          concept_id: c.concept_id,
+          concept_name: c.concept_name,
+          concept_code: c.concept_code,
+          vocabulary_id: c.vocabulary_id,
+          domain: c.domain,
+          usages: [usage],
+          conflicting: false,
+        })
+        return
+      }
+      existing.usages.push(usage)
+      if (
+        existing.concept_name !== c.concept_name ||
+        existing.concept_code !== c.concept_code ||
+        existing.vocabulary_id !== c.vocabulary_id
+      ) {
+        existing.conflicting = true
+      }
+    }
+
+    for (const [col, d] of Object.entries(decisions)) {
+      if (!d || d.strategy === 'skip') continue
+      const file = colToFile.get(col) ?? null
+      if (d.variable_concept && isCustomRef(d.variable_concept)) {
+        record(d.variable_concept, { column: col, file })
+      }
+      for (const [value, c] of Object.entries(d.value_concepts)) {
+        if (isCustomRef(c)) record(c, { column: col, file, value })
+      }
+    }
+
+    return byId
+  }, [decisions, project.source_files])
+
+  const customConceptsList = useMemo(
+    () => Array.from(customConceptsById.values()).sort((a, b) => a.concept_id - b.concept_id),
+    [customConceptsById],
+  )
+
   // Filter + search
   const filteredCols = conceptCols.filter(col => {
     if (search && !col.toLowerCase().includes(search.toLowerCase())) return false
@@ -3894,7 +3964,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   })
 
   return (
-    <ConceptsCtx.Provider value={{ rerankerAvailable: openaiConfigured, customVocabularyId: customVocab }}>
+    <ConceptsCtx.Provider value={{ rerankerAvailable: openaiConfigured, usedCustomConceptIds: customConceptsById }}>
     <WizardLayout
       project={project}
       currentSlug="concepts"
@@ -3936,7 +4006,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           </span>
         </div>
 
-        {/* AI + custom-vocab settings banner */}
+        {/* AI reranker status + custom concepts summary */}
         <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs">
           <div className="flex items-center gap-1.5">
             <Sparkles className={clsx('w-3.5 h-3.5', openaiConfigured ? 'text-indigo-600' : 'text-muted-foreground')} />
@@ -3945,34 +4015,85 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               {openaiConfigured ? 'available' : 'disabled (set OPENAI_API_KEY)'}
             </span>
           </div>
-          <span className="text-muted-foreground">·</span>
-          <div className="flex items-center gap-1.5">
-            <Plus className="w-3.5 h-3.5 text-purple-600" />
-            <span className="font-semibold text-foreground">Custom vocabulary:</span>
-            {editingVocab ? (
-              <>
-                <input
-                  type="text"
-                  value={vocabDraft}
-                  autoFocus
-                  onChange={e => setVocabDraft(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') saveCustomVocab(); if (e.key === 'Escape') { setVocabDraft(customVocab); setEditingVocab(false) } }}
-                  className="border border-purple-300 rounded px-1.5 py-0.5 text-xs w-32 bg-white focus:outline-none focus:ring-1 focus:ring-purple-400"
-                />
-                <button onClick={saveCustomVocab} className="text-purple-700 font-medium hover:underline">save</button>
-                <button onClick={() => { setVocabDraft(customVocab); setEditingVocab(false) }} className="text-muted-foreground hover:text-foreground">cancel</button>
-              </>
-            ) : (
-              <>
-                <code className="bg-purple-100 text-purple-800 px-1.5 py-0.5 rounded font-mono">{customVocab}</code>
-                <button onClick={() => { setVocabDraft(customVocab); setEditingVocab(true) }} className="text-purple-700 hover:underline">edit</button>
-              </>
-            )}
-          </div>
-          <span className="text-muted-foreground ml-auto">
-            Default vocabulary id applied to custom concepts (id ≥ 2,000,000,000).
-          </span>
+          {customConceptsList.length > 0 && (
+            <>
+              <span className="text-muted-foreground">·</span>
+              <button
+                type="button"
+                onClick={() => setCustomConceptsOpen(true)}
+                className="flex items-center gap-1 font-semibold text-purple-700 hover:underline"
+              >
+                <Tag className="w-3.5 h-3.5" /> Custom concepts created: {customConceptsList.length}
+              </button>
+            </>
+          )}
         </div>
+
+        {/* Custom concepts review dialog */}
+        <Dialog open={customConceptsOpen} onOpenChange={setCustomConceptsOpen}>
+          <DialogContent className="max-w-3xl w-[90vw] max-h-[80vh] overflow-hidden flex flex-col">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Tag className="w-4 h-4 text-purple-600" /> Custom concepts created
+              </DialogTitle>
+              <DialogDescription>
+                Every custom OMOP concept (id ≥ 2,000,000,000) created in this project, and where it's used.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="overflow-y-auto -mx-6 px-6">
+              <table className="w-full text-xs border-collapse">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="text-left text-muted-foreground border-b border-border">
+                    <th className="py-1.5 pr-3 font-medium">ID</th>
+                    <th className="py-1.5 pr-3 font-medium">Name</th>
+                    <th className="py-1.5 pr-3 font-medium">Code</th>
+                    <th className="py-1.5 pr-3 font-medium">Vocabulary</th>
+                    <th className="py-1.5 pr-3 font-medium">Domain</th>
+                    <th className="py-1.5 pr-3 font-medium">Used in</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {customConceptsList.map(c => (
+                    <tr
+                      key={c.concept_id}
+                      className={clsx(
+                        'border-b border-border last:border-0 align-top',
+                        c.conflicting && 'bg-amber-50',
+                      )}
+                    >
+                      <td className="py-1.5 pr-3 font-mono text-purple-800">
+                        {c.conflicting && (
+                          <AlertTriangle
+                            className="inline w-3 h-3 text-amber-600 mr-1 -mt-0.5"
+                          />
+                        )}
+                        {c.concept_id}
+                      </td>
+                      <td className="py-1.5 pr-3">{c.concept_name}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{c.concept_code || '—'}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{c.vocabulary_id || '—'}</td>
+                      <td className="py-1.5 pr-3 text-muted-foreground">{c.domain || '—'}</td>
+                      <td className="py-1.5 pr-3">
+                        <div className="flex flex-col gap-0.5">
+                          {c.usages.map((u, i) => (
+                            <span key={i} className="text-muted-foreground">
+                              {u.file && files.length > 1 && <span className="opacity-70">{u.file} · </span>}
+                              <code className="bg-muted px-1 rounded">{u.column}</code>
+                              {u.value && <> → <span className="italic">"{u.value}"</span></>}
+                            </span>
+                          ))}
+                        </div>
+                        {c.conflicting && (
+                          <span className="text-[10px] text-amber-700">reused with different name/code/vocabulary across mappings</span>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         {/* File selector — shown only when project has multiple source files */}
         {files.length > 1 && (
