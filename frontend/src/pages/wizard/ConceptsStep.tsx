@@ -3829,13 +3829,28 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return claims
   }, [decisions])
 
-  // A column is "mapped" either the normal way (has a concept set under a non-skip
+  // Same formula as VariableRow's own `mappingCompleteness` badge, so a row only
+  // counts as mapped here once its badge actually reads 100% — a map_values/map_both
+  // column with some but not all distinct values reviewed is still in progress.
+  const columnMappingCompleteness = (col: string): number => {
+    const d = decisions[col]
+    if (!d || d.strategy === 'skip') return 0
+    const mappedValueCount = Object.keys(d.value_concepts).length
+    if (d.strategy === 'map_variable') return d.variable_concept ? 100 : 0
+    if (d.strategy === 'map_values') {
+      const total = columnInfos[col]?.distinct_count ?? 0
+      return Math.round((mappedValueCount / total) * 100)
+    }
+    const total = (columnInfos[col]?.distinct_count ?? 0) + 1
+    return Math.round(((mappedValueCount + (d.variable_concept ? 1 : 0)) / total) * 100)
+  }
+
+  // A column is "mapped" either the normal way (fully reviewed under a non-skip
   // strategy) or by being claimed as a Drug Exposure sibling-column field for another
   // variable — its data is still consumed by the ETL, just not through its own decision.
   const isColumnMapped = (col: string) => {
     if (drugFieldClaims[col]) return true
-    const d = decisions[col]
-    return !!d && d.strategy !== 'skip' && (!!d.variable_concept || Object.keys(d.value_concepts).length > 0)
+    return columnMappingCompleteness(col) === 100
   }
 
   // Variables the user unticked are excluded from mapping entirely, so they don't
@@ -3968,6 +3983,9 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 const isActive = f.filename === selectedFile?.filename
                 const fileCols = f.columns ?? []
                 const fileConceptCols = fileCols.filter(c => !structuralCols.has(c) && decisions[c]?.enabled !== false)
+                // Not isColumnMapped: columnInfos (needed for map_values/map_both
+                // completeness %) is only ever loaded for the currently active file, so
+                // that check would read as incomplete for every other file's columns.
                 const fileMapped = fileConceptCols.filter(c => {
                   const d = decisions[c]
                   return d && d.strategy !== 'skip' && (d.variable_concept || Object.keys(d.value_concepts).length > 0)
@@ -4001,7 +4019,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         {/* Stats */}
         <div className="grid grid-cols-4 gap-3">
           <div className="bg-card border border-border rounded-lg p-3 text-center">
-            <p className="text-xl font-bold text-foreground">{enabledConceptCols.length}</p>
+            <p className="text-xl font-bold text-foreground">{enabledConceptCols.length - mappedCount}</p>
             <p className="text-xs text-muted-foreground">Variables to map</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
