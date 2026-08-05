@@ -38,38 +38,29 @@ from functools import lru_cache
 @lru_cache(maxsize=20000)
 def _get_concept_info(concept_id: int) -> "tuple[str, str] | None":
     """Look up (domain_id, concept_name) for an OMOP concept by querying the
-    loaded vocabulary in Postgres. Returns None when the concept isn't there
-    (vocab not loaded, wrong id, etc.) so the UI can render "not found"
-    gracefully instead of throwing."""
+    loaded vocabulary in Postgres. Returns None when the concept genuinely
+    isn't there. Raises on connection/query errors instead of swallowing them
+    — lru_cache only memoizes normal returns, not exceptions, so a transient
+    failure (e.g. Postgres not reachable yet at startup) never gets cached as
+    a permanent "not found" for that concept_id."""
     if concept_id is None or concept_id <= 0:
         return None
-    try:
-        from app.services.db import connect
-        from psycopg2 import sql as pgsql
-    except Exception:
-        return None
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
 
     schema = settings.omop_vocab_schema or "vocab"
-    try:
-        with connect() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    pgsql.SQL(
-                        "SELECT domain_id, concept_name FROM {schema}.concept WHERE concept_id = %s"
-                    ).format(schema=pgsql.Identifier(schema)),
-                    (int(concept_id),),
-                )
-                row = cur.fetchone()
-                if row and row[0] is not None:
-                    return (str(row[0]), str(row[1]) if row[1] is not None else "")
-                return None
-    except Exception as exc:
-        # Likely: vocab schema/table missing because Load vocabulary hasn't
-        # run yet, or Postgres unreachable. Quiet failure — clear cache
-        # so a later call after a successful vocab load can succeed.
-        _get_concept_info.cache_clear()
-        print(f"[concept-lookup] vocab.concept query failed: {exc}")
-        return None
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT domain_id, concept_name FROM {schema}.concept WHERE concept_id = %s"
+                ).format(schema=pgsql.Identifier(schema)),
+                (int(concept_id),),
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return (str(row[0]), str(row[1]) if row[1] is not None else "")
+            return None
 
 
 @router.get("/concept-lookup/domain")
@@ -77,7 +68,13 @@ def concept_lookup(concept_id: int):
     """Return the domain_id and concept_name for a given concept_id by querying the
     loaded OMOP vocabulary in Postgres (vocab.concept).
     """
-    info = _get_concept_info(concept_id)
+    try:
+        info = _get_concept_info(concept_id)
+    except Exception as exc:
+        # Vocab schema/table missing (Load vocabulary hasn't run yet) or
+        # Postgres unreachable. Not cached — the next lookup will retry.
+        print(f"[concept-lookup] vocab.concept query failed: {exc}")
+        return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "found": False}
     if info:
         domain, concept_name = info
         return {"concept_id": concept_id, "domain_id": domain, "concept_name": concept_name, "found": True}
