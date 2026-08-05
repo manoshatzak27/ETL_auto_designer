@@ -531,11 +531,27 @@ function ConceptPicker({
   const [showCustom, setShowCustom] = useState(false)
   const [useReranker, setUseReranker] = useState(rerankerAvailable)
   const [domainError, setDomainError] = useState<string | null>(null)
+  const nameFieldRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (value) setEditingName(value.concept_name ?? '')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.concept_id])
+
+  // Grow the name field to fit its content, up to 4 lines, then scroll.
+  useEffect(() => {
+    const el = nameFieldRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    const style = getComputedStyle(el)
+    const lineHeight = parseFloat(style.lineHeight) || 16
+    const maxHeight = lineHeight * 4
+      + parseFloat(style.paddingTop) + parseFloat(style.paddingBottom)
+      + parseFloat(style.borderTopWidth) + parseFloat(style.borderBottomWidth)
+    const nextHeight = Math.min(el.scrollHeight, maxHeight)
+    el.style.height = `${nextHeight}px`
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [editingName])
 
   const commitConcept = (c: ConceptRef) => {
     onSelect(c)
@@ -617,7 +633,7 @@ function ConceptPicker({
     const clearId = () => { setIdLocked(false); setManualId(''); setManualName(''); onClear() }
     const clearName = () => { setEditingName('') }
     return (
-      <div className="flex items-center gap-1.5 w-full">
+      <div className="flex items-start gap-1.5 w-full">
         {/* Locked ID chip with X — clears only ID, preserves name */}
         <div className={clsx('flex items-center gap-1 px-2 py-1 text-xs rounded font-mono flex-shrink-0', lockedCls)}>
           <CheckCircle className="w-3 h-3 flex-shrink-0" />
@@ -629,27 +645,29 @@ function ConceptPicker({
           {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
           <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
         </div>
-        {/* Editable name input with X — clears only name, preserves ID; width auto-adapts to content length */}
-        <input
-          type="text"
+        {/* Editable name field with X — clears only name, preserves ID; fills remaining row width and wraps up to 4 lines */}
+        <textarea
+          ref={nameFieldRef}
+          rows={1}
           value={editingName}
           onChange={e => setEditingName(e.target.value)}
           onBlur={commitEditingName}
-          onKeyDown={e => e.key === 'Enter' && commitEditingName()}
-          placeholder="Name"
-          style={{
-            width: `${Math.min(Math.max((editingName || 'Name').length + 2, 10), 60)}ch`,
-            maxWidth: '100%',
-            boxSizing: 'content-box',
+          onKeyDown={e => {
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              commitEditingName()
+              e.currentTarget.blur()
+            }
           }}
+          placeholder="Name"
           className={clsx(
-            'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 flex-shrink',
+            'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 flex-1 min-w-0 resize-none leading-snug break-words',
             editingName.trim()
               ? clsx(lockedCls, 'focus:ring-green-300')
               : 'border-gray-300 bg-white text-gray-500 focus:ring-gray-300',
           )}
         />
-        <button onClick={clearName} className="text-muted-foreground hover:text-destructive flex-shrink-0"><X className="w-3.5 h-3.5" /></button>
+        <button onClick={clearName} className="text-muted-foreground hover:text-destructive flex-shrink-0 mt-1"><X className="w-3.5 h-3.5" /></button>
       </div>
     )
   }
