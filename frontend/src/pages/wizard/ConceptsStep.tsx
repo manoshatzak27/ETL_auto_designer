@@ -218,6 +218,7 @@ interface CustomConceptEntry {
   concept_code?: string
   vocabulary_id?: string
   domain?: string
+  concept_class_id?: string
   usages: CustomConceptUsage[]
   // true if usages disagree on name/code/vocab — likely an accidental ID collision
   // from before duplicate IDs were blocked at creation time
@@ -520,7 +521,7 @@ function ConceptPicker({
   // the selection (input stays as typed, nothing is applied) or null to allow it.
   validateDomain?: (domainStr: string | null) => string | null
 }) {
-  const { rerankerAvailable } = useConceptsSettings()
+  const { rerankerAvailable, usedCustomConceptIds } = useConceptsSettings()
   const cs = useConceptSearch(projectId)
   const [manualId, setManualId] = useState('')
   const [idLocked, setIdLocked] = useState(false)
@@ -563,6 +564,29 @@ function ConceptPicker({
     if (isNaN(id) || id < 0) return
     if (id === 0) { commitConcept({ concept_id: 0, concept_name: 'Not mapped' }); return }
     setDomainError(null)
+
+    // Known custom concept (created elsewhere in the project) — reuse its
+    // name/code/vocab instead of hitting the real OMOP vocab lookup, which
+    // has never heard of it and would otherwise drop the custom metadata.
+    const existingCustom = usedCustomConceptIds.get(id)
+    if (existingCustom) {
+      if (validateDomain) {
+        const err = validateDomain(existingCustom.domain ?? null)
+        if (err) { setDomainError(err); return }
+      }
+      commitConcept({
+        concept_id: id,
+        concept_name: existingCustom.concept_name,
+        concept_code: existingCustom.concept_code,
+        vocabulary_id: existingCustom.vocabulary_id,
+        domain: existingCustom.domain,
+        domain_id_str: existingCustom.domain,
+        domain_id: existingCustom.domain ? DOMAIN_STRING_MAP[existingCustom.domain.toLowerCase()] : undefined,
+        concept_class_id: existingCustom.concept_class_id,
+        is_custom: true,
+      })
+      return
+    }
 
     // Fast path: id + name both typed and nothing to validate — no lookup needed.
     if (manualName.trim() && !validateDomain) {
@@ -3935,6 +3959,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           concept_code: c.concept_code,
           vocabulary_id: c.vocabulary_id,
           domain: c.domain,
+          concept_class_id: c.concept_class_id,
           usages: [usage],
           conflicting: false,
         })
