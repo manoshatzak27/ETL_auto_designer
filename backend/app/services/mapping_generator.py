@@ -23,9 +23,11 @@ Strategies:
                   (categorical: variable has a concept + each value has a value_as_concept_id)
   skip          → omitted from all files
 """
+import io
 import os
 from datetime import date
 from pathlib import Path
+from typing import Callable
 import pandas as pd
 
 VALID_START = "1970-01-01"
@@ -288,3 +290,209 @@ def _custom_row(concept: dict, custom_vocabulary_id: str = DEFAULT_CUSTOM_VOCABU
         "valid_end_date": VALID_END,
         "invalid_reason": "",
     }
+
+
+DOMAIN_LABELS = {
+    1: "Measurement",
+    2: "Observation",
+    3: "Drug Exposure",
+    4: "Procedure Occurrence",
+    5: "Condition Occurrence",
+}
+
+STRATEGY_LABELS = {
+    "skip": "Skip",
+    "map_variable": "Map Variable",
+    "map_values": "Map Values",
+    "map_both": "Map Variable + Values",
+}
+
+
+def _fixed_concept(col: str | None, concepts: dict) -> tuple[str, int] | None:
+    """Mirrors the frontend's getFixedConcept(): unit/route mappings are only
+    a single variable-level concept when no source column is chosen and exactly
+    one positive concept id is stored (keyed by its own concept name). Once a
+    source column is chosen, `concepts` is instead keyed by that column's
+    per-row source values, so there's no single id/name to show here."""
+    if col:
+        return None
+    entries = [(k, v) for k, v in (concepts or {}).items() if isinstance(v, (int, float)) and v > 0]
+    if len(entries) != 1:
+        return None
+    return entries[0]
+
+
+def _autosize_columns(ws, df: pd.DataFrame) -> None:
+    for i, col in enumerate(df.columns, start=1):
+        max_len = max([len(str(col))] + [len(str(v)) for v in df[col].tolist()]) if len(df) else len(str(col))
+        ws.column_dimensions[ws.cell(row=1, column=i).column_letter].width = min(60, max(10, max_len + 2))
+    for cell in ws[1]:
+        cell.font = cell.font.copy(bold=True)
+    ws.freeze_panes = "A2"
+
+
+def generate_mapping_summary_excel(
+    concept_decisions: dict,
+    lookup_concept_name: Callable[[int], str] | None = None,
+    column_values: dict[str, list[str]] | None = None,
+) -> io.BytesIO:
+    """
+    Builds a human-readable Excel workbook summarizing every variable's mapping
+    choices — unlike generate_mapping_csvs(), this includes every variable
+    regardless of strategy/enabled state, for review rather than ETL loading.
+    Variables are listed in `concept_decisions`' own iteration order — pass it
+    in already ordered (e.g. by source-file column order) if that matters.
+
+    `lookup_concept_name` resolves names for concept ids that are stored bare
+    (per-column unit/route mappings only keep the id, keyed by source value);
+    variable- and value-level concepts already carry their name inline.
+
+    `column_values` (variable -> every distinct source value it has, mapped or
+    not) makes map_values/map_both variables list every value, not just the
+    ones the user assigned a concept to. Falls back to only the mapped values
+    when a variable is missing from it (e.g. its source file is gone).
+
+    Sheets:
+      Variables & Values  one row per variable (every strategy/enabled state),
+                           or one row per value for map_values/map_both
+                           — variable-level columns repeat on every value row
+      Unit & Route Values one row per distinct value of a column-mode unit/route
+                           source column (mapped or not); variable name repeats
+                           the same way as in Variables & Values
+    """
+    name_of = lookup_concept_name or (lambda _cid: "")
+    column_values = column_values or {}
+
+    rows: list[dict] = []
+    unit_route_rows: list[dict] = []
+
+    for variable, decision in concept_decisions.items():
+        decision = decision or {}
+        strategy = decision.get("strategy") or "skip"
+        var_concept = decision.get("variable_concept") or {}
+        domain_id = decision.get("domain_id")
+
+        unit_mapping = decision.get("unit_mapping") or {}
+        unit_col = unit_mapping.get("unit_col")
+        unit_concepts = unit_mapping.get("unit_concepts") or {}
+        unit_fixed = _fixed_concept(unit_col, unit_concepts)
+
+        route_mapping = decision.get("route_mapping") or {}
+        route_col = route_mapping.get("route_col")
+        route_concepts = route_mapping.get("route_concepts") or {}
+        route_fixed = _fixed_concept(route_col, route_concepts)
+
+        # Column-mode unit/route entries for this variable — every distinct source
+        # value of the chosen column (mapped or not), same "list everything"
+        # approach as the value rows above. Each kind gets its own header row
+        # (Kind set, no value), then its values start one row down; the variable
+        # name is only stamped on the very first row of the whole group.
+        entries: list[dict] = []
+        for kind, col, mapping in (("Unit", unit_col, unit_concepts), ("Route", route_col, route_concepts)):
+            if not col:
+                continue
+            known = column_values.get(col)
+            all_vals = sorted(set(known) | set(mapping.keys())) if known is not None else sorted(mapping.keys())
+            entries.append({"Kind": kind, "Source Value": "", "Concept ID": "", "Concept Name": ""})
+            for val in all_vals:
+                cid = mapping.get(val)
+                entries.append({
+                    "Kind": "",
+                    "Source Value": val,
+                    "Concept ID": cid or "",
+                    "Concept Name": name_of(cid) if cid else "",
+                })
+        for i, entry in enumerate(entries):
+            unit_route_rows.append({"Variable": variable if i == 0 else "", **entry})
+
+        base_row = {
+            "Variable": variable,
+            "Included": "No" if decision.get("enabled") is False else "Yes",
+            "Strategy": STRATEGY_LABELS.get(strategy, strategy),
+            "Domain": DOMAIN_LABELS.get(domain_id, ""),
+            "Unit Concept ID": unit_fixed[1] if unit_fixed else "",
+            "Unit Concept Name": unit_fixed[0] if unit_fixed else "",
+            "Unit Source Column": unit_col or "",
+            "Route Concept ID": route_fixed[1] if route_fixed else "",
+            "Route Concept Name": route_fixed[0] if route_fixed else "",
+            "Route Source Column": route_col or "",
+            "Type Concept ID": decision.get("type_concept_id") or "",
+            "Type Concept Name": decision.get("type_concept_name") or "",
+            "Start Datetime Column": decision.get("start_datetime_col") or "",
+            "End Datetime Column": decision.get("end_datetime_col") or "",
+            "Datetime Format": decision.get("datetime_format") or "",
+        }
+
+        mapped_values: list[tuple[str, dict]] = []
+        if strategy in ("map_values", "map_both"):
+            value_concepts = decision.get("value_concepts") or {}
+            known = column_values.get(variable)
+            # List every distinct source value the column actually has (mapped or
+            # not); if we couldn't read the source file, fall back to just the
+            # values that got mapped so nothing is silently dropped.
+            all_values = sorted(set(known) | set(value_concepts.keys())) if known is not None \
+                else sorted(value_concepts.keys())
+            mapped_values = [(val, value_concepts.get(val) or {}) for val in all_values]
+
+        # Row 1 always carries the variable itself: its own concept (map_variable/
+        # map_both) or a blank Concept ID/Name (map_values has no variable-level
+        # concept, skip/unmapped have none set). Any mapped values follow one row
+        # down each, with Source holding the source value and Variable/Included/
+        # Strategy left blank so they aren't retyped per value.
+        rows.append({
+            **base_row,
+            "Source": "",
+            "Concept ID": var_concept.get("concept_id", ""),
+            "Concept Name": var_concept.get("concept_name", ""),
+        })
+        for val, vc in mapped_values:
+            rows.append({
+                **base_row,
+                # Every per-variable column (identity + unit/route/type/datetime)
+                # is only typed once, on row 1 — value rows carry just the value.
+                "Variable": "",
+                "Included": "",
+                "Strategy": "",
+                "Unit Concept ID": "",
+                "Unit Concept Name": "",
+                "Unit Source Column": "",
+                "Route Concept ID": "",
+                "Route Concept Name": "",
+                "Route Source Column": "",
+                "Type Concept ID": "",
+                "Type Concept Name": "",
+                "Start Datetime Column": "",
+                "End Datetime Column": "",
+                "Datetime Format": "",
+                # The value's own domain (falling back to the variable's) takes over
+                # the shared Domain column here, same as Concept ID/Name above.
+                "Domain": DOMAIN_LABELS.get(vc.get("domain_id", domain_id), ""),
+                "Source": val,
+                "Concept ID": vc.get("concept_id", ""),
+                "Concept Name": vc.get("concept_name", ""),
+            })
+
+    main_cols = [
+        "Variable", "Included", "Strategy", "Domain",
+        "Source", "Concept ID", "Concept Name",
+        "Unit Concept ID", "Unit Concept Name", "Unit Source Column",
+        "Route Concept ID", "Route Concept Name", "Route Source Column",
+        "Type Concept ID", "Type Concept Name",
+        "Start Datetime Column", "End Datetime Column", "Datetime Format",
+    ]
+    unit_route_cols = ["Variable", "Kind", "Source Value", "Concept ID", "Concept Name"]
+
+    df_main = pd.DataFrame(rows, columns=main_cols)
+    # Not sorted — rows are already grouped per variable (in concept_decisions'
+    # own order) with the variable name blanked after the first entry; sorting
+    # by Variable would scatter those blanks and break the grouping.
+    df_unit_route = pd.DataFrame(unit_route_rows, columns=unit_route_cols)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_main.to_excel(writer, sheet_name="Variables & Values", index=False)
+        df_unit_route.to_excel(writer, sheet_name="Unit & Route Values", index=False)
+        _autosize_columns(writer.sheets["Variables & Values"], df_main)
+        _autosize_columns(writer.sheets["Unit & Route Values"], df_unit_route)
+    buf.seek(0)
+    return buf

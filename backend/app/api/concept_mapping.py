@@ -8,6 +8,7 @@ Endpoints:
   POST /projects/{id}/concept-decisions       → save decisions (full replace)
   POST /projects/{id}/generate-mapping-csvs  → generate the 3 CSVs from decisions
   GET  /projects/{id}/download-mapping-files → download the generated mapping CSVs as a zip
+  GET  /projects/{id}/download-mapping-summary → download a human-readable Excel summary of all decisions
 """
 import io
 import zipfile
@@ -22,7 +23,7 @@ import pandas as pd
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectResponse
-from app.services.mapping_generator import generate_mapping_csvs
+from app.services.mapping_generator import generate_mapping_csvs, generate_mapping_summary_excel
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["concept-mapping"])
@@ -234,4 +235,91 @@ def download_mapping_files(project_id: str, db: Session = Depends(get_db)):
         buf,
         media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
+
+
+# ── Download mapping summary as Excel ───────────────────────────────────────
+
+def _all_distinct_values(project: Project, max_values: int = 1000) -> dict[str, list[str]]:
+    """Distinct source values for every column across every uploaded source file
+    (unlike get_column_values above, which only reads the one currently-selected
+    file). Lets the mapping summary list every value a column actually has, not
+    just the ones the user happened to assign a concept to."""
+    file_entries = project.source_files or (
+        [{"path": project.source_path, "delimiter": project.source_delimiter, "encoding": project.source_encoding}]
+        if project.source_path else []
+    )
+    result: dict[str, list[str]] = {}
+    for entry in file_entries:
+        path = entry.get("path")
+        if not path or not Path(path).exists():
+            continue
+        df = pd.read_csv(
+            path,
+            sep=entry.get("delimiter") or ",",
+            encoding=entry.get("encoding") or "utf-8",
+            dtype=str,
+            on_bad_lines="skip",
+        )
+        for col in df.columns:
+            if col in result:
+                continue
+            result[col] = [str(v) for v in df[col].dropna().unique().tolist()[:max_values]]
+    return result
+
+
+def _ordered_decisions(project: Project) -> dict:
+    """Re-key project.concept_decisions to follow the column order of the
+    uploaded source file(s), instead of dict/insertion order — which is
+    whatever order the user happened to touch columns in, not a meaningful
+    order to read a report in. Any decision whose column isn't in a known
+    file (e.g. its file was later removed) is appended at the end, in its
+    original order, so nothing gets silently dropped."""
+    decisions = project.concept_decisions or {}
+    order: list[str] = []
+    seen: set[str] = set()
+    for entry in (project.source_files or []):
+        for col in (entry.get("columns") or []):
+            if col not in seen:
+                order.append(col)
+                seen.add(col)
+    for col in (project.source_columns or []):
+        if col not in seen:
+            order.append(col)
+            seen.add(col)
+
+    ordered = {col: decisions[col] for col in order if col in decisions}
+    for col, d in decisions.items():
+        if col not in ordered:
+            ordered[col] = d
+    return ordered
+
+
+@router.get("/{project_id}/download-mapping-summary")
+def download_mapping_summary(project_id: str, db: Session = Depends(get_db)):
+    """Build and download an Excel summary of every variable's mapping decisions
+    (included or not, mapped or skipped) — variable/value concept ids and names,
+    unit/route/type concepts, and start/end datetime columns. For human review,
+    unlike generate-mapping-csvs which only emits ETL-ready rows."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not project.concept_decisions:
+        raise HTTPException(status_code=400, detail="No concept decisions saved yet")
+
+    def lookup_name(concept_id: int) -> str:
+        try:
+            info = _get_concept_info(concept_id)
+        except Exception:
+            return ""
+        return info[1] if info else ""
+
+    column_values = _all_distinct_values(project)
+    buf = generate_mapping_summary_excel(_ordered_decisions(project), lookup_name, column_values)
+
+    file_name = f"{project_id}_mapping_summary.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
     )

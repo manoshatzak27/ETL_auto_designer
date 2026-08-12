@@ -6,6 +6,7 @@ import {
   saveConceptDecisions,
   generateMappingCsvs,
   downloadMappingFiles,
+  downloadMappingSummary,
   lookupConceptDomain,
   conceptSearch,
   getApiHealth,
@@ -3642,6 +3643,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState('')
   const [downloadingMappings, setDownloadingMappings] = useState(false)
+  const [downloadingSummary, setDownloadingSummary] = useState(false)
 
   // Batch state
   const [batchMode, setBatchMode] = useState(false)
@@ -3824,6 +3826,23 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       setGenError(err?.response?.data?.detail || 'Failed to generate mapping files.')
     } finally {
       setDownloadingMappings(false)
+    }
+  }
+
+  const handleDownloadSummary = async () => {
+    setDownloadingSummary(true)
+    setGenError('')
+    try {
+      await Promise.all([
+        saveConceptDecisions(project.id, decisions as Record<string, unknown>),
+        updateTableConfig(project.id, 'concepts', { col_file_map: colFileMap, source_filename: selectedFile?.filename ?? null }),
+      ])
+      downloadMappingSummary(project.id)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setGenError(err?.response?.data?.detail || 'Failed to generate mapping summary.')
+    } finally {
+      setDownloadingSummary(false)
     }
   }
 
@@ -4027,15 +4046,26 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               Use batch mode to map multiple variables at once.
             </p>
           </div>
-          <button
-            onClick={handleDownloadMappings}
-            disabled={downloadingMappings}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:bg-muted disabled:opacity-50 flex-shrink-0"
-            title="Generate (if needed) and download variable_mapping.csv, value_mapping.csv, variable_value_mapping.csv, custom_mappings.csv and unit_mapping.csv as a zip"
-          >
-            {downloadingMappings ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
-            {downloadingMappings ? 'Preparing…' : 'Download mapping files'}
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={handleDownloadSummary}
+              disabled={downloadingSummary}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:bg-muted disabled:opacity-50 flex-shrink-0"
+              title="Download an Excel summary of every variable's mapping choices (included or not) — concepts, units, routes, type, and start/end datetime"
+            >
+              {downloadingSummary ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileText className="w-3.5 h-3.5" />}
+              {downloadingSummary ? 'Preparing…' : 'Download mapping summary (Excel)'}
+            </button>
+            <button
+              onClick={handleDownloadMappings}
+              disabled={downloadingMappings}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border text-muted-foreground hover:bg-muted disabled:opacity-50 flex-shrink-0"
+              title="Generate (if needed) and download variable_mapping.csv, value_mapping.csv, variable_value_mapping.csv, custom_mappings.csv and unit_mapping.csv as a zip"
+            >
+              {downloadingMappings ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+              {downloadingMappings ? 'Preparing…' : 'Download mapping files'}
+            </button>
+          </div>
         </div>
 
         {/* Concept ID 0 explainer */}

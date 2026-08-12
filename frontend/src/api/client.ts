@@ -70,6 +70,10 @@ export const downloadMappingFiles = (projectId: string) => {
   window.open(`/api/projects/${projectId}/download-mapping-files`, '_blank')
 }
 
+export const downloadMappingSummary = (projectId: string) => {
+  window.open(`/api/projects/${projectId}/download-mapping-summary`, '_blank')
+}
+
 export const lookupConceptDomain = (conceptId: number) =>
   api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; found: boolean })
 
