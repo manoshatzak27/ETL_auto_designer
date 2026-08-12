@@ -29,6 +29,8 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 import pandas as pd
+from openpyxl.styles import Font
+from openpyxl.worksheet.hyperlink import Hyperlink
 
 VALID_START = "1970-01-01"
 VALID_END = "2099-12-31"
@@ -365,6 +367,13 @@ def generate_mapping_summary_excel(
 
     rows: list[dict] = []
     unit_route_rows: list[dict] = []
+    # Track where things land so the two sheets can be cross-linked afterwards:
+    # each variable's own row in Variables & Values, and the row of its Unit/
+    # Route header (if any) in Unit & Route Values. Excel rows are 1-indexed
+    # with row 1 being the header, so a value's row is its 0-based list index + 2.
+    var_row_in_main: dict[str, int] = {}
+    unit_header_row: dict[str, int] = {}
+    route_header_row: dict[str, int] = {}
 
     for variable, decision in concept_decisions.items():
         decision = decision or {}
@@ -391,6 +400,11 @@ def generate_mapping_summary_excel(
         for kind, col, mapping in (("Unit", unit_col, unit_concepts), ("Route", route_col, route_concepts)):
             if not col:
                 continue
+            header_row = len(unit_route_rows) + len(entries) + 2
+            if kind == "Unit":
+                unit_header_row[variable] = header_row
+            else:
+                route_header_row[variable] = header_row
             known = column_values.get(col)
             all_vals = sorted(set(known) | set(mapping.keys())) if known is not None else sorted(mapping.keys())
             entries.append({"Kind": kind, "Source Value": "", "Concept ID": "", "Concept Name": ""})
@@ -439,6 +453,7 @@ def generate_mapping_summary_excel(
         # concept, skip/unmapped have none set). Any mapped values follow one row
         # down each, with Source holding the source value and Variable/Included/
         # Strategy left blank so they aren't retyped per value.
+        var_row_in_main[variable] = len(rows) + 2
         rows.append({
             **base_row,
             "Source": "",
@@ -494,5 +509,24 @@ def generate_mapping_summary_excel(
         df_unit_route.to_excel(writer, sheet_name="Unit & Route Values", index=False)
         _autosize_columns(writer.sheets["Variables & Values"], df_main)
         _autosize_columns(writer.sheets["Unit & Route Values"], df_unit_route)
+
+        # Link each variable's Unit/Route Source Column cell to where that
+        # column-mode mapping's values actually live on the other sheet.
+        ws_main = writer.sheets["Variables & Values"]
+        unit_col_idx = main_cols.index("Unit Source Column") + 1
+        route_col_idx = main_cols.index("Route Source Column") + 1
+        hyperlink_font = Font(color="0563C1", underline="single")
+        for variable, main_row in var_row_in_main.items():
+            for header_rows, col_idx in ((unit_header_row, unit_col_idx), (route_header_row, route_col_idx)):
+                target_row = header_rows.get(variable)
+                if target_row is None:
+                    continue
+                cell = ws_main.cell(row=main_row, column=col_idx)
+                # A plain string assigns to Hyperlink.target, which openpyxl always
+                # serializes as an *external* relationship — Excel then can't resolve
+                # a target starting with "#" and the link renders styled but dead.
+                # Same-workbook jumps need `location` instead, with no target/relationship.
+                cell.hyperlink = Hyperlink(ref=cell.coordinate, location=f"'Unit & Route Values'!A{target_row}")
+                cell.font = hyperlink_font
     buf.seek(0)
     return buf
