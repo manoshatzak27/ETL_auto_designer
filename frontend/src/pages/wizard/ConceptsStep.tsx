@@ -186,12 +186,10 @@ const DOMAIN_STRING_MAP: Record<string, number> = {
   'condition occurrence': 5,
 }
 
-// OMOP domain strings used as vocab.concept.domain_id values. The first 5
-// match our ETL routing; the rest are valid OMOP domains for custom concepts
-// that won't be routed through the stem_table (e.g., Visit, Device).
+// OMOP domain strings used as vocab.concept.domain_id values, restricted to
+// the stem_table domains our ETL routing supports.
 const OMOP_DOMAIN_OPTIONS = [
-  'Observation', 'Measurement', 'Condition', 'Drug', 'Procedure',
-  'Device', 'Visit', 'Note', 'Specimen', 'Provider', 'Care Site', 'Geography',
+  'Observation', 'Measurement', 'Condition', 'Drug', 'Procedure', 'Device',
 ] as const
 
 // Common concept_class_id values per domain. Used as datalist hints; user
