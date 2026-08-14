@@ -2897,6 +2897,7 @@ const VariableRow = memo(function VariableRow({
 }) {
   const lockedBy = drugFieldClaims[column] ?? null
   const [open, setOpen] = useState(false)
+  const [showAllValues, setShowAllValues] = useState(false)
   const [domainMode, setDomainMode] = useState<'auto' | 'manual'>(() =>
     decision.domain_id !== null ? 'manual' : 'auto'
   )
@@ -3009,7 +3010,9 @@ const VariableRow = memo(function VariableRow({
     return !decision.start_datetime_col
   })()
 
-  const sampleValues = info?.distinct_values.slice(0, 10) ?? []
+  const sampleValues = showAllValues
+    ? info?.distinct_values ?? []
+    : info?.distinct_values.slice(0, 10) ?? []
   const extraCount = (info?.distinct_count ?? 0) - 10
 
   // Claimed as a sibling-column field (quantity, sig, …) by another variable's
@@ -3214,13 +3217,24 @@ const VariableRow = memo(function VariableRow({
               </div>
 
               <div>
-                <p className="text-xs font-medium text-muted-foreground mb-1.5">Sample values</p>
+                <p className="text-xs font-medium text-muted-foreground mb-1.5">{showAllValues ? 'All values' : 'Sample values'}</p>
                 <div className="flex flex-wrap gap-1.5">
                   {sampleValues.map(v => (
                     <span key={v} className="bg-secondary/60 text-primary px-2 py-0.5 rounded text-xs font-mono border border-border">{v}</span>
                   ))}
-                  {extraCount > 0 && (
-                    <span className="text-xs text-muted-foreground self-center">… and {extraCount} more</span>
+                  {extraCount > 0 && !showAllValues && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllValues(true)}
+                      className="text-xs text-primary hover:underline self-center"
+                    >… and {extraCount} more</button>
+                  )}
+                  {showAllValues && (info?.distinct_count ?? 0) > 10 && (
+                    <button
+                      type="button"
+                      onClick={() => setShowAllValues(false)}
+                      className="text-xs text-primary hover:underline self-center"
+                    >Show less</button>
                   )}
                 </div>
               </div>
