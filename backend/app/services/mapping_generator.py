@@ -29,7 +29,7 @@ from datetime import date
 from pathlib import Path
 from typing import Callable
 import pandas as pd
-from openpyxl.styles import Font
+from openpyxl.styles import Alignment, Font
 from openpyxl.worksheet.hyperlink import Hyperlink
 
 VALID_START = "1970-01-01"
@@ -361,12 +361,16 @@ def generate_mapping_summary_excel(
       Unit & Route Values one row per distinct value of a column-mode unit/route
                            source column (mapped or not); variable name repeats
                            the same way as in Variables & Values
+      Extra Instructions  one row per variable that has free-text AI guidance
+                           set (decision["extra_instructions"]); variables
+                           without any are omitted rather than left blank
     """
     name_of = lookup_concept_name or (lambda _cid: "")
     column_values = column_values or {}
 
     rows: list[dict] = []
     unit_route_rows: list[dict] = []
+    instruction_rows: list[dict] = []
     # Track where things land so the two sheets can be cross-linked afterwards:
     # each variable's own row in Variables & Values, and the row of its Unit/
     # Route header (if any) in Unit & Route Values. Excel rows are 1-indexed
@@ -437,6 +441,15 @@ def generate_mapping_summary_excel(
             "Datetime Format": decision.get("datetime_format") or "",
         }
 
+        extra_instructions = (decision.get("extra_instructions") or "").strip()
+        if extra_instructions:
+            instruction_rows.append({
+                "Variable": variable,
+                "Included": base_row["Included"],
+                "Strategy": base_row["Strategy"],
+                "Extra Instructions": extra_instructions,
+            })
+
         mapped_values: list[tuple[str, dict]] = []
         if strategy in ("map_values", "map_both"):
             value_concepts = decision.get("value_concepts") or {}
@@ -496,19 +509,35 @@ def generate_mapping_summary_excel(
         "Start Datetime Column", "End Datetime Column", "Datetime Format",
     ]
     unit_route_cols = ["Variable", "Kind", "Source Value", "Concept ID", "Concept Name"]
+    instruction_cols = ["Variable", "Included", "Strategy", "Extra Instructions"]
 
     df_main = pd.DataFrame(rows, columns=main_cols)
     # Not sorted — rows are already grouped per variable (in concept_decisions'
     # own order) with the variable name blanked after the first entry; sorting
     # by Variable would scatter those blanks and break the grouping.
     df_unit_route = pd.DataFrame(unit_route_rows, columns=unit_route_cols)
+    df_instructions = pd.DataFrame(instruction_rows, columns=instruction_cols)
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df_main.to_excel(writer, sheet_name="Variables & Values", index=False)
         df_unit_route.to_excel(writer, sheet_name="Unit & Route Values", index=False)
+        df_instructions.to_excel(writer, sheet_name="Extra Instructions", index=False)
         _autosize_columns(writer.sheets["Variables & Values"], df_main)
         _autosize_columns(writer.sheets["Unit & Route Values"], df_unit_route)
+        _autosize_columns(writer.sheets["Extra Instructions"], df_instructions)
+
+        # Free-text notes routinely exceed the 60-char cap _autosize_columns()
+        # applies, so give that column a fixed wide width and wrap it instead
+        # of letting long instructions overflow into neighboring cells.
+        ws_instructions = writer.sheets["Extra Instructions"]
+        instr_col_idx = instruction_cols.index("Extra Instructions") + 1
+        instr_col_letter = ws_instructions.cell(row=1, column=instr_col_idx).column_letter
+        ws_instructions.column_dimensions[instr_col_letter].width = 80
+        for row_idx in range(2, len(df_instructions) + 2):
+            ws_instructions.cell(row=row_idx, column=instr_col_idx).alignment = Alignment(
+                wrap_text=True, vertical="top"
+            )
 
         # Link each variable's Unit/Route Source Column cell to where that
         # column-mode mapping's values actually live on the other sheet.
