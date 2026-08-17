@@ -3669,6 +3669,12 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // AI settings
   const [openaiConfigured, setOpenaiConfigured] = useState(false)
   const [customConceptsOpen, setCustomConceptsOpen] = useState(false)
+  // Custom concepts pre-registered from the "Custom concepts created" dialog,
+  // before they've been attached to any column/value. Once a decision reuses
+  // their id, they gain a usage and become indistinguishable from any other
+  // custom concept entry.
+  const [manualCustomConcepts, setManualCustomConcepts] = useState<ConceptRef[]>([])
+  const [addCustomConceptOpen, setAddCustomConceptOpen] = useState(false)
 
   useEffect(() => {
     getApiHealth()
@@ -4006,6 +4012,22 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       }
     }
 
+    // Pre-registered concepts (added directly from the dialog) seed the map with
+    // no usages yet; a matching decision below will attach a real usage to them.
+    for (const c of manualCustomConcepts) {
+      if (byId.has(c.concept_id)) continue
+      byId.set(c.concept_id, {
+        concept_id: c.concept_id,
+        concept_name: c.concept_name,
+        concept_code: c.concept_code,
+        vocabulary_id: c.vocabulary_id,
+        domain: c.domain,
+        concept_class_id: c.concept_class_id,
+        usages: [],
+        conflicting: false,
+      })
+    }
+
     for (const [col, d] of Object.entries(decisions)) {
       if (!d || d.strategy === 'skip') continue
       const file = colToFile.get(col) ?? null
@@ -4018,7 +4040,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     }
 
     return byId
-  }, [decisions, project.source_files])
+  }, [decisions, project.source_files, manualCustomConcepts])
 
   const customConceptsList = useMemo(
     () => Array.from(customConceptsById.values()).sort((a, b) => a.concept_id - b.concept_id),
@@ -4100,22 +4122,21 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               {openaiConfigured ? 'available' : 'disabled (set OPENAI_API_KEY)'}
             </span>
           </div>
-          {customConceptsList.length > 0 && (
-            <>
-              <span className="text-muted-foreground">·</span>
-              <button
-                type="button"
-                onClick={() => setCustomConceptsOpen(true)}
-                className="flex items-center gap-1 font-semibold text-purple-700 hover:underline"
-              >
-                <Tag className="w-3.5 h-3.5" /> Custom concepts created: {customConceptsList.length}
-              </button>
-            </>
-          )}
+          <span className="text-muted-foreground">·</span>
+          <button
+            type="button"
+            onClick={() => setCustomConceptsOpen(true)}
+            className="flex items-center gap-1 font-semibold text-purple-700 hover:underline"
+          >
+            <Tag className="w-3.5 h-3.5" /> Custom concepts created: {customConceptsList.length}
+          </button>
         </div>
 
         {/* Custom concepts review dialog */}
-        <Dialog open={customConceptsOpen} onOpenChange={setCustomConceptsOpen}>
+        <Dialog
+          open={customConceptsOpen}
+          onOpenChange={o => { setCustomConceptsOpen(o); if (!o) setAddCustomConceptOpen(false) }}
+        >
           <DialogContent className="max-w-3xl w-[90vw] max-h-[80vh] overflow-hidden flex flex-col">
             <DialogHeader>
               <DialogTitle className="flex items-center gap-2">
@@ -4123,9 +4144,37 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               </DialogTitle>
               <DialogDescription>
                 Every custom OMOP concept (id ≥ 2,000,000,000) created in this project, and where it's used.
+                Pre-register one below to reuse its id, name, code and vocabulary later while mapping.
               </DialogDescription>
             </DialogHeader>
+
+            {addCustomConceptOpen ? (
+              <div className="px-0.5">
+                <CustomConceptForm
+                  defaultName=""
+                  onCancel={() => setAddCustomConceptOpen(false)}
+                  onCreate={c => {
+                    setManualCustomConcepts(prev => [...prev, c])
+                    setAddCustomConceptOpen(false)
+                  }}
+                />
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setAddCustomConceptOpen(true)}
+                className="flex items-center gap-1.5 self-start px-2.5 py-1.5 text-xs font-medium rounded-md border border-purple-200 text-purple-700 hover:bg-purple-50"
+              >
+                <Plus className="w-3.5 h-3.5" /> Add custom concept
+              </button>
+            )}
+
             <div className="overflow-y-auto -mx-6 px-6">
+              {customConceptsList.length === 0 ? (
+                <p className="text-xs text-muted-foreground italic py-3">
+                  No custom concepts yet. Create one above, or map a value/variable to a new concept id (≥ 2,000,000,000) anywhere in the wizard.
+                </p>
+              ) : (
               <table className="w-full text-xs border-collapse">
                 <thead className="sticky top-0 bg-card">
                   <tr className="text-left text-muted-foreground border-b border-border">
@@ -4159,15 +4208,27 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                       <td className="py-1.5 pr-3 text-muted-foreground">{c.vocabulary_id || '—'}</td>
                       <td className="py-1.5 pr-3 text-muted-foreground">{c.domain || '—'}</td>
                       <td className="py-1.5 pr-3">
-                        <div className="flex flex-col gap-0.5">
-                          {c.usages.map((u, i) => (
-                            <span key={i} className="text-muted-foreground">
-                              {u.file && files.length > 1 && <span className="opacity-70">{u.file} · </span>}
-                              <code className="bg-muted px-1 rounded">{u.column}</code>
-                              {u.value && <> → <span className="italic">"{u.value}"</span></>}
-                            </span>
-                          ))}
-                        </div>
+                        {c.usages.length === 0 ? (
+                          <div className="flex items-center gap-2">
+                            <span className="italic text-muted-foreground">Not used yet</span>
+                            <button
+                              type="button"
+                              onClick={() => setManualCustomConcepts(prev => prev.filter(m => m.concept_id !== c.concept_id))}
+                              className="text-muted-foreground hover:text-destructive"
+                              title="Remove this pre-registered concept"
+                            ><X className="w-3 h-3" /></button>
+                          </div>
+                        ) : (
+                          <div className="flex flex-col gap-0.5">
+                            {c.usages.map((u, i) => (
+                              <span key={i} className="text-muted-foreground">
+                                {u.file && files.length > 1 && <span className="opacity-70">{u.file} · </span>}
+                                <code className="bg-muted px-1 rounded">{u.column}</code>
+                                {u.value && <> → <span className="italic">"{u.value}"</span></>}
+                              </span>
+                            ))}
+                          </div>
+                        )}
                         {c.conflicting && (
                           <span className="text-[10px] text-amber-700">reused with different name/code/vocabulary across mappings</span>
                         )}
@@ -4176,6 +4237,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                   ))}
                 </tbody>
               </table>
+              )}
             </div>
           </DialogContent>
         </Dialog>
