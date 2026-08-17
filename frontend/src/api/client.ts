@@ -202,6 +202,7 @@ export interface VocabFileStatus {
   table: string
   status: string
   rows: number
+  started_at: number
   elapsed: number
   error: string
 }

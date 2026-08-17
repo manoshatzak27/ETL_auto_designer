@@ -40,6 +40,7 @@ class VocabFileStatus(BaseModel):
     table: str
     status: str = "pending"  # pending | loading | success | error | skipped
     rows: int = 0
+    started_at: float = 0.0
     elapsed: float = 0.0
     error: str = ""
 
@@ -127,6 +128,7 @@ def load_vocabulary(bundle_path: str, schema: str) -> None:
                     continue
 
                 entry.status = "loading"
+                entry.started_at = time.time()
                 _set_status(_vocab_status.copy(update={"files": file_statuses}))
                 t0 = time.monotonic()
                 try:

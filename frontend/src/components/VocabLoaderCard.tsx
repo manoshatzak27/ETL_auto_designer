@@ -5,7 +5,7 @@
 // the load so users can kick it off early and let it run while they
 // configure the rest of the wizard.
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   getDbHealth,
   getVocabBundleInfo,
@@ -13,6 +13,7 @@ import {
   loadVocabulary,
   type DbHealth,
   type VocabBundleInfo,
+  type VocabFileStatus,
   type VocabLoadStatus,
 } from '../api/client'
 import ErrorBanner from './ErrorBanner'
@@ -101,23 +102,52 @@ export default function VocabLoaderCard() {
 
   useEffect(() => { refreshHealth(); refreshVocabInfo(DEFAULT_VOCAB_PATH) }, [])
 
-  // Poll vocab status; refresh health on completion so vocab_rows updates.
-  useEffect(() => {
-    let timer: number | null = null
-    const tick = async () => {
-      try {
-        const s = await getVocabStatus()
-        setVocabStatus(s)
-        if (s.overall === 'success' || s.overall === 'error') refreshHealth()
-      } catch { /* ignore */ }
+  // Poll vocab status only while a load is actually running; refresh health
+  // on completion so vocab_rows updates. A single fetch on mount covers the
+  // idle/success/error cases (and picks up a load already in progress after
+  // a page refresh) without polling forever.
+  const pollTimerRef = useRef<number | null>(null)
+
+  const pollVocabStatus = useCallback(async () => {
+    if (pollTimerRef.current !== null) {
+      window.clearTimeout(pollTimerRef.current)
+      pollTimerRef.current = null
     }
-    tick()
-    timer = window.setInterval(tick, 1500)
-    return () => { if (timer !== null) window.clearInterval(timer) }
+    try {
+      const s = await getVocabStatus()
+      setVocabStatus(s)
+      if (s.overall === 'success' || s.overall === 'error') refreshHealth()
+      if (s.overall === 'running') {
+        pollTimerRef.current = window.setTimeout(pollVocabStatus, 1500)
+      }
+    } catch { /* ignore */ }
   }, [])
+
+  useEffect(() => {
+    pollVocabStatus()
+    return () => {
+      if (pollTimerRef.current !== null) window.clearTimeout(pollTimerRef.current)
+    }
+  }, [pollVocabStatus])
 
   const vocabHasFiles = (vocabInfo?.detected_files?.length ?? 0) > 0
   const vocabRunning = vocabStatus?.overall === 'running'
+
+  // Tick a local clock while a file is actively loading so its elapsed time
+  // counts up live between status polls, instead of jumping only once the
+  // file finishes and the backend reports a final value.
+  const [now, setNow] = useState(() => Date.now())
+  const activeFile = vocabStatus?.files.find(f => f.status === 'loading')
+  useEffect(() => {
+    if (!activeFile) return
+    const id = window.setInterval(() => setNow(Date.now()), 200)
+    return () => window.clearInterval(id)
+  }, [activeFile])
+
+  const displayElapsed = (f: VocabFileStatus) =>
+    f.status === 'loading' && f.started_at > 0
+      ? Math.max(0, now / 1000 - f.started_at)
+      : f.elapsed
 
   const handleLoadVocab = async () => {
     const path = (bundlePath || DEFAULT_VOCAB_PATH).trim()
@@ -126,6 +156,7 @@ export default function VocabLoaderCard() {
     setVocabError('')
     try {
       await loadVocabulary({ bundle_path: path })
+      pollVocabStatus()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setVocabError(typeof msg === 'string' ? msg : 'Failed to start vocabulary load')
@@ -217,6 +248,7 @@ export default function VocabLoaderCard() {
               or enter an alternative path here.
             </p>
             <input
+              autoComplete="off"
               type="text"
               value={bundlePath}
               onChange={e => setBundlePath(e.target.value)}
@@ -258,7 +290,7 @@ export default function VocabLoaderCard() {
                     <td className="px-3 py-2 font-mono text-gray-700">{f.table}</td>
                     <td className="px-3 py-2"><StatusPill status={f.status} /></td>
                     <td className="px-3 py-2 text-right text-gray-600">{f.rows.toLocaleString()}</td>
-                    <td className="px-3 py-2 text-right text-gray-500">{f.elapsed.toFixed(1)}s</td>
+                    <td className="px-3 py-2 text-right text-gray-500">{displayElapsed(f).toFixed(1)}s</td>
                   </tr>
                 ))}
               </tbody>
