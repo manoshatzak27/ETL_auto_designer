@@ -187,13 +187,6 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
           </div>
         )}
       </Card>
-
-      {/* Hint when not yet generated */}
-      {!script && !generating && (
-        <p className="text-xs text-muted-foreground px-1">
-          You can also skip and generate all scripts at once from the final step.
-        </p>
-      )}
     </div>
   )
 }
