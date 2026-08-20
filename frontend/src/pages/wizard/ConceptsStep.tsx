@@ -20,6 +20,7 @@ import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, X,
   AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info, Download, Pill, Lock,
+  Pencil, Trash2,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
@@ -358,37 +359,42 @@ function useConceptSearch(projectId: string) {
 
 function CustomConceptForm({
   defaultName,
+  initial,
   onCancel,
-  onCreate,
+  onSubmit,
 }: {
   defaultName: string
+  /** When set, pre-fills the form to edit an existing custom concept instead of creating a new one. */
+  initial?: CustomConceptEntry
   onCancel: () => void
-  onCreate: (c: ConceptRef) => void
+  onSubmit: (c: ConceptRef) => void
 }) {
   const { usedCustomConceptIds } = useConceptsSettings()
   // Default to the next free custom id so most users never hit a collision —
   // only fires if they manually type an id that's already taken (see isDuplicate below).
   const [conceptId, setConceptId] = useState(() => {
+    if (initial) return String(initial.concept_id)
     const maxUsed = Math.max(2_000_000_000, ...usedCustomConceptIds.keys())
     return String(maxUsed + 1)
   })
-  const [conceptName, setConceptName] = useState(defaultName)
-  const [conceptCode, setConceptCode] = useState('')
-  const [domain, setDomain] = useState<string>('Observation')
-  const [conceptClass, setConceptClass] = useState('Clinical Finding')
-  const [vocabularyId, setVocabularyId] = useState(DEFAULT_CUSTOM_VOCABULARY)
+  const [conceptName, setConceptName] = useState(initial?.concept_name ?? defaultName)
+  const [conceptCode, setConceptCode] = useState(initial?.concept_code ?? '')
+  const [domain, setDomain] = useState<string>(initial?.domain ?? 'Observation')
+  const [conceptClass, setConceptClass] = useState(initial?.concept_class_id ?? 'Clinical Finding')
+  const [vocabularyId, setVocabularyId] = useState(initial?.vocabulary_id ?? DEFAULT_CUSTOM_VOCABULARY)
 
   const idNum = parseInt(conceptId, 10)
   const idValid = !isNaN(idNum) && idNum >= 2_000_000_000
-  const duplicateOf = idValid ? usedCustomConceptIds.get(idNum) : undefined
+  // Editing and leaving the id unchanged shouldn't collide with itself.
+  const duplicateOf = idValid && idNum !== initial?.concept_id ? usedCustomConceptIds.get(idNum) : undefined
   const nameValid = conceptName.trim().length > 0
   const codeValid = conceptCode.trim().length > 0
-  const canCreate = idValid && nameValid && codeValid && vocabularyId.trim().length > 0 && !duplicateOf
+  const canSubmit = idValid && nameValid && codeValid && vocabularyId.trim().length > 0 && !duplicateOf
 
   const submit = () => {
-    if (!canCreate) return
+    if (!canSubmit) return
     const numericDomain = DOMAIN_STRING_MAP[domain.toLowerCase()]
-    onCreate({
+    onSubmit({
       concept_id: idNum,
       concept_name: conceptName.trim(),
       concept_code: conceptCode.trim(),
@@ -404,7 +410,8 @@ function CustomConceptForm({
   return (
     <div className="flex flex-col gap-2 pl-1 border-l-2 border-purple-400/60 bg-purple-50/40 rounded-r p-2">
       <div className="flex items-center gap-2 text-xs font-semibold text-purple-800">
-        <Plus className="w-3.5 h-3.5" /> New custom OMOP concept
+        {initial ? <Pencil className="w-3.5 h-3.5" /> : <Plus className="w-3.5 h-3.5" />}
+        {initial ? 'Edit custom OMOP concept' : 'New custom OMOP concept'}
       </div>
 
       <div className="grid grid-cols-2 gap-1.5">
@@ -491,9 +498,9 @@ function CustomConceptForm({
         <button
           type="button"
           onClick={submit}
-          disabled={!canCreate}
+          disabled={!canSubmit}
           className="ml-auto px-3 py-1 text-xs bg-purple-600 text-white rounded hover:bg-purple-700 disabled:opacity-40 font-medium"
-        >Create</button>
+        >{initial ? 'Save' : 'Create'}</button>
       </div>
     </div>
   )
@@ -861,7 +868,7 @@ function ConceptPicker({
         <CustomConceptForm
           defaultName={defaultQuery}
           onCancel={() => setShowCustom(false)}
-          onCreate={c => {
+          onSubmit={c => {
             if (validateDomain) {
               const err = validateDomain(c.domain_id_str ?? null)
               if (err) { setDomainError(err); return }
@@ -3675,6 +3682,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // custom concept entry.
   const [manualCustomConcepts, setManualCustomConcepts] = useState<ConceptRef[]>([])
   const [addCustomConceptOpen, setAddCustomConceptOpen] = useState(false)
+  // Custom concept currently being edited in the "Custom concepts created" dialog, if any.
+  const [editingConcept, setEditingConcept] = useState<CustomConceptEntry | null>(null)
 
   useEffect(() => {
     getApiHealth()
@@ -4047,6 +4056,64 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     [customConceptsById],
   )
 
+  // Replace every usage (variable_concept / value_concepts) of `original`'s id with
+  // `updated` — including a changed concept_id, since the id ≥ 2,000,000,000 check
+  // in CustomConceptForm already guarantees `updated.concept_id` is free or unchanged.
+  const applyConceptEdit = useCallback((original: CustomConceptEntry, updated: ConceptRef) => {
+    setManualCustomConcepts(prev => prev.map(m => m.concept_id === original.concept_id ? updated : m))
+    setDecisions(prev => {
+      const next: Record<string, VariableDecision> = {}
+      for (const [col, d] of Object.entries(prev)) {
+        let dd = d
+        if (d.variable_concept && d.variable_concept.concept_id === original.concept_id) {
+          dd = { ...dd, variable_concept: updated }
+        }
+        if (Object.values(d.value_concepts).some(vc => vc.concept_id === original.concept_id)) {
+          const value_concepts = { ...dd.value_concepts }
+          for (const val of Object.keys(value_concepts)) {
+            if (value_concepts[val].concept_id === original.concept_id) value_concepts[val] = updated
+          }
+          dd = { ...dd, value_concepts }
+        }
+        next[col] = dd
+      }
+      return next
+    })
+    setEditingConcept(null)
+  }, [])
+
+  // Delete a custom concept everywhere: drops the pre-registration (if any) and
+  // unmaps every column/value that used it, same as clearing that concept by hand.
+  const deleteCustomConcept = useCallback((entry: CustomConceptEntry) => {
+    if (entry.usages.length > 0) {
+      const n = entry.usages.length
+      const proceed = window.confirm(
+        `Delete "${entry.concept_name}" (${entry.concept_id})? It's used in ${n} place${n > 1 ? 's' : ''} — ${n > 1 ? 'those' : 'that'} will be unmapped.`,
+      )
+      if (!proceed) return
+    }
+    setManualCustomConcepts(prev => prev.filter(m => m.concept_id !== entry.concept_id))
+    setDecisions(prev => {
+      const next: Record<string, VariableDecision> = {}
+      for (const [col, d] of Object.entries(prev)) {
+        let dd = d
+        if (d.variable_concept && d.variable_concept.concept_id === entry.concept_id) {
+          dd = { ...dd, variable_concept: null }
+        }
+        if (Object.values(d.value_concepts).some(vc => vc.concept_id === entry.concept_id)) {
+          const value_concepts = { ...dd.value_concepts }
+          for (const val of Object.keys(value_concepts)) {
+            if (value_concepts[val].concept_id === entry.concept_id) delete value_concepts[val]
+          }
+          dd = { ...dd, value_concepts }
+        }
+        next[col] = dd
+      }
+      return next
+    })
+    setEditingConcept(prev => prev?.concept_id === entry.concept_id ? null : prev)
+  }, [])
+
   // Filter + search
   const filteredCols = conceptCols.filter(col => {
     if (search && !col.toLowerCase().includes(search.toLowerCase())) return false
@@ -4135,7 +4202,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         {/* Custom concepts review dialog */}
         <Dialog
           open={customConceptsOpen}
-          onOpenChange={o => { setCustomConceptsOpen(o); if (!o) setAddCustomConceptOpen(false) }}
+          onOpenChange={o => { setCustomConceptsOpen(o); if (!o) { setAddCustomConceptOpen(false); setEditingConcept(null) } }}
         >
           <DialogContent className="max-w-3xl w-[90vw] max-h-[80vh] overflow-hidden flex flex-col">
             <DialogHeader>
@@ -4148,12 +4215,21 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               </DialogDescription>
             </DialogHeader>
 
-            {addCustomConceptOpen ? (
+            {editingConcept ? (
+              <div className="px-0.5">
+                <CustomConceptForm
+                  defaultName=""
+                  initial={editingConcept}
+                  onCancel={() => setEditingConcept(null)}
+                  onSubmit={c => applyConceptEdit(editingConcept, c)}
+                />
+              </div>
+            ) : addCustomConceptOpen ? (
               <div className="px-0.5">
                 <CustomConceptForm
                   defaultName=""
                   onCancel={() => setAddCustomConceptOpen(false)}
-                  onCreate={c => {
+                  onSubmit={c => {
                     setManualCustomConcepts(prev => [...prev, c])
                     setAddCustomConceptOpen(false)
                   }}
@@ -4184,6 +4260,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                     <th className="py-1.5 pr-3 font-medium">Vocabulary</th>
                     <th className="py-1.5 pr-3 font-medium">Domain</th>
                     <th className="py-1.5 pr-3 font-medium">Used in</th>
+                    <th className="py-1.5 pr-3 font-medium text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -4209,15 +4286,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                       <td className="py-1.5 pr-3 text-muted-foreground">{c.domain || '—'}</td>
                       <td className="py-1.5 pr-3">
                         {c.usages.length === 0 ? (
-                          <div className="flex items-center gap-2">
-                            <span className="italic text-muted-foreground">Not used yet</span>
-                            <button
-                              type="button"
-                              onClick={() => setManualCustomConcepts(prev => prev.filter(m => m.concept_id !== c.concept_id))}
-                              className="text-muted-foreground hover:text-destructive"
-                              title="Remove this pre-registered concept"
-                            ><X className="w-3 h-3" /></button>
-                          </div>
+                          <span className="italic text-muted-foreground">Not used yet</span>
                         ) : (
                           <div className="flex flex-col gap-0.5">
                             {c.usages.map((u, i) => (
@@ -4232,6 +4301,22 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                         {c.conflicting && (
                           <span className="text-[10px] text-amber-700">reused with different name/code/vocabulary across mappings</span>
                         )}
+                      </td>
+                      <td className="py-1.5 pr-3">
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => { setEditingConcept(c); setAddCustomConceptOpen(false) }}
+                            className="text-muted-foreground hover:text-primary"
+                            title="Edit this custom concept"
+                          ><Pencil className="w-3 h-3" /></button>
+                          <button
+                            type="button"
+                            onClick={() => deleteCustomConcept(c)}
+                            className="text-muted-foreground hover:text-destructive"
+                            title="Delete this custom concept"
+                          ><Trash2 className="w-3 h-3" /></button>
+                        </div>
                       </td>
                     </tr>
                   ))}
