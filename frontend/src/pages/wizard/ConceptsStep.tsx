@@ -1044,6 +1044,35 @@ function ValueConceptRow({
 
 // ── Value mapping table ────────────────────────────────────────────────────
 
+// Rows past this count switch to viewport-lazy mounting (see LazyMount below) — below
+// it, every row's ConceptPicker mounts eagerly like before.
+const VALUE_LAZY_THRESHOLD = 30
+
+// Defers mounting `children` until this row scrolls near the viewport, then leaves it
+// mounted for good. Each row's ConceptPicker carries several hooks plus a layout-reading
+// effect (textarea auto-resize) — mounting hundreds of them in one commit is what
+// froze/crashed the tab on columns with large distinct-value counts. Capping to a fixed
+// page size still meant every row on that page paid the cost at once (and was laggy);
+// gating on actual visibility means only what's on/near screen ever mounts at a time.
+function LazyMount({ children, enabled }: { children: React.ReactNode; enabled: boolean }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [visible, setVisible] = useState(!enabled)
+
+  useEffect(() => {
+    if (visible) return
+    const el = ref.current
+    if (!el) return
+    const observer = new IntersectionObserver(
+      entries => { if (entries[0]?.isIntersecting) { setVisible(true); observer.disconnect() } },
+      { rootMargin: '400px 0px' },
+    )
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [visible])
+
+  return <div ref={ref}>{visible ? children : <div className="h-9" />}</div>
+}
+
 function ValueMappingTable({
   projectId,
   column,
@@ -1059,6 +1088,9 @@ function ValueMappingTable({
   mapped: Record<string, ConceptRef>
   onChange: (updated: Record<string, ConceptRef>) => void
 }) {
+  const [filter, setFilter] = useState('')
+  const lazy = values.length > VALUE_LAZY_THRESHOLD
+
   // Domain validation (both "not a valid stem domain" and "mismatches this column's
   // already-established domain") happens upstream in ConceptPicker/ValueConceptRow,
   // inline next to the value, before onSelect ever fires — so by the time a concept
@@ -1079,6 +1111,10 @@ function ValueMappingTable({
   })()
 
   const truncated = distinctCount > values.length
+
+  const filteredValues = filter.trim()
+    ? values.filter(v => v.toLowerCase().includes(filter.trim().toLowerCase()))
+    : values
 
   return (
     <div className="flex flex-col gap-2">
@@ -1106,6 +1142,15 @@ function ValueMappingTable({
           </span>
         </div>
       )}
+      {lazy && (
+        <input
+          type="text"
+          value={filter}
+          onChange={e => setFilter(e.target.value)}
+          placeholder={`Filter ${values.length} values…`}
+          className="border border-border rounded px-2 py-1 text-xs w-full max-w-xs focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+        />
+      )}
       <div className="border border-border rounded-lg overflow-hidden">
         <table className="w-full text-xs">
           <thead className="bg-muted border-b border-border">
@@ -1115,22 +1160,31 @@ function ValueMappingTable({
             </tr>
           </thead>
           <tbody>
-            {values.map((val, i) => (
+            {filteredValues.map((val, i) => (
               <tr key={val} className={clsx(i % 2 === 0 ? 'bg-card' : 'bg-muted', 'border-b last:border-0 border-border')}>
                 <td className="px-3 py-2 font-mono text-foreground align-top pt-3">{val}</td>
                 <td className="px-3 py-2">
-                  <ValueConceptRow
-                    projectId={projectId}
-                    val={val}
-                    column={column}
-                    concept={mapped[val] ?? null}
-                    siblingConcepts={mapped}
-                    onSelect={c => set(val, c)}
-                    onClear={() => set(val, null)}
-                  />
+                  <LazyMount enabled={lazy}>
+                    <ValueConceptRow
+                      projectId={projectId}
+                      val={val}
+                      column={column}
+                      concept={mapped[val] ?? null}
+                      siblingConcepts={mapped}
+                      onSelect={c => set(val, c)}
+                      onClear={() => set(val, null)}
+                    />
+                  </LazyMount>
                 </td>
               </tr>
             ))}
+            {filteredValues.length === 0 && (
+              <tr>
+                <td colSpan={2} className="px-3 py-3 text-center text-muted-foreground italic">
+                  No values match "{filter}"
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
