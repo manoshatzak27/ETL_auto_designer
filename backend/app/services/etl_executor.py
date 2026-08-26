@@ -6,8 +6,11 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
+
+_RUNTIME_MODULE = Path(__file__).parent / "etl_runtime.py"
 
 EXECUTION_ORDER = [
     "location",
@@ -41,6 +44,7 @@ async def execute_etl_scripts(
     """
     output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(_RUNTIME_MODULE, output_path / "etl_runtime.py")
 
     safe_name = re.sub(r"[^\w]", "_", project_name).strip("_") if project_name else project_id
 

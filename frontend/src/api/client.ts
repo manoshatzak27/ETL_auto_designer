@@ -75,7 +75,7 @@ export const downloadMappingSummary = (projectId: string) => {
 }
 
 export const lookupConceptDomain = (conceptId: number) =>
-  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; found: boolean })
+  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; standard_concept: string | null; found: boolean })
 
 export const getSourcePreview = (projectId: string, rows = 5) =>
   api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
@@ -117,6 +117,10 @@ export const generateCode = (projectId: string) =>
 
 export const generateTableScript = (projectId: string, table: string) =>
   api.post(`/projects/${projectId}/generate/${table}`).then(r => r.data)
+
+export const getGenerateProgress = (projectId: string, table: string) =>
+  api.get(`/projects/${projectId}/generate/${table}/progress`)
+    .then(r => r.data as { active: boolean; used: number; limit: number; content: string })
 
 export const conceptSearch = (
   projectId: string,

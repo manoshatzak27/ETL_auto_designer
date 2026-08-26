@@ -40,6 +40,7 @@ export interface Project {
   etl_config: Record<string, { enabled?: boolean } & Record<string, unknown>>
   generated_code: string
   generated_scripts: Record<string, string>
+  generated_scripts_usage: Record<string, { used: number; limit: number }>
   last_execution_status: string
   output_files: string[]
   mapping_files: Record<string, string>

@@ -5,6 +5,8 @@ All OMOP tables are generated deterministically. If the user supplies
 extra_instructions for a table, a separate AI call patches the generated script.
 """
 import json
+import re
+import threading
 from pathlib import Path
 from openai import AsyncOpenAI
 from app.config import settings
@@ -180,20 +182,7 @@ def _generate_location_script(project) -> str:
         "import os\n"
         "import pandas as pd\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "def _to_lat(val):\n"
@@ -577,19 +566,7 @@ def _generate_location_script_multi(project, source_files: list, file_configs: d
         "import os\n"
         "import pandas as pd\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "def _to_lat(val):\n"
@@ -852,12 +829,7 @@ def _generate_care_site_script(project) -> str:
         "import pandas as pd\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
+        "from etl_runtime import _info\n"
         "\n"
         "\n"
         "def main():\n"
@@ -1175,11 +1147,7 @@ def _generate_care_site_script_multi(project, source_files: list, file_configs: 
         "import os\n"
         "import pandas as pd\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
+        "from etl_runtime import _info\n"
         "\n"
         "\n"
         "def main():\n"
@@ -1361,20 +1329,7 @@ def _generate_provider_script(project) -> str:
         "import pandas as pd\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "def _parse_year_of_birth(val):\n"
@@ -1763,19 +1718,7 @@ def _generate_provider_script_multi(project, source_files: list, file_configs: d
         "import os\n"
         "import pandas as pd\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "def _parse_year_of_birth(val):\n"
@@ -2436,20 +2379,7 @@ def _generate_person_script_multi(project, source_files: list, file_configs: dic
         "from datetime import datetime\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        '    """Print diagnostic message only in detailed output mode."""\n'
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "def _is_meaningful(val):\n"
@@ -3053,20 +2983,7 @@ def _generate_person_script(project) -> str:
         "from datetime import datetime\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "def main():\n"
@@ -3245,20 +3162,7 @@ def _generate_visit_occurrence_script(project) -> str:
         "from datetime import datetime, date\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "# --- Module-level constants ---\n"
@@ -3665,12 +3569,7 @@ def _obs_period_common_header() -> str:
         "from datetime import datetime, date, timedelta\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
+        "from etl_runtime import _info\n"
         "\n"
         "\n"
         "def _merge_periods(periods):\n"
@@ -4076,20 +3975,7 @@ def _generate_death_script(project) -> str:
         "from datetime import datetime\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
-        "\n"
-        "\n"
-        "def _read_str(row, col):\n"
-        "    val = row.get(col)\n"
-        "    result = (str(val).strip() or None) if pd.notnull(val) else None\n"
-        "    if result is None:\n"
-        "        _info(f\"INFO: column {col!r} is empty for this row\")\n"
-        "    return result\n"
+        "from etl_runtime import _info, _read_str\n"
         "\n"
         "\n"
         "# Output column order\n"
@@ -4775,12 +4661,7 @@ def _generate_stem_table_script(project) -> str:
         "from datetime import datetime\n"
         "\n"
         "\n"
-        "VERBOSE = os.getenv('ETL_OUTPUT_MODE', 'basic') == 'detailed'\n"
-        "\n"
-        "def _info(msg):\n"
-        "    \"\"\"Print diagnostic message only in detailed output mode.\"\"\"\n"
-        "    if VERBOSE:\n"
-        "        print(msg)\n"
+        "from etl_runtime import _info\n"
         "\n"
         "\n"
         "def _col_str(row, col_map, variable):\n"
@@ -5354,45 +5235,187 @@ def _generate_domain_script(table: str) -> str:
     )
 
 
-async def _apply_extra_instructions(code: str, instructions: str, table: str) -> str:
-    """Patch a deterministically generated script with user-supplied instructions via AI."""
+# Output-token ceiling for the AI patch call. 16384 is gpt-4o's hard per-request
+# completion-token ceiling (the API rejects max_tokens above that regardless of
+# what we ask for).
+_DEFAULT_PATCH_MAX_TOKENS = 16000
+
+# stem_table's deterministic script routinely runs 500-900+ lines (it folds in
+# per-variable "Extra instructions" from the Concepts step on top of the user's
+# own instructions), which can exceed 16384 completion tokens on its own if the
+# model has to retype the whole file — and even when it fits, retyping hundreds
+# of unchanged lines is what makes generation look stalled. So stem_table uses a
+# SEARCH/REPLACE diff protocol (see _apply_search_replace_blocks) instead of a
+# full-file rewrite: the model only emits the changed lines, which stays well
+# under budget even at the default ceiling.
+_STEM_TABLE_PATCH_MAX_TOKENS = _DEFAULT_PATCH_MAX_TOKENS
+
+
+_SEARCH_REPLACE_RE = re.compile(
+    r"<{7}\s*SEARCH\s*\n(.*?)\n={7}\s*\n(.*?)\n>{7}\s*REPLACE",
+    re.DOTALL,
+)
+
+
+def _apply_search_replace_blocks(code: str, diff_text: str) -> str:
+    """Apply one or more '<<<<<<< SEARCH / ======= / >>>>>>> REPLACE' blocks to
+    `code`, in order. Each SEARCH text must match the progressively-patched
+    code exactly once at the time it's applied (so a later block can target
+    text introduced by an earlier one). Raises ValueError naming the offending
+    block if a match is missing or ambiguous.
+    """
+    blocks = _SEARCH_REPLACE_RE.findall(_strip_fences(diff_text))
+    if not blocks:
+        raise ValueError(
+            "The AI patch response didn't contain any SEARCH/REPLACE blocks — "
+            "try rephrasing the extra instructions."
+        )
+    patched = code
+    for i, (search, replace) in enumerate(blocks, 1):
+        count = patched.count(search)
+        if count == 0:
+            raise ValueError(f"SEARCH/REPLACE block {i} didn't match the script exactly — try rephrasing the extra instructions.")
+        if count > 1:
+            raise ValueError(f"SEARCH/REPLACE block {i} matched the script {count} times (must be unique) — try rephrasing the extra instructions.")
+        patched = patched.replace(search, replace, 1)
+    return patched
+
+
+# In-memory, per (project_id, table) token progress for an AI patch call that's
+# currently in flight — lets a status endpoint be polled while the generating
+# request is still running, so the frontend can show a live-updating counter
+# instead of only the final number. Mirrors the module-level status pattern
+# used by vocab_loader.py.
+_generation_progress: dict[str, dict] = {}
+_generation_progress_lock = threading.Lock()
+
+
+def _progress_key(project_id: str, table: str) -> str:
+    return f"{project_id}:{table}"
+
+
+def get_generation_progress(project_id: str, table: str) -> dict | None:
+    with _generation_progress_lock:
+        entry = _generation_progress.get(_progress_key(project_id, table))
+        return dict(entry) if entry else None
+
+
+def _set_generation_progress(project_id: str, table: str, used: int, limit: int, content: str) -> None:
+    with _generation_progress_lock:
+        _generation_progress[_progress_key(project_id, table)] = {
+            "used": used,
+            "limit": limit,
+            "content": content,
+        }
+
+
+def _clear_generation_progress(project_id: str, table: str) -> None:
+    with _generation_progress_lock:
+        _generation_progress.pop(_progress_key(project_id, table), None)
+
+
+async def _apply_extra_instructions(code: str, instructions: str, table: str, project_id: str) -> tuple[str, dict]:
+    """Patch a deterministically generated script with user-supplied instructions via AI.
+
+    Streams the completion so get_generation_progress(project_id, table) reflects
+    tokens generated so far while this call is in flight.
+
+    For stem_table the model returns SEARCH/REPLACE diff blocks instead of the
+    full script (see _apply_search_replace_blocks) — its deterministic script is
+    too large to retype affordably. Other tables' scripts are short enough that
+    a full rewrite is simpler and still cheap, so they keep that behavior.
+
+    Returns (patched_code, usage) where usage = {"used": completion tokens, "limit": max_tokens}.
+    """
     client = AsyncOpenAI(api_key=settings.openai_api_key)
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    "You are an expert Python ETL engineer. "
-                    "Apply the user's modifications to the given script exactly as requested. "
-                    "Return ONLY the complete modified Python script — no markdown fences, no explanations."
-                ),
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"Apply these modifications to the OMOP {table} script:\n\n"
-                    f"{instructions}\n\n"
-                    f"CURRENT SCRIPT:\n{code}"
-                ),
-            },
-        ],
-        temperature=0.1,
-        max_tokens=16000,
-    )
-    choice = response.choices[0]
-    content = choice.message.content or ""
-    if choice.finish_reason == "length":
+    use_diff = table == "stem_table"
+    max_tokens = _STEM_TABLE_PATCH_MAX_TOKENS if use_diff else _DEFAULT_PATCH_MAX_TOKENS
+    _set_generation_progress(project_id, table, 0, max_tokens, "")
+
+    if use_diff:
+        system_prompt = (
+            "You are an expert Python ETL engineer. Apply the user's modifications to the given "
+            "script by returning ONLY the changed portions as SEARCH/REPLACE blocks — never retype "
+            "unchanged code. Format every change exactly as:\n"
+            "<<<<<<< SEARCH\n"
+            "<exact original lines, verbatim, character-for-character>\n"
+            "=======\n"
+            "<replacement lines>\n"
+            ">>>>>>> REPLACE\n"
+            "Use as many blocks as needed, one per distinct edit. Each SEARCH block must match the "
+            "CURRENT SCRIPT exactly, including whitespace, and must be unique to the one spot you "
+            "intend to change — include a few lines of surrounding context if needed to make it "
+            "unique. Output nothing but the SEARCH/REPLACE blocks: no markdown fences, no explanations."
+        )
+    else:
+        system_prompt = (
+            "You are an expert Python ETL engineer. "
+            "Apply the user's modifications to the given script exactly as requested. "
+            "Return ONLY the complete modified Python script — no markdown fences, no explanations."
+        )
+
+    try:
+        stream = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {
+                    "role": "user",
+                    "content": (
+                        f"Apply these modifications to the OMOP {table} script:\n\n"
+                        f"{instructions}\n\n"
+                        f"CURRENT SCRIPT:\n{code}"
+                    ),
+                },
+            ],
+            temperature=0.1,
+            max_tokens=max_tokens,
+            stream=True,
+            stream_options={"include_usage": True},
+        )
+
+        content_parts: list[str] = []
+        streamed_tokens = 0
+        finish_reason: str | None = None
+        final_usage = None
+        async for chunk in stream:
+            if chunk.choices:
+                choice = chunk.choices[0]
+                delta = choice.delta.content if choice.delta else None
+                if delta:
+                    content_parts.append(delta)
+                    streamed_tokens += 1  # one streamed chunk ≈ one token
+                    _set_generation_progress(
+                        project_id, table, streamed_tokens, max_tokens, "".join(content_parts)
+                    )
+                if choice.finish_reason:
+                    finish_reason = choice.finish_reason
+            if chunk.usage:
+                final_usage = chunk.usage
+        content = "".join(content_parts)
+    finally:
+        _clear_generation_progress(project_id, table)
+
+    if finish_reason == "length":
         raise ValueError(
             f"The AI patch for the {table} script was cut off before it finished "
             "(the script + instructions were too long for one response). "
             "Try shortening the extra instructions or splitting them into smaller steps."
         )
-    return _strip_fences(content)
+    patched = _apply_search_replace_blocks(code, content) if use_diff else _strip_fences(content)
+    usage = {
+        "used": final_usage.completion_tokens if final_usage else streamed_tokens,
+        "limit": max_tokens,
+    }
+    return patched, usage
 
 
-async def generate_table_script(project, table: str) -> str:
-    """Generate the Python ETL script for a single OMOP table."""
+async def generate_table_script(project, table: str) -> tuple[str, dict | None]:
+    """Generate the Python ETL script for a single OMOP table.
+
+    Returns (code, usage). usage is None unless the script went through the AI
+    patch step (i.e. extra instructions were supplied for this table).
+    """
     code: str | None = None
 
     if table == "location":
@@ -5418,8 +5441,9 @@ async def generate_table_script(project, table: str) -> str:
     if table == "stem_table":
         extra = "\n\n".join(filter(None, [extra, _stem_variable_instructions(project)]))
     if extra:
-        code = await _apply_extra_instructions(code, extra, table)
-    return code
+        code, usage = await _apply_extra_instructions(code, extra, table, project.id)
+        return code, usage
+    return code, None
 
 
 def _stem_variable_instructions(project) -> str:
@@ -5438,8 +5462,12 @@ def _stem_variable_instructions(project) -> str:
     return "Per-variable instructions:\n" + "\n".join(lines)
 
 
-async def generate_all_table_scripts(project) -> dict[str, str]:
-    """Generate scripts for all tables configured in etl_config. Returns {table: code}."""
+async def generate_all_table_scripts(project) -> tuple[dict[str, str], dict[str, dict]]:
+    """Generate scripts for all tables configured in etl_config.
+
+    Returns ({table: code}, {table: usage}) — the usage dict only contains
+    entries for tables that went through the AI patch step.
+    """
     import asyncio
 
     config: dict = project.etl_config or {}
@@ -5463,13 +5491,17 @@ async def generate_all_table_scripts(project) -> dict[str, str]:
     results = await asyncio.gather(*tasks.values(), return_exceptions=True)
 
     out: dict[str, str] = {}
+    usage_out: dict[str, dict] = {}
     for table, result in zip(tasks.keys(), results):
         if isinstance(result, Exception):
             out[table] = f"# ERROR generating {table}: {result}"
         else:
-            out[table] = result  # type: ignore[assignment]
+            code, usage = result  # type: ignore[misc]
+            out[table] = code
+            if usage:
+                usage_out[table] = usage
 
-    return out
+    return out, usage_out
 
 
 def _strip_fences(content: str) -> str:

@@ -51,5 +51,9 @@ class Project(Base):
     # Per-table generated Python scripts  {table_name: python_source_code}
     generated_scripts: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Token usage of the AI patch step per table, when extra instructions were
+    # applied  {table_name: {"used": int, "limit": int}}
+    generated_scripts_usage: Mapped[dict] = mapped_column(JSON, default=dict)
+
     # Chat history for AI code assistant  [{role, content, table?, code_updated?}]
     chat_history: Mapped[list] = mapped_column(JSON, default=list)

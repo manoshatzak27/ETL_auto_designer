@@ -4,7 +4,7 @@
  * so the user can generate, review, and optionally regenerate before moving on.
  */
 import { useState, useEffect, useRef } from 'react'
-import { generateTableScript } from '../api/client'
+import { generateTableScript, getGenerateProgress } from '../api/client'
 import { useGeneration } from '../context/GenerationContext'
 import type { Project } from '../types'
 import {
@@ -30,15 +30,64 @@ interface Props {
 export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName, deterministic = false }: Props) {
   const scripts: Record<string, string> = project.generated_scripts || {}
   const script = scripts[table] || null
+  const usage = project.generated_scripts_usage?.[table] || null
 
   const { isAnyGenerating, acquireLock, releaseLock } = useGeneration()
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [liveUsage, setLiveUsage] = useState<{ used: number; limit: number } | null>(null)
+  const [liveContent, setLiveContent] = useState('')
 
   const prevScriptRef = useRef<string | null>(script)
   const previewRef = useRef<HTMLDivElement>(null)
+  const codeScrollRef = useRef<HTMLDivElement>(null)
+
+  // While a generate/regenerate is in flight, poll the AI patch's live token
+  // count + partial code so the badge and preview update in real time instead
+  // of only appearing once the whole request finishes.
+  useEffect(() => {
+    if (!generating) {
+      setLiveUsage(null)
+      setLiveContent('')
+      return
+    }
+    setOpen(true)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      try {
+        const p = await getGenerateProgress(project.id, table)
+        if (!cancelled) {
+          // The backend's progress store is keyed by project+table, so a second
+          // concurrent generation for the same table (another tab) can interleave
+          // updates with this one. Never let the displayed count/code jump backward.
+          setLiveUsage(prev =>
+            !p.active ? null
+            : prev && prev.limit === p.limit && p.used < prev.used ? prev
+            : { used: p.used, limit: p.limit }
+          )
+          setLiveContent(prev => (p.active && p.content.length >= prev.length) ? p.content : prev)
+        }
+      } catch {
+        // transient — keep showing the last known value
+      }
+      if (!cancelled) timer = setTimeout(tick, 300)
+    }
+    tick()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [generating, project.id, table])
+
+  // Follow the tail of the live code preview as new lines stream in.
+  useEffect(() => {
+    if (generating && codeScrollRef.current) {
+      codeScrollRef.current.scrollTop = codeScrollRef.current.scrollHeight
+    }
+  }, [liveContent, generating])
 
   // Auto-expand and scroll into view when a new script arrives
   useEffect(() => {
@@ -74,6 +123,9 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   }
 
   const lineCount = script ? script.split('\n').length : 0
+  const displayUsage = generating ? liveUsage : usage
+  const previewCode = generating && liveContent ? liveContent : script
+  const previewLineCount = previewCode ? previewCode.split('\n').length : 0
 
   return (
     <div ref={previewRef} className="flex flex-col gap-3">
@@ -103,12 +155,24 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
             <p className="text-sm font-semibold text-foreground font-mono">{table}.py</p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {generating
-                ? (deterministic ? 'Building script from template…' : 'GPT-4o is writing the transformation script…')
+                ? (deterministic
+                    ? 'Building script from template…'
+                    : liveContent
+                      ? `GPT-4o is writing the transformation script… · ${previewLineCount} lines so far`
+                      : 'GPT-4o is writing the transformation script…')
                 : script
                   ? (deterministic ? `Generated · ${lineCount} lines` : `Generated · ${lineCount} lines · based on VOLABIOS reference`)
                   : 'Click Generate to create the Python ETL script for this table'
               }
             </p>
+            {displayUsage && (
+              <p className="text-[11px] text-muted-foreground/80 mt-0.5 tabular-nums">
+                AI tokens used: {displayUsage.used.toLocaleString()} / {displayUsage.limit.toLocaleString()}
+                {displayUsage.used / displayUsage.limit > 0.9 && (
+                  <span className="text-amber-600 font-medium"> · near limit</span>
+                )}
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
@@ -147,18 +211,22 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
         )}
 
         {/* Code preview */}
-        {open && script && (
+        {open && previewCode && (
           <div className="border-t border-border">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-400 font-mono">{table}.py</span>
                 <span className="text-xs text-gray-600">·</span>
-                <span className="text-xs text-gray-500">{lineCount} lines</span>
+                <span className="text-xs text-gray-500">{previewLineCount} lines</span>
+                {generating && (
+                  <span className="text-xs text-amber-500 animate-pulse">· live</span>
+                )}
               </div>
               <button
                 onClick={handleCopy}
-                className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded hover:bg-gray-700 transition-colors"
+                disabled={!script}
+                className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 {copied
                   ? <><Check className="w-3 h-3 text-green-400" /><span className="text-green-400">Copied!</span></>
@@ -168,16 +236,19 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
             </div>
 
             {/* Code with line numbers */}
-            <div className="bg-gray-950 overflow-auto max-h-[520px]">
+            <div ref={codeScrollRef} className="bg-gray-950 overflow-auto max-h-[520px]">
               <table className="w-full text-xs font-mono border-collapse">
                 <tbody>
-                  {script.split('\n').map((line, i) => (
+                  {previewCode.split('\n').map((line, i, arr) => (
                     <tr key={i} className="hover:bg-gray-800/40">
                       <td className="select-none text-right pr-4 pl-3 py-0.5 text-gray-600 w-10 border-r border-gray-800 align-top leading-5">
                         {i + 1}
                       </td>
                       <td className="pl-4 pr-4 py-0.5 text-gray-100 whitespace-pre align-top leading-5">
                         {line || ' '}
+                        {generating && i === arr.length - 1 && (
+                          <span className="inline-block w-1.5 h-3 -mb-0.5 ml-0.5 bg-amber-400 animate-pulse" />
+                        )}
                       </td>
                     </tr>
                   ))}

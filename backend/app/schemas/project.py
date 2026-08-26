@@ -28,6 +28,7 @@ class ProjectResponse(BaseModel):
     etl_config: dict[str, Any] = {}
     generated_code: str
     generated_scripts: dict[str, Any] = {}
+    generated_scripts_usage: dict[str, Any] = {}
     last_execution_status: str
     output_files: list[str] = []
     mapping_files: dict[str, Any] = {}
@@ -37,7 +38,7 @@ class ProjectResponse(BaseModel):
     model_config = {"from_attributes": True}
 
     # Coerce NULL DB values to safe defaults so existing rows don't 500
-    @field_validator("etl_config", "generated_scripts", "mapping_files", mode="before")
+    @field_validator("etl_config", "generated_scripts", "generated_scripts_usage", "mapping_files", mode="before")
     @classmethod
     def _dict_or_empty(cls, v: Any) -> dict:
         return v if isinstance(v, dict) else {}

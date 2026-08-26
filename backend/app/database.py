@@ -32,6 +32,7 @@ def create_tables():
 # Each entry: (column_name, SQL fragment used in ALTER TABLE ADD COLUMN).
 _PROJECTS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("custom_vocabulary_id", "VARCHAR(64) DEFAULT 'CUSTOM' NOT NULL"),
+    ("generated_scripts_usage", "TEXT DEFAULT '{}' NOT NULL"),
 ]
 
 
