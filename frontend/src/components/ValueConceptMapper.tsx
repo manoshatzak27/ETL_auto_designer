@@ -25,6 +25,7 @@ function ConceptCell({
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [domain, setDomain] = useState<string | null>(null)
+  const [standardConcept, setStandardConcept] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -32,6 +33,7 @@ function ConceptCell({
   useEffect(() => {
     if (conceptId === undefined || conceptId < 0) {
       setDomain(null)
+      setStandardConcept(null)
       setFailed(false)
       setNotFound(false)
       return
@@ -39,17 +41,19 @@ function ConceptCell({
     if (conceptId === 0) {
       // 0 is the OMOP "no matching concept" sentinel, not a real vocabulary entry.
       setDomain(null)
+      setStandardConcept(null)
       setFailed(false)
       setNotFound(false)
       return
     }
     setLookingUp(true)
     setDomain(null)
+    setStandardConcept(null)
     setFailed(false)
     setNotFound(false)
     lookupConceptDomain(conceptId)
       .then(res => {
-        if (res.found && res.domain_id) setDomain(res.domain_id)
+        if (res.found && res.domain_id) { setDomain(res.domain_id); setStandardConcept(res.standard_concept) }
         else { setDomain(null); setNotFound(true) }
       })
       .catch(() => setFailed(true))
@@ -57,6 +61,7 @@ function ConceptCell({
   }, [conceptId])
 
   const mismatch = !!expectedDomain && !!domain && domain.toLowerCase() !== expectedDomain.toLowerCase()
+  const nonStandard = !!domain && standardConcept !== 'S'
 
   const commit = async () => {
     const id = parseInt(pending)
@@ -88,7 +93,7 @@ function ConceptCell({
   }
 
   if (conceptId !== undefined && conceptId >= 0) {
-    const invalid = mismatch || notFound
+    const invalid = mismatch || notFound || nonStandard
     const isZero = conceptId === 0
     const boxClasses = isZero
       ? 'bg-muted border-border text-muted-foreground'
@@ -125,6 +130,9 @@ function ConceptCell({
         )}
         {!lookingUp && notFound && (
           <p className="text-[11px] text-amber-700">Not found in vocabulary</p>
+        )}
+        {!lookingUp && !mismatch && !notFound && nonStandard && (
+          <p className="text-[11px] text-amber-700">Not a standard concept</p>
         )}
       </div>
     )

@@ -538,12 +538,30 @@ function ConceptPicker({
   const [showCustom, setShowCustom] = useState(false)
   const [useReranker, setUseReranker] = useState(rerankerAvailable)
   const [domainError, setDomainError] = useState<string | null>(null)
+  const [standardConcept, setStandardConcept] = useState<string | null>(null)
+  const [checkingStandard, setCheckingStandard] = useState(false)
   const nameFieldRef = useRef<HTMLTextAreaElement>(null)
 
   useEffect(() => {
     if (value) setEditingName(value.concept_name ?? '')
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value?.concept_id])
+
+  // Custom concepts are self-declared standard (never registered in vocab.concept
+  // yet), so only check manually-entered/searched real OMOP concepts.
+  useEffect(() => {
+    if (!value || value.concept_id === 0 || value.is_custom || value.concept_id >= 2_000_000_000) {
+      setStandardConcept(null)
+      return
+    }
+    setCheckingStandard(true)
+    lookupConceptDomain(value.concept_id)
+      .then(res => setStandardConcept(res.found ? res.standard_concept : null))
+      .catch(() => setStandardConcept(null))
+      .finally(() => setCheckingStandard(false))
+  }, [value?.concept_id, value?.is_custom])
+
+  const nonStandard = !checkingStandard && standardConcept !== null && standardConcept !== 'S'
 
   // Grow the name field to fit its content, up to 4 lines, then scroll.
   useEffect(() => {
@@ -663,41 +681,49 @@ function ConceptPicker({
     const clearId = () => { setIdLocked(false); setManualId(''); setManualName(''); onClear() }
     const clearName = () => { setEditingName('') }
     return (
-      <div className="flex items-start gap-1.5 w-full">
-        {/* Locked ID chip with X — clears only ID, preserves name */}
-        <div className={clsx('flex items-center gap-1 px-2 py-1 text-xs rounded font-mono flex-shrink-0', lockedCls)}>
-          <CheckCircle className="w-3 h-3 flex-shrink-0" />
-          {isCustom && (
-            <span className="bg-purple-200 text-purple-800 px-1 rounded text-[10px] font-bold uppercase tracking-wide ml-0.5">Custom</span>
-          )}
-          <span>{isUnmapped ? '0 · Not mapped' : value.concept_id}</span>
-          {!isUnmapped && value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
-          {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
-          <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
+      <div className="flex flex-col gap-1 w-full">
+        <div className="flex items-start gap-1.5 w-full">
+          {/* Locked ID chip with X — clears only ID, preserves name */}
+          <div className={clsx('flex items-center gap-1 px-2 py-1 text-xs rounded font-mono flex-shrink-0', lockedCls)}>
+            <CheckCircle className="w-3 h-3 flex-shrink-0" />
+            {isCustom && (
+              <span className="bg-purple-200 text-purple-800 px-1 rounded text-[10px] font-bold uppercase tracking-wide ml-0.5">Custom</span>
+            )}
+            <span>{isUnmapped ? '0 · Not mapped' : value.concept_id}</span>
+            {!isUnmapped && value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
+            {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
+            <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
+          </div>
+          {/* Editable name field with X — clears only name, preserves ID; fills remaining row width and wraps up to 4 lines */}
+          <textarea
+            ref={nameFieldRef}
+            rows={1}
+            value={editingName}
+            onChange={e => setEditingName(e.target.value)}
+            onBlur={commitEditingName}
+            onKeyDown={e => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                commitEditingName()
+                e.currentTarget.blur()
+              }
+            }}
+            placeholder="Name"
+            className={clsx(
+              'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 flex-1 min-w-0 resize-none leading-snug break-words',
+              editingName.trim()
+                ? clsx(lockedCls, 'focus:ring-green-300')
+                : 'border-gray-300 bg-white text-gray-500 focus:ring-gray-300',
+            )}
+          />
+          <button onClick={clearName} className="text-muted-foreground hover:text-destructive flex-shrink-0 mt-1"><X className="w-3.5 h-3.5" /></button>
         </div>
-        {/* Editable name field with X — clears only name, preserves ID; fills remaining row width and wraps up to 4 lines */}
-        <textarea
-          ref={nameFieldRef}
-          rows={1}
-          value={editingName}
-          onChange={e => setEditingName(e.target.value)}
-          onBlur={commitEditingName}
-          onKeyDown={e => {
-            if (e.key === 'Enter') {
-              e.preventDefault()
-              commitEditingName()
-              e.currentTarget.blur()
-            }
-          }}
-          placeholder="Name"
-          className={clsx(
-            'px-2 py-1 text-xs rounded border focus:outline-none focus:ring-1 flex-1 min-w-0 resize-none leading-snug break-words',
-            editingName.trim()
-              ? clsx(lockedCls, 'focus:ring-green-300')
-              : 'border-gray-300 bg-white text-gray-500 focus:ring-gray-300',
-          )}
-        />
-        <button onClick={clearName} className="text-muted-foreground hover:text-destructive flex-shrink-0 mt-1"><X className="w-3.5 h-3.5" /></button>
+        {nonStandard && (
+          <p className="text-[11px] text-amber-700 flex items-start gap-1">
+            <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+            Concept {value.concept_id} is not a standard concept. Clear it and set a valid concept.
+          </p>
+        )}
       </div>
     )
   }
@@ -1281,6 +1307,24 @@ function FixedConceptInput({
   const [manualName, setManualName] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [standardConcept, setStandardConcept] = useState<string | null>(null)
+  const [checkingStandard, setCheckingStandard] = useState(false)
+
+  // Custom concepts (id >= 2e9) are self-declared standard and aren't in
+  // vocab.concept yet, so skip the lookup for those.
+  useEffect(() => {
+    if (!id || id >= 2_000_000_000) {
+      setStandardConcept(null)
+      return
+    }
+    setCheckingStandard(true)
+    lookupConceptDomain(id)
+      .then(res => setStandardConcept(res.found ? res.standard_concept : null))
+      .catch(() => setStandardConcept(null))
+      .finally(() => setCheckingStandard(false))
+  }, [id])
+
+  const nonStandard = !checkingStandard && standardConcept !== null && standardConcept !== 'S'
 
   const apply = () => {
     const parsedId = parseInt(manualId, 10)
@@ -1325,13 +1369,21 @@ function FixedConceptInput({
 
   if (id) {
     return (
-      <div className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs', theme.chipBg, theme.chipBorder)}>
-        <CheckCircle className={clsx('w-3.5 h-3.5 flex-shrink-0', theme.iconText)} />
-        <span className={clsx('font-semibold', theme.chipText)}>{name}</span>
-        <span className={theme.chipSubtext}>({id})</span>
-        <button onClick={onClear} className={clsx('ml-auto', theme.clear)} title="Clear">
-          <X className="w-3 h-3" />
-        </button>
+      <div className="flex flex-col gap-1">
+        <div className={clsx('flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs', theme.chipBg, theme.chipBorder)}>
+          <CheckCircle className={clsx('w-3.5 h-3.5 flex-shrink-0', theme.iconText)} />
+          <span className={clsx('font-semibold', theme.chipText)}>{name}</span>
+          <span className={theme.chipSubtext}>({id})</span>
+          <button onClick={onClear} className={clsx('ml-auto', theme.clear)} title="Clear">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+        {nonStandard && (
+          <p className="text-[11px] text-amber-700 flex items-start gap-1">
+            <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-0.5" />
+            Concept {id} is not a standard concept. Clear it and set a valid concept.
+          </p>
+        )}
       </div>
     )
   }
@@ -3051,15 +3103,15 @@ const VariableRow = memo(function VariableRow({
   // Fields the OMOP CDM requires for this variable's domain (see RequiredMark) that
   // haven't been mapped yet — surfaced in the header so it's visible whether the row
   // is expanded or collapsed, not just when looking at the field itself.
-  // Start datetime is excluded from this error list: when unmapped, the ETL falls
-  // back to the row's visit_occurrence date, so it's a heads-up rather than a
-  // problem — see `startDatetimeUnmapped` below.
+  // Start and end datetime are excluded from this error list: when unmapped, the ETL
+  // falls back to the row's visit_occurrence date (start) or the mapped start datetime
+  // (end, drug exposure only), so they're a heads-up rather than a problem — see
+  // `startDatetimeUnmapped` / `endDatetimeUnmapped` below.
   const missingRequiredFields: string[] = (() => {
     if (decision.strategy === 'skip') return []
     const inRoutedDomain = isMeasurement || isDrugExposure || isProcedureOccurrence || isConditionOccurrence || isObservation
     if (!inRoutedDomain) return []
     const missing: string[] = []
-    if (isDrugExposure && !decision.end_datetime_col) missing.push('End datetime')
     if (!decision.type_concept_id) missing.push('Type')
     return missing
   })()
@@ -3069,6 +3121,14 @@ const VariableRow = memo(function VariableRow({
     const inRoutedDomain = isMeasurement || isDrugExposure || isProcedureOccurrence || isConditionOccurrence || isObservation
     if (!inRoutedDomain) return false
     return !decision.start_datetime_col
+  })()
+
+  // Drug Exposure only: end datetime has no visit-derived fallback like start datetime
+  // does, so the ETL instead reuses the (possibly also-unmapped) start datetime as the
+  // end datetime. Non-blocking — see comment on missingRequiredFields above.
+  const endDatetimeUnmapped = (() => {
+    if (decision.strategy === 'skip') return false
+    return isDrugExposure && !decision.end_datetime_col
   })()
 
   const sampleValues = showAllValues
@@ -3540,12 +3600,18 @@ const VariableRow = memo(function VariableRow({
     {/* Missing required field warning — absolutely positioned outside the panel's
         border so it never takes horizontal space from the panel itself (which would
         otherwise shrink every row, warning or not, to keep list widths consistent). */}
-    {(missingRequiredFields.length > 0 || startDatetimeUnmapped) && (
+    {(missingRequiredFields.length > 0 || startDatetimeUnmapped || endDatetimeUnmapped) && (
       <div className="absolute left-full top-0 ml-2 w-44 flex flex-col gap-1">
         {startDatetimeUnmapped && (
           <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
             <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
             <span>Start datetime not mapped — parsed from visit occurrence</span>
+          </div>
+        )}
+        {endDatetimeUnmapped && (
+          <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
+            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>End datetime not mapped — start datetime will be used instead</span>
           </div>
         )}
         {missingRequiredFields.length > 0 && (

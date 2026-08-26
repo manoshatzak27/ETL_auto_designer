@@ -16,6 +16,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [domain, setDomain] = useState<string | null>(null)
+  const [standardConcept, setStandardConcept] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -25,18 +26,21 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   useEffect(() => {
     if (!hasValue) {
       setDomain(null)
+      setStandardConcept(null)
       setFailed(false)
       setNotFound(false)
       return
     }
     setLookingUp(true)
     setDomain(null)
+    setStandardConcept(null)
     setFailed(false)
     setNotFound(false)
     lookupConceptDomain(value as number)
       .then(res => {
         if (res.found && res.domain_id) {
           setDomain(res.domain_id)
+          setStandardConcept(res.standard_concept)
           onConceptName?.(res.concept_name ?? null)
         } else {
           setDomain(null)
@@ -49,6 +53,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   }, [value, hasValue])
 
   const mismatch = !!expectedDomain && !!domain && domain.toLowerCase() !== expectedDomain.toLowerCase()
+  const nonStandard = !!domain && standardConcept !== 'S'
 
   const commit = async () => {
     const id = parseInt(pending)
@@ -81,7 +86,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   }
 
   if (hasValue) {
-    const invalid = mismatch || notFound
+    const invalid = mismatch || notFound || nonStandard
     return (
       <div className={`flex flex-col gap-1 mt-1 ${className ?? ''}`}>
         <div className="flex items-center gap-1.5">
@@ -118,6 +123,11 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
         )}
         {!lookingUp && notFound && (
           <p className="text-xs text-amber-700">Concept {value} was not found in the vocabulary. Clear it and set a valid concept.</p>
+        )}
+        {!lookingUp && !mismatch && !notFound && nonStandard && (
+          <p className="text-xs text-amber-700">
+            Concept {value} is not a standard concept. Clear it and set a valid concept.
+          </p>
         )}
       </div>
     )

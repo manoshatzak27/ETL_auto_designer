@@ -37,13 +37,13 @@ from functools import lru_cache
 
 
 @lru_cache(maxsize=20000)
-def _get_concept_info(concept_id: int) -> "tuple[str, str] | None":
-    """Look up (domain_id, concept_name) for an OMOP concept by querying the
-    loaded vocabulary in Postgres. Returns None when the concept genuinely
-    isn't there. Raises on connection/query errors instead of swallowing them
-    — lru_cache only memoizes normal returns, not exceptions, so a transient
-    failure (e.g. Postgres not reachable yet at startup) never gets cached as
-    a permanent "not found" for that concept_id."""
+def _get_concept_info(concept_id: int) -> "tuple[str, str, str | None] | None":
+    """Look up (domain_id, concept_name, standard_concept) for an OMOP concept by
+    querying the loaded vocabulary in Postgres. Returns None when the concept
+    genuinely isn't there. Raises on connection/query errors instead of
+    swallowing them — lru_cache only memoizes normal returns, not exceptions,
+    so a transient failure (e.g. Postgres not reachable yet at startup) never
+    gets cached as a permanent "not found" for that concept_id."""
     if concept_id is None or concept_id <= 0:
         return None
     from app.services.db import connect
@@ -54,20 +54,22 @@ def _get_concept_info(concept_id: int) -> "tuple[str, str] | None":
         with conn.cursor() as cur:
             cur.execute(
                 pgsql.SQL(
-                    "SELECT domain_id, concept_name FROM {schema}.concept WHERE concept_id = %s"
+                    "SELECT domain_id, concept_name, standard_concept FROM {schema}.concept WHERE concept_id = %s"
                 ).format(schema=pgsql.Identifier(schema)),
                 (int(concept_id),),
             )
             row = cur.fetchone()
             if row and row[0] is not None:
-                return (str(row[0]), str(row[1]) if row[1] is not None else "")
+                return (str(row[0]), str(row[1]) if row[1] is not None else "", str(row[2]) if row[2] is not None else None)
             return None
 
 
 @router.get("/concept-lookup/domain")
 def concept_lookup(concept_id: int):
-    """Return the domain_id and concept_name for a given concept_id by querying the
-    loaded OMOP vocabulary in Postgres (vocab.concept).
+    """Return the domain_id, concept_name and standard_concept flag for a given
+    concept_id by querying the loaded OMOP vocabulary in Postgres (vocab.concept).
+    standard_concept is 'S' for standard concepts, 'C' for classification
+    concepts, and null/None for non-standard concepts — per OMOP convention.
     """
     try:
         info = _get_concept_info(concept_id)
@@ -75,11 +77,11 @@ def concept_lookup(concept_id: int):
         # Vocab schema/table missing (Load vocabulary hasn't run yet) or
         # Postgres unreachable. Not cached — the next lookup will retry.
         print(f"[concept-lookup] vocab.concept query failed: {exc}")
-        return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "found": False}
+        return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "found": False}
     if info:
-        domain, concept_name = info
-        return {"concept_id": concept_id, "domain_id": domain, "concept_name": concept_name, "found": True}
-    return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "found": False}
+        domain, concept_name, standard_concept = info
+        return {"concept_id": concept_id, "domain_id": domain, "concept_name": concept_name, "standard_concept": standard_concept, "found": True}
+    return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "found": False}
 
 
 # ── Column unique values ────────────────────────────────────────────────────
