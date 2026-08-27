@@ -24,3 +24,28 @@ def _read_str(row, col):
     if result is None:
         _info(f"INFO: column {col!r} is empty for this row")
     return result
+
+
+def build_id_lookup(output_dir, filename, key_col, id_col, delimiter=';'):
+    """Build {key_col value (as str) -> id_col value} from an already-generated
+    OMOP table CSV in output_dir (e.g. location.csv, care_site.csv,
+    provider.csv, person.csv, visit_occurrence.csv). Every generated script
+    that needs to resolve a foreign key written by an earlier ETL step
+    (location_id, care_site_id, provider_id, person_id,
+    visit_occurrence_id, ...) goes through this one function instead of
+    each hand-rolling its own CSV-to-dict loader.
+
+    Returns {} if the file doesn't exist yet (the upstream step hasn't run)
+    or can't be parsed — callers already treat a missing key as a lookup
+    miss, so this degrades the same way a script whose dependency ran
+    successfully but simply has no matching row would.
+    """
+    path = os.path.join(output_dir, filename)
+    if not os.path.exists(path):
+        return {}
+    try:
+        df = pd.read_csv(path, delimiter=delimiter, encoding='utf-8')
+        return dict(zip(df[key_col].astype(str), df[id_col]))
+    except Exception as e:
+        print(f'WARNING: could not load {filename}: {e}')
+        return {}
