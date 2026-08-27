@@ -5,6 +5,7 @@ All OMOP tables are generated deterministically. If the user supplies
 extra_instructions for a table, a separate AI call patches the generated script.
 """
 import json
+import ast
 import re
 import threading
 from pathlib import Path
@@ -5171,8 +5172,22 @@ def _apply_search_replace_blocks(code: str, diff_text: str) -> str:
     text introduced by an earlier one). Raises ValueError naming the offending
     block if a match is missing or ambiguous.
     """
-    blocks = _SEARCH_REPLACE_RE.findall(_strip_fences(diff_text))
+    stripped = _strip_fences(diff_text)
+    blocks = _SEARCH_REPLACE_RE.findall(stripped)
     if not blocks:
+        # The model occasionally ignores the diff-only instruction and retypes the
+        # whole script instead (more likely the more the requested change touches
+        # — a rewrite feels safer to it than carving out a precise diff). That's
+        # still a directly usable result, so accept it rather than discarding real
+        # output just because it arrived in the wrong shape: only when it's valid
+        # Python containing the same entry point the original script has, so a
+        # genuine non-answer (prose, a refusal, a fragment) still raises below.
+        if "\ndef main(" in stripped and "\nif __name__" in stripped:
+            try:
+                ast.parse(stripped)
+                return stripped
+            except SyntaxError:
+                pass
         raise ValueError(
             "The AI patch response didn't contain any SEARCH/REPLACE blocks — "
             "try rephrasing the extra instructions."
