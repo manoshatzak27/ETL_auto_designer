@@ -4209,6 +4209,28 @@ def _generate_stem_table_script(project) -> str:
         if isinstance(d, dict) and d.get("datetime_format")
     }
 
+    # End date fallback (Drug Exposure): when enabled for a variable, a row with no
+    # resolvable end date reuses its start date instead of staying unset — Drug
+    # Exposure requires an end date, so leaving it unset gets the row dropped
+    # downstream in the domain-routing script. Opt-in per variable since dropping is
+    # sometimes the more correct behavior (e.g. a genuinely open-ended prescription).
+    end_date_fallback_map: dict[str, bool] = {
+        k.lower(): True
+        for k, d in (project.concept_decisions or {}).items()
+        if isinstance(d, dict) and d.get("end_date_fallback_to_start")
+    }
+
+    # Start date fallback (Drug Exposure): Drug Exposure never inherits the visit's
+    # date column by default (see the domain_id == 3 check below) — start date only
+    # comes from the Start datetime sibling column. When enabled for a variable, a
+    # row with no resolvable start date there reuses the visit date instead of
+    # staying unset. Opt-in per variable, same rationale as the end date fallback.
+    start_date_fallback_map: dict[str, bool] = {
+        k.lower(): True
+        for k, d in (project.concept_decisions or {}).items()
+        if isinstance(d, dict) and d.get("start_date_fallback_to_visit")
+    }
+
     qcm_repr = repr(quantity_col_map)
     dsc_repr = repr(days_supply_col_map)
     rfc_repr = repr(refills_col_map)
@@ -4226,6 +4248,8 @@ def _generate_stem_table_script(project) -> str:
     sdc_repr = repr(start_dt_col_map)
     edc_repr = repr(end_dt_col_map)
     dtf_repr = repr(datetime_format_map)
+    edfm_repr = repr(end_date_fallback_map)
+    sdfm_repr = repr(start_date_fallback_map)
 
     # Inner per-row processing body — indented 8 spaces (inside the per-file for-loop).
     inner_rows = (
@@ -4311,6 +4335,17 @@ def _generate_stem_table_script(project) -> str:
         "                                    print(f'WARNING: variable {variable!r} — start datetime {_raw_start_dt!r} does not match format {_dt_fmt!r}; keeping visit-derived date')\n"
         "                            else:\n"
         "                                print(f'WARNING: variable {variable!r} — start datetime column {_start_dt_col!r} is empty for this row; keeping visit-derived date')\n"
+        "                        if start_date is None and date_col and START_DATE_FALLBACK_MAP.get(variable.lower()):\n"
+        "                            _raw_visit_date = row.get(date_col)\n"
+        "                            _visit_date_str = str(_raw_visit_date).strip() if pd.notnull(_raw_visit_date) else ''\n"
+        "                            if _visit_date_str and _visit_date_str != 'nan':\n"
+        "                                try:\n"
+        "                                    _parsed_visit = datetime.strptime(_visit_date_str, date_fmt)\n"
+        "                                    start_date = _parsed_visit.date()\n"
+        "                                    start_datetime = _parsed_visit\n"
+        "                                    _info(f'INFO: variable {variable!r} — start date missing; falling back to visit date {start_date}')\n"
+        "                                except ValueError:\n"
+        "                                    print(f'WARNING: variable {variable!r} — visit date {_raw_visit_date!r} does not match format {date_fmt!r}; start date left unset')\n"
         "                        end_date = None\n"
         "                        end_datetime = None\n"
         "                        _end_dt_col = END_DATETIME_COL_MAP.get(variable.lower())\n"
@@ -4325,6 +4360,10 @@ def _generate_stem_table_script(project) -> str:
         "                                    print(f'WARNING: variable {variable!r} — end datetime {_raw_end_dt!r} does not match format {_dt_fmt!r}')\n"
         "                            else:\n"
         "                                print(f'WARNING: variable {variable!r} — end datetime column {_end_dt_col!r} is empty for this row; end date left unset')\n"
+        "                        if end_date is None and start_date is not None and END_DATE_FALLBACK_MAP.get(variable.lower()):\n"
+        "                            _info(f'INFO: variable {variable!r} — end date missing; falling back to start date {start_date}')\n"
+        "                            end_date = start_date\n"
+        "                            end_datetime = start_datetime\n"
         "\n"
         "                        label_norm = visit_label.lower().replace(' ', '_')\n"
         "                        visit_record_source_value = f'{person_source_value}-{label_norm}'\n"
@@ -4624,6 +4663,8 @@ def _generate_stem_table_script(project) -> str:
         f"START_DATETIME_COL_MAP = {sdc_repr}\n"
         f"END_DATETIME_COL_MAP = {edc_repr}\n"
         f"DATETIME_FORMAT_MAP = {dtf_repr}\n"
+        f"END_DATE_FALLBACK_MAP = {edfm_repr}\n"
+        f"START_DATE_FALLBACK_MAP = {sdfm_repr}\n"
         "\n"
         "visit_occurrence_id_lookup = None  # built lazily on first lookup call\n"
         "\n"
@@ -4939,7 +4980,7 @@ def _generate_domain_script(table: str) -> str:
             "                _missing = ', '.join(\n"
             "                    n for n, v in (('start_date', _start_date), ('end_date', _end_date)) if v is None\n"
             "                )\n"
-            "                print(f'WARNING: dropping drug_exposure row (person_id={person_id}) — missing {_missing}')\n"
+            "                print(f'WARNING: dropping drug_exposure row (person_id={person_id}, column={row.get(\"source_value\")}) — missing {_missing}')\n"
             "                continue\n"
             "            rows.append({\n"
             "                'drug_exposure_id': rec_id,\n"

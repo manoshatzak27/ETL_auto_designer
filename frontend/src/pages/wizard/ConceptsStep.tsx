@@ -147,6 +147,16 @@ interface VariableDecision {
   start_datetime_col?: string | null
   end_datetime_col?: string | null
   datetime_format?: string | null
+  // Drug Exposure only: when the end datetime is missing/unmapped for a row, reuse
+  // the start date as the end date instead of dropping the row (Drug Exposure
+  // requires an end date). Off by default — a dropped row is sometimes more
+  // correct than a fabricated end date (e.g. a genuinely open-ended prescription).
+  end_date_fallback_to_start?: boolean
+  // Drug Exposure only: it never inherits the visit's date column by default (start
+  // date comes only from the Start datetime sibling column) — when enabled, a row
+  // with no resolvable start date there reuses the visit date instead of staying
+  // unset. Off by default, same rationale as end_date_fallback_to_start above.
+  start_date_fallback_to_visit?: boolean
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -2466,6 +2476,48 @@ function SimpleColumnFieldCard({
   )
 }
 
+// Small on/off switch for the Drug Exposure date fallbacks below — a labeled row with
+// a description that changes with state, and a pill-style toggle button.
+function FallbackToggleRow({
+  label,
+  onLabel,
+  offLabel,
+  checked,
+  onToggle,
+}: {
+  label: string
+  onLabel: string
+  offLabel: string
+  checked: boolean
+  onToggle: () => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2 rounded border border-purple-200 bg-white px-2.5 py-1.5">
+      <div className="flex flex-col">
+        <span className="text-[11px] font-medium text-purple-800">{label}</span>
+        <span className="text-[10px] text-purple-500">{checked ? onLabel : offLabel}</span>
+      </div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={checked}
+        onClick={onToggle}
+        className={clsx(
+          'relative inline-flex h-5 w-9 flex-shrink-0 items-center rounded-full transition-colors',
+          checked ? 'bg-purple-600' : 'bg-purple-200',
+        )}
+      >
+        <span
+          className={clsx(
+            'inline-block size-3.5 transform rounded-full bg-white transition-transform',
+            checked ? 'translate-x-[18px]' : 'translate-x-1',
+          )}
+        />
+      </button>
+    </div>
+  )
+}
+
 // Start/End datetime — two sibling-column pickers plus a single strptime format shared
 // by both, overriding the visit-derived start date/time and populating an end date/time
 // (which otherwise stays empty). Fully generic at the data level (start_datetime_col /
@@ -2542,6 +2594,24 @@ function DateTimeFieldsCard({
           </div>
         )}
       </div>
+      {endRequired && (
+        <>
+          <FallbackToggleRow
+            label="Fallback to visit date if start date is missing"
+            onLabel="On — a row with no start date reuses the visit date (logged verbosely) instead of being left unset."
+            offLabel="Off — a row with no start date keeps it unset (Drug Exposure never uses the visit date by default)."
+            checked={!!decision.start_date_fallback_to_visit}
+            onToggle={() => onChange({ ...decision, start_date_fallback_to_visit: !decision.start_date_fallback_to_visit })}
+          />
+          <FallbackToggleRow
+            label="Fallback to start date if end date is missing"
+            onLabel="On — a row with no end date reuses its start date (logged verbosely) instead of being dropped."
+            offLabel="Off — a row with no end date is dropped (Drug Exposure requires one)."
+            checked={!!decision.end_date_fallback_to_start}
+            onToggle={() => onChange({ ...decision, end_date_fallback_to_start: !decision.end_date_fallback_to_start })}
+          />
+        </>
+      )}
       <div className="flex flex-col gap-1">
         <label className="text-[11px] font-medium text-purple-800">Datetime format</label>
         <input
@@ -3103,10 +3173,9 @@ const VariableRow = memo(function VariableRow({
   // Fields the OMOP CDM requires for this variable's domain (see RequiredMark) that
   // haven't been mapped yet — surfaced in the header so it's visible whether the row
   // is expanded or collapsed, not just when looking at the field itself.
-  // Start and end datetime are excluded from this error list: when unmapped, the ETL
-  // falls back to the row's visit_occurrence date (start) or the mapped start datetime
-  // (end, drug exposure only), so they're a heads-up rather than a problem — see
-  // `startDatetimeUnmapped` / `endDatetimeUnmapped` below.
+  // Start and end datetime are excluded from this error list and get their own
+  // amber/red heads-up instead — see `startDatetimeUnmapped` / `endDatetimeUnmapped`
+  // (and `endDatetimeDropsRows`) below.
   const missingRequiredFields: string[] = (() => {
     if (decision.strategy === 'skip') return []
     const inRoutedDomain = isMeasurement || isDrugExposure || isProcedureOccurrence || isConditionOccurrence || isObservation
@@ -3122,14 +3191,21 @@ const VariableRow = memo(function VariableRow({
     if (!inRoutedDomain) return false
     return !decision.start_datetime_col
   })()
+  // Drug Exposure only: unlike every other routed domain, it does NOT fall back to the
+  // visit date automatically — with start_datetime_col unmapped and the "Fallback to
+  // visit date" toggle off, start date stays unset and Drug Exposure requires one, so
+  // the row gets silently dropped downstream (same failure mode as the end date below).
+  const startDatetimeDropsRows = isDrugExposure && !decision.start_datetime_col && !decision.start_date_fallback_to_visit
 
   // Drug Exposure only: end datetime has no visit-derived fallback like start datetime
-  // does, so the ETL instead reuses the (possibly also-unmapped) start datetime as the
-  // end datetime. Non-blocking — see comment on missingRequiredFields above.
+  // does. Whether an unmapped/missing end date is just a heads-up or an actual problem
+  // depends on the "Fallback to start date" toggle in DateTimeFieldsCard — with it off,
+  // Drug Exposure requires an end date, so the row gets silently dropped downstream.
   const endDatetimeUnmapped = (() => {
     if (decision.strategy === 'skip') return false
     return isDrugExposure && !decision.end_datetime_col
   })()
+  const endDatetimeDropsRows = endDatetimeUnmapped && !decision.end_date_fallback_to_start
 
   const sampleValues = showAllValues
     ? info?.distinct_values ?? []
@@ -3603,16 +3679,30 @@ const VariableRow = memo(function VariableRow({
     {(missingRequiredFields.length > 0 || startDatetimeUnmapped || endDatetimeUnmapped) && (
       <div className="absolute left-full top-0 ml-2 w-44 flex flex-col gap-1">
         {startDatetimeUnmapped && (
-          <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
-            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <span>Start datetime not mapped — parsed from visit occurrence</span>
-          </div>
+          startDatetimeDropsRows ? (
+            <div className="flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>Start datetime not mapped — rows with no start date will be dropped</span>
+            </div>
+          ) : (
+            <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
+              <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>Start datetime not mapped — parsed from visit occurrence</span>
+            </div>
+          )
         )}
         {endDatetimeUnmapped && (
-          <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
-            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <span>End datetime not mapped — start datetime will be used instead</span>
-          </div>
+          endDatetimeDropsRows ? (
+            <div className="flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
+              <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>End datetime not mapped — rows with no end date will be dropped</span>
+            </div>
+          ) : (
+            <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
+              <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+              <span>End datetime not mapped — start datetime will be used instead</span>
+            </div>
+          )
         )}
         {missingRequiredFields.length > 0 && (
           <div className="flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
