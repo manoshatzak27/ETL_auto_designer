@@ -2543,8 +2543,11 @@ function DateTimeFieldsCard({
   ownVariable: string
   startHint?: string
   endHint?: string
-  // Observation has no end-date field in the CDM — hide the End datetime picker there
-  // rather than exposing a control with no effect on the generated output.
+  // Measurement has no end-date field in the CDM — hide the End datetime picker there
+  // rather than exposing a control with no effect on the generated output. Every other
+  // domain shows it: Observation's end date is likewise unused downstream (its CDM table
+  // has no end-date column either) but is still exposed here for input/fallback parity —
+  // a harmless no-op in stem_table, same convention as other domains' unused sibling columns.
   showEnd?: boolean
   // Only Drug Exposure requires both start and end dates in the OMOP CDM — Procedure
   // and Condition Occurrence's end dates are optional there, so their End picker
@@ -2594,23 +2597,25 @@ function DateTimeFieldsCard({
           </div>
         )}
       </div>
-      {endRequired && (
-        <>
-          <FallbackToggleRow
-            label="Fallback to visit date if start date is missing"
-            onLabel="On — a row with no start date reuses the visit date (logged verbosely) instead of being left unset."
-            offLabel="Off — a row with no start date keeps it unset (Drug Exposure never uses the visit date by default)."
-            checked={!!decision.start_date_fallback_to_visit}
-            onToggle={() => onChange({ ...decision, start_date_fallback_to_visit: !decision.start_date_fallback_to_visit })}
-          />
-          <FallbackToggleRow
-            label="Fallback to start date if end date is missing"
-            onLabel="On — a row with no end date reuses its start date (logged verbosely) instead of being dropped."
-            offLabel="Off — a row with no end date is dropped (Drug Exposure requires one)."
-            checked={!!decision.end_date_fallback_to_start}
-            onToggle={() => onChange({ ...decision, end_date_fallback_to_start: !decision.end_date_fallback_to_start })}
-          />
-        </>
+      <FallbackToggleRow
+        label="Fallback to visit date if start date is missing"
+        onLabel="On — a row with no resolvable start date reuses the visit date (logged verbosely) instead of being left unset."
+        offLabel="Off — a row with no resolvable start date keeps it unset (no domain uses the visit date automatically)."
+        checked={!!decision.start_date_fallback_to_visit}
+        onToggle={() => onChange({ ...decision, start_date_fallback_to_visit: !decision.start_date_fallback_to_visit })}
+      />
+      {showEnd && (
+        <FallbackToggleRow
+          label="Fallback to start date if end date is missing"
+          onLabel={endRequired
+            ? 'On — a row with no resolvable end date reuses its start date (logged verbosely) instead of being dropped.'
+            : 'On — a row with no resolvable end date reuses its start date (logged verbosely) instead of being left unset.'}
+          offLabel={endRequired
+            ? 'Off — a row with no end date is dropped (this domain requires one).'
+            : 'Off — a row with no resolvable end date keeps it unset.'}
+          checked={!!decision.end_date_fallback_to_start}
+          onToggle={() => onChange({ ...decision, end_date_fallback_to_start: !decision.end_date_fallback_to_start })}
+        />
       )}
       <div className="flex flex-col gap-1">
         <label className="text-[11px] font-medium text-purple-800">Datetime format</label>
@@ -2853,9 +2858,11 @@ function ConditionOccurrenceFieldsSection({
   )
 }
 
-// Observation fields — Type, Qualifier, Start datetime. Unit is NOT here — it's already
-// shared with Measurement via the top-level Unit block (domain_id 1 or 2). Observation
-// has no end-date field in the CDM, so DateTimeFieldsCard renders with showEnd={false}.
+// Observation fields — Type, Qualifier, Start/End datetime. Unit is NOT here — it's
+// already shared with Measurement via the top-level Unit block (domain_id 1 or 2).
+// Observation's CDM table has no end-date column, so the picked end date is a harmless
+// no-op downstream (same convention as other domains' unused sibling columns) — it's
+// still shown for input/fallback parity with the other domain sections.
 function ObservationFieldsSection({
   decision,
   onChange,
@@ -2908,7 +2915,7 @@ function ObservationFieldsSection({
         claims={claims}
         ownVariable={ownVariable}
         startHint="fills observation_date(time)"
-        showEnd={false}
+        endHint="not written to observation.csv — OMOP has no end-date field here; only feeds the fallback below"
       />
     </div>
   )
@@ -3191,11 +3198,11 @@ const VariableRow = memo(function VariableRow({
     if (!inRoutedDomain) return false
     return !decision.start_datetime_col
   })()
-  // Drug Exposure only: unlike every other routed domain, it does NOT fall back to the
-  // visit date automatically — with start_datetime_col unmapped and the "Fallback to
-  // visit date" toggle off, start date stays unset and Drug Exposure requires one, so
-  // the row gets silently dropped downstream (same failure mode as the end date below).
-  const startDatetimeDropsRows = isDrugExposure && !decision.start_datetime_col && !decision.start_date_fallback_to_visit
+  // No routed domain falls back to the visit date automatically anymore — with
+  // start_datetime_col unmapped and the "Fallback to visit date" toggle off, start
+  // date stays unset and every routed domain requires one, so the row gets silently
+  // dropped downstream (same failure mode as the end date below, Drug Exposure only).
+  const startDatetimeDropsRows = startDatetimeUnmapped && !decision.start_date_fallback_to_visit
 
   // Drug Exposure only: end datetime has no visit-derived fallback like start datetime
   // does. Whether an unmapped/missing end date is just a heads-up or an actual problem
@@ -3687,7 +3694,7 @@ const VariableRow = memo(function VariableRow({
           ) : (
             <div className="flex items-start gap-1 text-[11px] font-medium text-amber-700 leading-snug">
               <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-              <span>Start datetime not mapped — parsed from visit occurrence</span>
+              <span>Start datetime not mapped — visit date will be used instead</span>
             </div>
           )
         )}
