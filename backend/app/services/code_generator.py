@@ -5201,6 +5201,35 @@ def _apply_search_replace_blocks(code: str, diff_text: str) -> str:
                 return stripped
             except SyntaxError:
                 pass
+        # With many per-variable instructions all landing at the single shared
+        # AI-PATCH INSERTION POINT, the model sometimes drops the diff framing
+        # for that same reason but retypes only that one fragment — still
+        # starting at the marker comment and ending at the trailing
+        # _append_row() call, just without the SEARCH/REPLACE wrapper. That's
+        # an unambiguous edit too: splice it in ourselves at the one place in
+        # the script that fragment can mean, and only accept it if doing so
+        # still produces valid Python.
+        _insertion_anchor = (
+            "                        # <<< AI-PATCH INSERTION POINT >>>\n"
+            "                        # Per-variable custom logic (Extra Instructions) is inserted here,\n"
+            "                        # after every field above has its final value, and calls\n"
+            "                        # _append_row(field=value, ...) — never inline rows.append({...}).\n"
+            "                        _append_row()"
+        )
+        _fragment = stripped.strip("\n")
+        _fragment_lines = [ln for ln in _fragment.splitlines() if ln.strip()]
+        if (
+            code.count(_insertion_anchor) == 1
+            and _fragment_lines
+            and _fragment_lines[0].strip() == "# <<< AI-PATCH INSERTION POINT >>>"
+            and _fragment_lines[-1].strip() == "_append_row()"
+        ):
+            candidate = code.replace(_insertion_anchor, _fragment, 1)
+            try:
+                ast.parse(candidate)
+                return candidate
+            except SyntaxError:
+                pass
         raise ValueError(
             "The AI patch response didn't contain any SEARCH/REPLACE blocks — "
             "try rephrasing the extra instructions."
