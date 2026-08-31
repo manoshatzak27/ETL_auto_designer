@@ -3999,7 +3999,7 @@ def _generate_stem_table_script(project) -> str:
     labels, builds the standard visit_record_source_value composite key, and
     delegates the dict lookup to a `lookup_visit_occurrence_id` helper that
     mirrors the OHDSI wrapper.lookup_visit_occurrence_id reference (single
-    arg, lazy dict init, logger.info on miss, return None).
+    arg, lazy dict init, warns once per distinct miss, return None).
     """
     stem_cfg = (project.etl_config or {}).get("stem_table", {})
     visit_cfg = (project.etl_config or {}).get("visit_occurrence", {})
@@ -4572,7 +4572,6 @@ def _generate_stem_table_script(project) -> str:
 
     return (
         "import os\n"
-        "import logging\n"
         "import pandas as pd\n"
         "from datetime import datetime\n"
         "\n"
@@ -4615,11 +4614,6 @@ def _generate_stem_table_script(project) -> str:
         "        return None\n"
         "\n"
         "\n"
-        "# --- Logging setup ---\n"
-        "logging.basicConfig(level=logging.INFO, format='%(message)s')\n"
-        "logger = logging.getLogger(__name__)\n"
-        "\n"
-        "\n"
         "# --- Module-level constants ---\n"
         f"VISIT_SOURCE_COL     = {repr(visit_source_col)}   # column that carries visit label (multi-row mode)\n"
         f"AUTO_NUMBER_VISITS   = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
@@ -4660,6 +4654,10 @@ def _generate_stem_table_script(project) -> str:
         f"START_DATE_FALLBACK_MAP = {sdfm_repr}\n"
         "\n"
         "visit_occurrence_id_lookup = None  # built lazily on first lookup call\n"
+        "_warned_missing_visits = {}  # record_source_value -> miss count, so a person missing\n"
+        "                             # one timepoint (a normal, expected gap — e.g. a follow-up\n"
+        "                             # visit that never happened) doesn't spam one line per\n"
+        "                             # variable that referenced it.\n"
         "\n"
         "# Each entry: path, delimiter, encoding,\n"
         "# variables (list → converted to set below for O(1) lookup).\n"
@@ -4703,14 +4701,18 @@ def _generate_stem_table_script(project) -> str:
         "def lookup_visit_occurrence_id(visit_record_source_value):\n"
         "    \"\"\"Mirror of wrapper.lookup_visit_occurrence_id from the OHDSI reference.\n"
         "    Returns the visit_occurrence_id for the given key, or None if the key\n"
-        "    isn't present (the miss is logged so the user can audit which records\n"
-        "    have no visit attached).\n"
+        "    isn't present. Every row referencing a missing visit is dropped (no\n"
+        "    visit_occurrence_id to attach it to), but the miss itself is warned about\n"
+        "    only once per distinct visit — one absent visit is usually referenced by\n"
+        "    every variable mapped to it, and warning per-row would be pure noise.\n"
         "    \"\"\"\n"
         "    global visit_occurrence_id_lookup\n"
         "    if visit_occurrence_id_lookup is None:\n"
         "        create_visit_lookup()\n"
         "    if visit_record_source_value not in visit_occurrence_id_lookup:\n"
-        "        logger.info('Visit record_source_value \"{}\" not found in lookup.'.format(visit_record_source_value))\n"
+        "        _warned_missing_visits[visit_record_source_value] = _warned_missing_visits.get(visit_record_source_value, 0) + 1\n"
+        "        if _warned_missing_visits[visit_record_source_value] == 1:\n"
+        "            print(f'WARNING: visit {visit_record_source_value!r} not found — every row referencing it is dropped')\n"
         "        return None\n"
         "    return visit_occurrence_id_lookup.get(visit_record_source_value)\n"
         "\n"
@@ -4840,6 +4842,9 @@ def _generate_stem_table_script(project) -> str:
         "    output_file = os.path.join(output_dir, 'stem_table.csv')\n"
         "    df_out.to_csv(output_file, sep=';', index=False, encoding='utf-8')\n"
         "    print(f'Writing stem_table.csv ... done ({len(df_out)} records)')\n"
+        "    if _warned_missing_visits:\n"
+        "        _total_dropped = sum(_warned_missing_visits.values())\n"
+        "        print(f'WARNING: {_total_dropped} row(s) dropped across {len(_warned_missing_visits)} missing visit(s) — see warnings above')\n"
         "\n"
         "\n"
         "if __name__ == '__main__':\n"
