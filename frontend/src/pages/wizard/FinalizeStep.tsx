@@ -111,7 +111,14 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
 
   // ── Generate / Execute state ─────────────────────────────────────────────
   const [executing, setExecuting] = useState(false)
-  const [execResult, setExecResult] = useState<{ status: string; log: string; output_files: string[] } | null>(null)
+  // Hydrate from the project prop so the log survives navigating away and back
+  // to this step (project state lives in the parent wizard and isn't reset
+  // when this component unmounts/remounts).
+  const [execResult, setExecResult] = useState<{ status: string; log: string; output_files: string[] } | null>(
+    () => project.last_execution_log
+      ? { status: project.last_execution_status, log: project.last_execution_log, output_files: project.output_files || [] }
+      : null,
+  )
   const [execError, setExecError] = useState('')
   const [outputMode, setOutputMode] = useState<'basic' | 'detailed'>('basic')
 
@@ -129,7 +136,7 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
     try {
       const result = await executeProject(project.id, outputMode)
       setExecResult(result)
-      onUpdate({ ...project, last_execution_status: result.status, output_files: result.output_files })
+      onUpdate({ ...project, last_execution_status: result.status, last_execution_log: result.log, output_files: result.output_files })
       // Bust cached previews so re-execution shows fresh data
       setPreviewCache({})
       setActivePreviewTab(null)
@@ -138,6 +145,7 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
       const msg = err?.response?.data?.detail || 'Execution failed.'
       setExecError(msg)
       setExecResult({ status: 'error', log: msg, output_files: [] })
+      onUpdate({ ...project, last_execution_status: 'error', last_execution_log: msg })
     } finally {
       setExecuting(false)
     }

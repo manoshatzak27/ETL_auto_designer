@@ -42,7 +42,7 @@ export default function LogStream({ log, status }: Props) {
       {log && (
         <pre
           ref={ref}
-          className="bg-gray-950 text-green-400 rounded-lg p-4 text-xs overflow-auto max-h-64 font-mono leading-relaxed"
+          className="bg-gray-950 text-green-400 rounded-lg p-4 text-xs overflow-auto max-h-[36rem] min-h-[16rem] font-mono leading-relaxed"
         >
           {log}
         </pre>

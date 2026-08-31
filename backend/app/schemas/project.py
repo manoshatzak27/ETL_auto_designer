@@ -30,6 +30,7 @@ class ProjectResponse(BaseModel):
     generated_scripts: dict[str, Any] = {}
     generated_scripts_usage: dict[str, Any] = {}
     last_execution_status: str
+    last_execution_log: str = ""
     output_files: list[str] = []
     mapping_files: dict[str, Any] = {}
     custom_vocabulary_id: str = "CUSTOM"

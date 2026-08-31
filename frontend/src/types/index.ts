@@ -42,6 +42,7 @@ export interface Project {
   generated_scripts: Record<string, string>
   generated_scripts_usage: Record<string, { used: number; limit: number }>
   last_execution_status: string
+  last_execution_log?: string
   output_files: string[]
   mapping_files: Record<string, string>
   custom_vocabulary_id?: string
