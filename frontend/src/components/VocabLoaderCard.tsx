@@ -243,9 +243,12 @@ export default function VocabLoaderCard() {
         ) : (
           <div className="flex flex-col gap-2">
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-3 py-2">
-              No Athena CSVs detected at <code className="bg-white/60 px-1 rounded font-mono">{vocabInfo?.path || DEFAULT_VOCAB_PATH}</code>.
-              Mount your unzipped Athena bundle to that path in <code className="bg-white/60 px-1 rounded">docker-compose.yml</code>,
-              or enter an alternative path here.
+              No Athena CSVs detected at <code className="bg-white/60 px-1 rounded font-mono">{vocabInfo?.path || DEFAULT_VOCAB_PATH}</code>{' '}
+              inside the backend container — that's not a folder name to create yourself. On the host, drop
+              your unzipped Athena export into whatever <code className="bg-white/60 px-1 rounded font-mono">ATHENA_BUNDLE_PATH</code>{' '}
+              points to in <code className="bg-white/60 px-1 rounded">.env</code> (defaults to{' '}
+              <code className="bg-white/60 px-1 rounded font-mono">./vocab_bundle</code>), or enter an alternative
+              in-container path below.
             </p>
             <input
               autoComplete="off"
