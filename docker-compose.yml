@@ -113,7 +113,6 @@ services:
       OUTPUT_DIR: /app/outputs
     volumes:
       - ./backend:/app
-      - backend_state:/app/state
       - uploads_data:/app/uploads
       - outputs_data:/app/outputs
       - ${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/vocab:ro
@@ -145,6 +144,5 @@ services:
 
 volumes:
   pgdata:
-  backend_state:
   uploads_data:
   outputs_data:
