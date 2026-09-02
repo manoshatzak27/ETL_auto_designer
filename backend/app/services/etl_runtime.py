@@ -26,6 +26,27 @@ def _read_str(row, col):
     return result
 
 
+def _write_omop_csv(df, output_file):
+    """Write an OMOP table DataFrame to semicolon-delimited CSV.
+
+    A column that's populated for some rows and null for others gets upcast
+    by pandas to float64 (plain int64 has no way to represent a missing
+    value), so a valid id like 9448 round-trips through to_csv as "9448.0"
+    — which Postgres COPY rejects for an integer column ('invalid input
+    syntax for type integer'). Any float64 column whose non-null values are
+    all whole numbers is cast to the nullable Int64 dtype first, so it
+    serializes as a clean "9448" (and "" for null) instead. A column with
+    genuine fractional values (value_as_number, range_low, ...) is left
+    untouched.
+    """
+    for col in df.columns:
+        if df[col].dtype == 'float64':
+            non_null = df[col].dropna()
+            if not non_null.empty and (non_null % 1 == 0).all():
+                df[col] = df[col].astype('Int64')
+    df.to_csv(output_file, sep=';', index=False, encoding='utf-8')
+
+
 def build_id_lookup(output_dir, filename, key_col, id_col, delimiter=';'):
     """Build {key_col value (as str) -> id_col value} from an already-generated
     OMOP table CSV in output_dir (e.g. location.csv, care_site.csv,
