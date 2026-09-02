@@ -12,12 +12,6 @@ export const deleteProject = (id: string) => api.delete(`/projects/${id}`)
 export const copyProject = (id: string) => api.post(`/projects/${id}/copy`).then(r => r.data)
 
 // ---- Source upload ----
-export const uploadSource = (projectId: string, file: File) => {
-  const fd = new FormData()
-  fd.append('file', file)
-  return api.post(`/projects/${projectId}/upload-source`, fd).then(r => r.data)
-}
-
 export interface UploadConflict {
   column: string
   reason: string
@@ -76,9 +70,6 @@ export const downloadMappingSummary = (projectId: string) => {
 
 export const lookupConceptDomain = (conceptId: number) =>
   api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; standard_concept: string | null; found: boolean })
-
-export const getSourcePreview = (projectId: string, rows = 5) =>
-  api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
 
 export const getSourceFileContent = (projectId: string, filename: string, rows?: number) =>
   api
@@ -146,9 +137,6 @@ export const updateProjectSettings = (
 // ---- Execution ----
 export const executeProject = (projectId: string, outputMode: 'basic' | 'detailed' = 'basic') =>
   api.post(`/projects/${projectId}/execute`, { output_mode: outputMode }).then(r => r.data)
-
-export const getExecutionLog = (projectId: string) =>
-  api.get(`/projects/${projectId}/execution-log`).then(r => r.data)
 
 export const downloadOutput = (projectId: string, filename: string) => {
   window.open(`/api/projects/${projectId}/download/${filename}`, '_blank')

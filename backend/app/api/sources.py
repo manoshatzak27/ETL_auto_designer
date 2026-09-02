@@ -29,44 +29,6 @@ MAPPING_FILENAMES = {
 }
 
 
-@router.post("/{project_id}/upload-source", response_model=ProjectResponse)
-async def upload_source(
-    project_id: str,
-    file: UploadFile = File(...),
-    db: Session = Depends(get_db),
-):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-
-    # file.filename can be None in some browsers — use a safe fallback
-    safe_name = Path(file.filename).name if file.filename else "source.csv"
-
-    project_upload_dir = settings.get_upload_path() / project_id
-    project_upload_dir.mkdir(parents=True, exist_ok=True)
-    dest = project_upload_dir / safe_name
-
-    contents = await file.read()
-    dest.write_bytes(contents)
-
-    schema = infer_schema(str(dest))
-
-    project.source_files = []
-    _sync_legacy_fields(project, [{
-        "filename": safe_name,
-        "path": str(dest),
-        "delimiter": schema["delimiter"],
-        "encoding": schema["encoding"],
-        "columns": schema["columns"],
-        "row_count": schema["row_count"],
-        "size_bytes": dest.stat().st_size,
-    }])
-    _reset_project_state(project)
-    db.commit()
-    db.refresh(project)
-    return project
-
-
 _SOURCE_EXTENSIONS = {".csv", ".tsv", ".txt"}
 
 
@@ -711,22 +673,3 @@ def detect_column_type(project_id: str, column: str, filename: str | None = None
         column,
     )
     return {"column": column, "transform": transform}
-
-
-@router.get("/{project_id}/source-preview")
-def source_preview(project_id: str, rows: int = 5, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    if not project.source_path or not Path(project.source_path).exists():
-        raise HTTPException(status_code=404, detail="Source file not uploaded")
-
-    import pandas as pd
-    df = pd.read_csv(
-        project.source_path,
-        sep=project.source_delimiter if project.source_delimiter else ",",
-        encoding=project.source_encoding if project.source_encoding else "utf-8",
-        nrows=rows,
-        dtype=str,
-    )
-    return {"columns": list(df.columns), "rows": df.fillna("").to_dict(orient="records")}

@@ -79,9 +79,3 @@ class ETLConfigUpdate(BaseModel):
 
 class GenerateCodeRequest(BaseModel):
     tables: list[str] | None = None
-
-
-class ConceptSearchRequest(BaseModel):
-    query: str
-    top_k: int = 20
-    use_reranker: bool = False

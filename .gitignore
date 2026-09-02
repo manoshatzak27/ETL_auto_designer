@@ -13,6 +13,13 @@ backend/venv/
 backend/.venv/
 
 # Wizard state / runtime data
+#
+# These are normally shadowed by Docker named volumes (uploads_data/outputs_data),
+# but the host-side directories themselves must keep existing on disk (even empty) —
+# on this Docker setup, deleting the host anchor dir severs the nested volume mount
+# for any already-running container, not just its contents. Never rmdir these.
+backend/uploads/
+backend/outputs/
 backend/etl_designer.db
 backend/etl_designer.db-journal
 

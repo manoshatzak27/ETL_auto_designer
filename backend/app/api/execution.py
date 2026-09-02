@@ -59,18 +59,6 @@ async def execute_project(project_id: str, body: ExecuteRequest = ExecuteRequest
     return {"status": status, "log": log, "output_files": output_files}
 
 
-@router.get("/{project_id}/execution-log")
-def get_execution_log(project_id: str, db: Session = Depends(get_db)):
-    project = db.query(Project).filter(Project.id == project_id).first()
-    if not project:
-        raise HTTPException(status_code=404, detail="Project not found")
-    return {
-        "status": project.last_execution_status,
-        "log": project.last_execution_log,
-        "output_files": project.output_files,
-    }
-
-
 @router.get("/{project_id}/download/{filename}")
 def download_output(project_id: str, filename: str, db: Session = Depends(get_db)):
     project = db.query(Project).filter(Project.id == project_id).first()
