@@ -1,0 +1,51 @@
+name,description,expected,rationale
+sugar_lvl,sugar level in the blood,4149519,colloquial name for glucose
+kidney_waste_marker,waste product cleared by the kidneys used to assess renal function,4324383,paraphrase of creatinine
+clotting_time,how long blood takes to clot,4245261,paraphrase of prothrombin time
+bad_cholesterol,the bad cholesterol fraction,4012479,colloquial name for LDL
+liver_enzyme_alt,liver enzyme ALT,4146380,abbreviation plus context
+liver_enzyme_ast,liver enzyme AST,4263457,abbreviation plus context
+breaths_per_min,number of breaths taken per minute,4313591,paraphrase of respiratory rate
+pulse_rate,pulse taken at the wrist,3027018,synonym for heart rate
+blood_oxygen,how much oxygen is carried in the blood,4020553,paraphrase of oxygen saturation
+how_hot,how hot or cold the patient is,4302666,paraphrase of body temperature
+how_heavy,how much the patient weighs,4099154,paraphrase of body weight
+how_tall,how tall the patient is,607590,paraphrase of body height
+thyroid_screen,screening test for thyroid gland function,4246879,paraphrase of TSH
+inflammation_marker,acute phase reactant indicating inflammation,4208414,paraphrase of C-reactive protein
+sed_rate,how fast red cells settle in a tube,4212065,paraphrase of ESR
+clot_ratio,standardised ratio for anticoagulation monitoring,4306239;45757550,paraphrase of INR
+sugar_over_time,average blood sugar over the past three months,4184637,paraphrase of HbA1c
+salt_level,salt level in the blood,4097430,colloquial name for sodium
+potassium_serum,potassium concentration in serum,4154489,near-literal control case
+packed_cell_volume,proportion of blood volume occupied by red cells,4151358,synonym for haematocrit
+clotting_cells,count of the cells responsible for clotting,4267147,paraphrase of platelet count
+infection_fighting_cells,count of the cells that fight infection,4298431,paraphrase of white blood cell count
+oxygen_carrying_cells,count of the cells that carry oxygen,4030871,paraphrase of red blood cell count
+urea_waste,nitrogen waste product measured in blood,4074649;4017361,paraphrase of urea nitrogen
+bone_mineral_ion,divalent ion central to bone and clotting,4216722,paraphrase of calcium
+heart_damage_marker,protein released when heart muscle is damaged,4007805;4005525,paraphrase of troponin
+heart_strain_peptide,peptide released when the heart is under strain,4307029,paraphrase of BNP
+main_blood_protein,most abundant protein in blood plasma,4097664,paraphrase of albumin
+jaundice_pigment,pigment that causes yellowing of the skin,4118986,paraphrase of bilirubin
+kidney_filter_rate,rate at which the kidneys filter blood,4213477,paraphrase of GFR
+fatness_index,weight scaled to the square of height,4245997,paraphrase of BMI
+top_bp_number,the upper number of a blood pressure reading,4152194;3004249,paraphrase of systolic BP
+heart_attack,heart attack,4329847,lay term for myocardial infarction
+weak_heart_pump,heart cannot pump strongly enough causing fluid overload,319835,paraphrase of congestive heart failure
+high_bp_disease,persistently raised blood pressure as a diagnosis,316866,paraphrase of hypertensive disorder
+adult_sugar_disease,adult onset form of the sugar disease,201826,paraphrase of type 2 diabetes
+smokers_lung,long term smoking related airway obstruction,255573,paraphrase of COPD
+wheezing_disease,reversible airway narrowing causing wheeze,317009,paraphrase of asthma
+irregular_heartbeat,irregular and often rapid heart rhythm,313217,paraphrase of atrial fibrillation
+lung_infection,infection of the lung tissue,255848,paraphrase of pneumonia
+blood_poisoning,life threatening organ dysfunction from infection,132797,lay term for sepsis
+brain_attack,sudden loss of brain function from interrupted blood supply,381316,lay term for stroke
+lung_clot,blood clot lodged in the lung arteries,440417,paraphrase of pulmonary embolism
+leg_vein_clot,blood clot in a deep vein of the leg,4133004,paraphrase of DVT
+bladder_infection,infection of the urinary tract,81902,paraphrase of UTI
+failing_kidneys,long term loss of kidney function,46271022,paraphrase of chronic kidney disease
+excess_body_fat,excessive accumulation of body fat,433736,paraphrase of obesity
+low_red_cells,deficiency of red blood cells or haemoglobin,439777,paraphrase of anaemia
+artificial_kidney,machine treatment that filters the blood,4032243,paraphrase of dialysis
+breathing_machine,machine assisted breathing support,4230167,paraphrase of artificial ventilation

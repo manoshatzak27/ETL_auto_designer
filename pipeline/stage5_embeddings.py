@@ -52,12 +52,30 @@ class EmbeddingModel:
     a model load.
     """
 
-    def __init__(self, model_name: str, batch_size: int = 64) -> None:
+    def __init__(self, model_name: str, batch_size: int = 64,
+                 query_prefix: str = "", document_prefix: str = "") -> None:
         self.model_name = model_name
         self.batch_size = batch_size
+        self.query_prefix = query_prefix
+        self.document_prefix = document_prefix
         self._model: Any = None
         self._unavailable_reason: str | None = None
         self._lock = threading.Lock()
+
+    @property
+    def cache_key(self) -> str:
+        """Value stored in ``pipeline.concept_embedding.model``.
+
+        The document prefix is folded in, because changing it changes what the
+        stored vectors mean while leaving the model name identical — cached
+        vectors would otherwise be silently reused against a different encoding.
+        The concept-name hash cannot carry this: ``refresh_derived_structures``
+        recomputes that hash in SQL, which knows nothing about prefixes.
+        """
+        if not self.document_prefix:
+            return self.model_name
+        digest = hashlib.sha256(self.document_prefix.encode("utf-8")).hexdigest()[:8]
+        return f"{self.model_name}#doc:{digest}"
 
     @property
     def available(self) -> bool:
@@ -99,11 +117,19 @@ class EmbeddingModel:
                   or getattr(model, "get_sentence_embedding_dimension", None))
         return int(getter()) if getter else 0
 
-    def encode(self, texts: Sequence[str]) -> np.ndarray | None:
-        """L2-normalized float32 vectors, one row per text."""
+    def encode(self, texts: Sequence[str], is_query: bool = False) -> np.ndarray | None:
+        """L2-normalized float32 vectors, one row per text.
+
+        ``is_query`` selects the instruction prefix. Concept names are
+        documents; the column being mapped is the query. For a symmetric model
+        both prefixes are empty and the distinction costs nothing.
+        """
         model = self._load()
         if model is None or not texts:
             return None
+        prefix = self.query_prefix if is_query else self.document_prefix
+        if prefix:
+            texts = [prefix + text for text in texts]
         vectors = model.encode(
             list(texts),
             batch_size=self.batch_size,
@@ -122,7 +148,8 @@ class EmbeddingScorer:
         self.config = config
         self.db = db
         self.model = model or EmbeddingModel(
-            config.embedding_model, config.embedding_batch_size)
+            config.embedding_model, config.embedding_batch_size,
+            config.embedding_query_prefix, config.embedding_document_prefix)
         self._synonym_cache: dict[str, np.ndarray] = {}
         self._cache_lock = threading.Lock()
 
@@ -145,7 +172,7 @@ class EmbeddingScorer:
 
         query_text = " ".join(
             text_utils.split_phrase(t) for t in variant.tokens) or variant.search_string
-        query = self.model.encode([query_text])
+        query = self.model.encode([query_text], is_query=True)
         if query is None:
             return candidates
         query_vec = query[0]
@@ -194,7 +221,7 @@ class EmbeddingScorer:
             FROM pipeline.concept_embedding
             WHERE concept_id = ANY(%(ids)s) AND model = %(model)s
             """,
-            {"ids": concept_ids, "model": self.model.model_name},
+            {"ids": concept_ids, "model": self.model.cache_key},
         )
 
         vectors: dict[int, np.ndarray] = {}
@@ -218,7 +245,7 @@ class EmbeddingScorer:
     def _persist(self, concept_ids: list[int], names: dict[int, str],
                  vectors: np.ndarray, dim: int) -> None:
         payload = [
-            (cid, self.model.model_name, dim, _text_hash(names[cid]),
+            (cid, self.model.cache_key, dim, _text_hash(names[cid]),
              vectors[index].astype(np.float32).tobytes())
             for index, cid in enumerate(concept_ids)
         ]

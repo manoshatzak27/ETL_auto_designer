@@ -91,6 +91,12 @@ class PipelineConfig:
     embeddings_enabled: bool = True
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
     embedding_batch_size: int = 64
+    # Asymmetric encoding. BGE- and E5-family models (which most medical
+    # embedding models are built on) are trained with an instruction prefix on
+    # the query side only, and lose accuracy without it. Symmetric models such
+    # as MiniLM and PubMedBERT want both empty. See EMBEDDING_MODEL_PRESETS.
+    embedding_query_prefix: str = ""
+    embedding_document_prefix: str = ""
     # Step 5.2: below this many Stage 4 survivors, widen the embedding search.
     embedding_widen_below: int = 5
     embedding_widen_limit: int = 200
@@ -236,6 +242,36 @@ class PipelineConfig:
                     target[tail] = float(weight)
             elif hasattr(self, head):
                 setattr(self, head, float(weight))
+
+
+# Known-good settings for the embedding models worth considering here. Used by
+# benchmarks/compare_models.py and as documentation of which models need an
+# instruction prefix; `embedding_model` may name anything sentence-transformers
+# can load, preset or not.
+EMBEDDING_MODEL_PRESETS: dict[str, dict[str, Any]] = {
+    "sentence-transformers/all-MiniLM-L6-v2": {
+        "query_prefix": "", "document_prefix": "",
+        "note": "general purpose, 384 dims, ~90MB — fast baseline",
+    },
+    "NeuML/pubmedbert-base-embeddings": {
+        "query_prefix": "", "document_prefix": "",
+        "note": "PubMedBERT trained for sentence embeddings, 768 dims, ~420MB",
+    },
+    "pritamdeka/S-PubMedBert-MS-MARCO": {
+        "query_prefix": "", "document_prefix": "",
+        "note": "PubMedBERT fine-tuned on MS-MARCO retrieval, 768 dims, ~420MB",
+    },
+    "abhinand/MedEmbed-small-v0.1": {
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "document_prefix": "",
+        "note": "BGE-small fine-tuned on medical retrieval, 384 dims, ~130MB",
+    },
+    "abhinand/MedEmbed-base-v0.1": {
+        "query_prefix": "Represent this sentence for searching relevant passages: ",
+        "document_prefix": "",
+        "note": "BGE-base fine-tuned on medical retrieval, 768 dims, ~440MB",
+    },
+}
 
 
 # Step 3.3 / 6.1: which candidate domains count as a match, as merely
