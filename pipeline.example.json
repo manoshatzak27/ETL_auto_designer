@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Copy to pipeline.json (or point PIPELINE_CONFIG at it) to override the",
+    "defaults in pipeline/config.py. Every key is optional — anything omitted",
+    "keeps its built-in value, and dicts are merged rather than replaced, so",
+    "listing one vocabulary_boost entry does not drop the others.",
+    "Precedence: config.py < this file < pipeline.scoring_weight table < CLI flags.",
+    "Values below are the shipped defaults, shown for reference."
+  ],
+
+  "eligible_domains": ["Measurement", "Observation", "Condition", "Procedure", "Drug"],
+
+  "fts_candidate_limit": 30,
+  "fts_rank_threshold": 0.2,
+  "jaccard_keep": 15,
+  "fuzzy_keep": 10,
+
+  "stage_weights": {
+    "fts": 0.35,
+    "jaccard": 0.25,
+    "fuzzy": 0.20,
+    "embedding": 0.20
+  },
+
+  "auto_accept_threshold": 90.0,
+  "review_threshold": 70.0,
+  "ambiguity_margin": 5.0,
+
+  "vocabulary_boost": {
+    "SNOMED": 1.10,
+    "LOINC": 1.10,
+    "RxNorm": 1.05,
+    "RxNorm Extension": 1.05
+  },
+  "domain_match_boost": 1.10,
+  "domain_mismatch_penalty": 0.80,
+
+  "embeddings_enabled": true,
+  "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
+
+  "batch_workers": 4,
+  "unit_mismatch_penalty": 10.0,
+  "expected_source_vocabularies": []
+}

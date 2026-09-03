@@ -1,0 +1,47 @@
+# ──────────────────────────────────────────────────────────────────────────
+# Standalone Postgres holding the Athena OMOP vocabulary, filtered down to
+# standard + valid concepts only. See README.md for the load procedure.
+#
+# Note: this is a separate stack from ../ETL_auto_designer (which runs its
+# own unfiltered "omop-postgres" on host port 5432) — different container
+# name, volume name, and default host port (5433) so both can run at once.
+# ──────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: vocab-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-vocab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vocab_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-athena_vocab}
+    ports:
+      - "${POSTGRES_PORT:-5433}:5432"
+    shm_size: "1gb"
+    volumes:
+      - vocab_pgdata:/var/lib/postgresql/data
+      # Needed for server-side COPY in 02_load_staging.sql. The SQL scripts
+      # themselves are NOT mounted: load_vocab.sh / setup_pipeline.sh pipe them
+      # in over stdin, so an edit on the host always takes effect immediately
+      # (a bind mount can serve a stale copy after a file is rewritten).
+      - ./athena_ALL:/athena_source:ro
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=2GB"
+      - "-c"
+      - "work_mem=256MB"
+      - "-c"
+      - "maintenance_work_mem=1GB"
+      - "-c"
+      - "max_wal_size=4GB"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-vocab} -d ${POSTGRES_DB:-athena_vocab}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  vocab_pgdata:
+    name: new_concept_finding_vocab_pgdata

@@ -1,0 +1,7 @@
+/.claude
+/.env
+/.env.example
+/.venv
+/athena_ALL/
+__pycache__/
+*.py[cod]

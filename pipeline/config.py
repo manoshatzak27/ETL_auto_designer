@@ -1,0 +1,286 @@
+"""Tunable configuration for the matching pipeline.
+
+Every threshold, weight and boost the specification calls for lives here rather
+than being scattered through the stage modules, so that tuning is a
+config change and the Stage 7.5 feedback loop has one place to write to.
+
+Precedence, lowest to highest:
+
+    1. the defaults in this file
+    2. ``pipeline.json`` / the file named by ``PIPELINE_CONFIG``
+    3. the ``pipeline.scoring_weight`` table (Stage 7.5 learned adjustments)
+    4. explicit keyword arguments / CLI flags
+"""
+
+from __future__ import annotations
+
+import json
+import os
+from dataclasses import dataclass, field, fields, asdict
+from pathlib import Path
+from typing import Any
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+RESOURCE_DIR = Path(__file__).resolve().parent / "resources"
+
+
+def _load_dotenv(path: Path) -> dict[str, str]:
+    """Minimal .env reader — the same file docker-compose.yml consumes."""
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        values[key.strip()] = val.strip().strip("'\"")
+    return values
+
+
+@dataclass
+class PipelineConfig:
+    # ── Database ────────────────────────────────────────────────────────
+    host: str = "localhost"
+    port: int = 5433
+    dbname: str = "athena_vocab"
+    user: str = "vocab"
+    password: str = "vocab_pwd"
+    pool_min_size: int = 1
+    pool_max_size: int = 8
+    statement_timeout_ms: int = 120_000
+
+    # ── Stage 0: preprocessing ──────────────────────────────────────────
+    # Ambiguous abbreviations fan the input out into several search strings.
+    # Each variant costs a full Stage 2-5 pass, so the count is capped.
+    max_abbreviation_variants: int = 4
+    # Step 0.7: a "corpus_adaptive" stopword is only dropped once it appears in
+    # at least this fraction of the batch (the spec's 80% rule).
+    stopword_corpus_threshold: float = 0.8
+    # Below this, a bare digit run is not taken to be a SNOMED/RxNorm id.
+    min_bare_code_digits: int = 6
+
+    # ── Stage 2: full-text search ───────────────────────────────────────
+    # Step 2.1. Device/Specimen/etc. are deliberately absent: they stay
+    # reachable through the Stage 6.4 no-domain-filter retry.
+    eligible_domains: tuple[str, ...] = (
+        "Measurement", "Observation", "Condition", "Procedure", "Drug",
+    )
+    fts_candidate_limit: int = 30          # Step 2.4: top 20-30
+    # Step 2.4's rank threshold, applied *relative* to the best ts_rank_cd in
+    # the same result set: keep candidates ranking at least this fraction of
+    # the best. Absolute ts_rank_cd values are not comparable across queries
+    # (they move with query length and term rarity), so a fixed cutoff admits
+    # everything for one column and nothing for the next.
+    fts_rank_threshold: float = 0.2
+    # Trigram recall net for when FTS matches nothing at all.
+    trigram_fallback_limit: int = 30
+    trigram_fallback_threshold: float = 0.35
+
+    # ── Stage 3: weighted Jaccard ───────────────────────────────────────
+    jaccard_keep: int = 15                 # Stage 3 scoring line
+
+    # ── Stage 4: fuzzy ──────────────────────────────────────────────────
+    fuzzy_keep: int = 10                   # Stage 4 scoring line
+    # Step 4.3: Levenshtein for short tokens, trigram for long ones.
+    short_token_max_len: int = 4
+    # Step 4.2: only record a discovered abbreviation this similar or better.
+    abbreviation_discovery_threshold: float = 70.0
+
+    # ── Stage 5: embeddings ─────────────────────────────────────────────
+    embeddings_enabled: bool = True
+    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    embedding_batch_size: int = 64
+    # Step 5.2: below this many Stage 4 survivors, widen the embedding search.
+    embedding_widen_below: int = 5
+    embedding_widen_limit: int = 200
+    # Step 5.3: how much a better-matching synonym may lift a candidate.
+    synonym_embedding_boost: float = 1.10
+    # Synonym texts are embedded on the fly rather than cached in Postgres
+    # (the cache is keyed by concept, one row per concept), so the work is
+    # bounded to the few candidates where it can still change the ranking.
+    synonym_embedding_candidates: int = 5
+    synonym_embedding_max: int = 3
+
+    # ── Shared boosts (Stages 2, 3, 4, 5) ───────────────────────────────
+    vocabulary_boost: dict[str, float] = field(default_factory=lambda: {
+        "SNOMED": 1.10,
+        "LOINC": 1.10,
+        "RxNorm": 1.05,
+        "RxNorm Extension": 1.05,
+    })
+    domain_match_boost: float = 1.10       # Step 3.3
+    domain_mismatch_penalty: float = 0.80  # Step 3.3 (-20%)
+
+    # ── Stage 6: composite ──────────────────────────────────────────────
+    stage_weights: dict[str, float] = field(default_factory=lambda: {
+        "fts": 0.35,
+        "jaccard": 0.25,
+        "fuzzy": 0.20,
+        "embedding": 0.20,
+    })
+    final_vocabulary_boost: float = 1.05   # Step 6.1
+    final_domain_boost: float = 1.05       # Step 6.1
+    hierarchy_depth_boost: float = 1.02    # Step 6.2
+    hierarchy_tie_margin: float = 2.0      # "nearly identical scores"
+    # Step 6.2: concept classes that are broad classifications, not findings.
+    broad_concept_classes: tuple[str, ...] = (
+        "Classification", "ICD10 Chapter", "ICD10 SubChapter",
+        "ICD9CM Chapter", "ATC 1st", "ATC 2nd", "ATC 3rd",
+        "LOINC Class", "LOINC Hierarchy", "Context-dependent",
+        "Linkage Concept", "Qualifier Value", "Staging / Scales",
+        # LOINC classes that are never a column's ETL target: an answer list
+        # entry, a claims attachment, a survey instrument. Note that "Clinical
+        # Observation" is deliberately absent — it is the class of LOINC vital
+        # signs, which are very much valid targets.
+        "Answer", "Claims Attachment", "Survey",
+    )
+    broad_class_penalty: float = 0.97
+
+    # Step 6.4
+    auto_accept_threshold: float = 90.0
+    review_threshold: float = 70.0
+
+    # ── Stage 7: validation ─────────────────────────────────────────────
+    ambiguity_margin: float = 5.0          # Step 7.1
+    unit_mismatch_penalty: float = 10.0    # Step 7.2 (absolute points)
+    expected_source_vocabularies: tuple[str, ...] = ()   # Step 7.3, empty = any
+
+    # ── Stage 8: batch ──────────────────────────────────────────────────
+    batch_workers: int = 4
+    shortlist_cache_size: int = 512        # Step 8.2
+
+    # ── Bookkeeping ─────────────────────────────────────────────────────
+    log_to_db: bool = True
+    created_by: str | None = None
+
+    # ────────────────────────────────────────────────────────────────────
+    @property
+    def conninfo(self) -> str:
+        return (
+            f"host={self.host} port={self.port} dbname={self.dbname} "
+            f"user={self.user} password={self.password} "
+            f"application_name=omop_concept_matcher"
+        )
+
+    def weight_for(self, stage: str) -> float:
+        return float(self.stage_weights.get(stage, 0.0))
+
+    def vocab_multiplier(self, vocabulary_id: str | None) -> float:
+        if not vocabulary_id:
+            return 1.0
+        return float(self.vocabulary_boost.get(vocabulary_id, 1.0))
+
+    def to_json(self) -> dict[str, Any]:
+        """Serializable snapshot, minus the password, for run logging."""
+        data = asdict(self)
+        data.pop("password", None)
+        data["eligible_domains"] = list(self.eligible_domains)
+        data["broad_concept_classes"] = list(self.broad_concept_classes)
+        data["expected_source_vocabularies"] = list(self.expected_source_vocabularies)
+        return data
+
+    # ────────────────────────────────────────────────────────────────────
+    @classmethod
+    def load(cls, overrides: dict[str, Any] | None = None) -> "PipelineConfig":
+        """Build a config from .env, an optional JSON file, then overrides."""
+        cfg = cls()
+
+        env = {**_load_dotenv(PROJECT_ROOT / ".env"), **os.environ}
+        if "POSTGRES_HOST" in env:
+            cfg.host = env["POSTGRES_HOST"]
+        if "POSTGRES_PORT" in env:
+            cfg.port = int(env["POSTGRES_PORT"])
+        if "POSTGRES_DB" in env:
+            cfg.dbname = env["POSTGRES_DB"]
+        if "POSTGRES_USER" in env:
+            cfg.user = env["POSTGRES_USER"]
+        if "POSTGRES_PASSWORD" in env:
+            cfg.password = env["POSTGRES_PASSWORD"]
+
+        config_path = Path(env.get("PIPELINE_CONFIG", PROJECT_ROOT / "pipeline.json"))
+        if config_path.is_file():
+            cfg.apply(json.loads(config_path.read_text(encoding="utf-8")))
+
+        if overrides:
+            cfg.apply(overrides)
+        return cfg
+
+    def apply(self, values: dict[str, Any]) -> None:
+        """Apply a dict of overrides, ignoring unknown keys and comments."""
+        known = {f.name for f in fields(self)}
+        for key, value in values.items():
+            if key.startswith("_") or key not in known:
+                continue
+            current = getattr(self, key)
+            if isinstance(current, tuple) and isinstance(value, list):
+                value = tuple(value)
+            elif isinstance(current, dict) and isinstance(value, dict):
+                merged = dict(current)
+                merged.update(value)
+                value = merged
+            setattr(self, key, value)
+
+    def apply_learned_weights(self, rows: list[tuple[str, float]]) -> None:
+        """Stage 7.5: fold `pipeline.scoring_weight` rows into the config.
+
+        Keys are dotted paths so the feedback loop can address nested values:
+        ``stage_weights.fts``, ``vocabulary_boost.SNOMED``, or a plain scalar
+        field name such as ``auto_accept_threshold``.
+        """
+        for key, weight in rows:
+            head, _, tail = key.partition(".")
+            if tail:
+                target = getattr(self, head, None)
+                if isinstance(target, dict):
+                    target[tail] = float(weight)
+            elif hasattr(self, head):
+                setattr(self, head, float(weight))
+
+
+# Step 3.3 / 6.1: which candidate domains count as a match, as merely
+# plausible (no adjustment), or as clearly wrong (penalty) for a given hint.
+DOMAIN_COMPATIBILITY: dict[str, dict[str, frozenset[str]]] = {
+    "Measurement": {
+        "match": frozenset({"Measurement"}),
+        "plausible": frozenset({"Observation", "Meas Value", "Meas Value Operator",
+                                "Specimen", "Spec Anatomic Site", "Unit", "Procedure"}),
+    },
+    "Observation": {
+        "match": frozenset({"Observation"}),
+        "plausible": frozenset({"Measurement", "Meas Value", "Condition", "Episode",
+                                "Type Concept", "Metadata", "Visit"}),
+    },
+    "Condition": {
+        "match": frozenset({"Condition"}),
+        "plausible": frozenset({"Observation", "Condition Status", "Episode",
+                                "Spec Anatomic Site", "Measurement"}),
+    },
+    "Procedure": {
+        "match": frozenset({"Procedure"}),
+        "plausible": frozenset({"Observation", "Measurement", "Device", "Visit",
+                                "Spec Anatomic Site", "Regimen"}),
+    },
+    "Drug": {
+        "match": frozenset({"Drug"}),
+        "plausible": frozenset({"Device", "Route", "Unit", "Regimen", "Procedure"}),
+    },
+    "Device": {
+        "match": frozenset({"Device"}),
+        "plausible": frozenset({"Procedure", "Drug", "Observation"}),
+    },
+}
+
+
+def domain_relation(hint: str | None, candidate_domain: str | None) -> str:
+    """Return 'match', 'plausible', 'wrong' or 'unknown' for a domain pair."""
+    if not hint or not candidate_domain:
+        return "unknown"
+    rules = DOMAIN_COMPATIBILITY.get(hint)
+    if rules is None:
+        return "match" if hint == candidate_domain else "plausible"
+    if candidate_domain in rules["match"]:
+        return "match"
+    if candidate_domain in rules["plausible"]:
+        return "plausible"
+    return "wrong"

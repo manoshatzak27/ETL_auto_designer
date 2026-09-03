@@ -1,0 +1,267 @@
+# Stage 0.6 protected medical phrases.
+#
+# Each line is a multi-word phrase that must survive tokenization intact.
+# Stage 0 replaces it with a single joined token (e.g. "heart_failure"), which
+# means:
+#   * Stage 2 turns it into a phraseto_tsquery term ("heart <-> failure"),
+#     so "heart" and "failure" occurring apart do NOT match;
+#   * Stage 3 counts it as ONE token in the Jaccard sets, not two;
+#   * Stage 0.8 never lemmatizes inside it.
+#
+# Longest match wins, so listing both "heart failure" and "congestive heart
+# failure" is fine — the longer one is applied first.
+#
+# Lines starting with # and blank lines are ignored. Case-insensitive.
+
+acute coronary syndrome
+acute kidney injury
+acute myocardial infarction
+acute renal failure
+acute respiratory distress syndrome
+acute respiratory failure
+adverse drug reaction
+alanine aminotransferase
+alcohol use disorder
+alkaline phosphatase
+angina pectoris
+ankle brachial index
+aortic stenosis
+aortic valve
+arterial blood gas
+aspartate aminotransferase
+atrial fibrillation
+atrial flutter
+attention deficit hyperactivity disorder
+b type natriuretic peptide
+bacterial infection
+basic metabolic panel
+before meals
+benign prostatic hyperplasia
+beta blocker
+bicarbonate level
+bipolar disorder
+birth weight
+blood culture
+blood glucose
+blood pressure
+blood urea nitrogen
+body mass index
+body surface area
+body temperature
+body weight
+bone marrow
+bone mineral density
+breast cancer
+c reactive protein
+calcium channel blocker
+carbon dioxide
+cardiac arrest
+cardiac index
+cardiac output
+cardiopulmonary resuscitation
+central nervous system
+central venous catheter
+central venous pressure
+cerebral palsy
+cerebrospinal fluid
+cerebrovascular accident
+chest pain
+chest x ray
+chronic kidney disease
+chronic liver disease
+chronic obstructive pulmonary disease
+cognitive impairment
+colorectal cancer
+complete blood count
+comprehensive metabolic panel
+computed tomography
+congestive heart failure
+continuous positive airway pressure
+coronary artery bypass graft
+coronary artery disease
+creatine kinase
+creatinine clearance
+cystic fibrosis
+date of birth
+deep vein thrombosis
+diabetes mellitus
+diabetic ketoacidosis
+diabetic nephropathy
+diabetic retinopathy
+diastolic blood pressure
+do not resuscitate
+drug allergy
+ejection fraction
+electronic health record
+electronic medical record
+emergency department
+end stage renal disease
+endotracheal tube
+erythrocyte sedimentation rate
+essential hypertension
+estimated glomerular filtration rate
+fasting blood glucose
+fasting blood sugar
+follicle stimulating hormone
+forced expiratory volume
+forced vital capacity
+fraction of inspired oxygen
+fresh frozen plasma
+gastroesophageal reflux disease
+glasgow coma scale
+glomerular filtration rate
+glucose tolerance test
+growth hormone
+health care provider
+heart failure
+heart rate
+height in centimeters
+hemoglobin a1c
+hemoglobin a1c level
+hepatitis a
+hepatitis b
+hepatitis b virus
+hepatitis c
+hepatitis c virus
+high density lipoprotein
+history of present illness
+hormone replacement therapy
+human immunodeficiency virus
+hypertensive heart disease
+immunoglobulin a
+immunoglobulin e
+immunoglobulin g
+immunoglobulin m
+inflammatory bowel disease
+informed consent
+intensive care unit
+international normalized ratio
+intracranial pressure
+intravenous fluid
+iron deficiency anemia
+irritable bowel syndrome
+ischemic heart disease
+jugular venous pressure
+lactate dehydrogenase
+last menstrual period
+left atrial
+left ventricular ejection fraction
+left ventricular hypertrophy
+length of stay
+level of consciousness
+liver function test
+low density lipoprotein
+lumbar puncture
+lung cancer
+magnetic resonance imaging
+major depressive disorder
+mean arterial pressure
+mean corpuscular hemoglobin
+mean corpuscular volume
+medical record number
+mental health
+metabolic acidosis
+metabolic syndrome
+methicillin resistant staphylococcus aureus
+mini mental state examination
+mitral regurgitation
+mitral valve
+multiple sclerosis
+myocardial infarction
+nasogastric tube
+neonatal intensive care unit
+non small cell lung cancer
+nonsteroidal anti inflammatory drug
+normal sinus rhythm
+nothing by mouth
+obstructive sleep apnea
+occupational therapy
+oxygen saturation
+pancreatic cancer
+parathyroid hormone
+partial pressure of carbon dioxide
+partial pressure of oxygen
+partial thromboplastin time
+past medical history
+peak expiratory flow
+peptic ulcer disease
+peripheral vascular disease
+physical examination
+physical therapy
+platelet count
+pleural effusion
+polymerase chain reaction
+positive end expiratory pressure
+postoperative complication
+premature ventricular contraction
+pressure ulcer
+primary care physician
+prostate cancer
+prostate specific antigen
+prothrombin time
+pulmonary embolism
+pulmonary function test
+pulse oximetry
+quality of life
+red blood cell
+red blood cell count
+red cell distribution width
+renal replacement therapy
+respiratory rate
+rheumatoid arthritis
+rheumatoid factor
+right atrial
+right ventricular
+sequential organ failure assessment
+serum creatinine
+sexually transmitted infection
+shortness of breath
+sickle cell disease
+sleep apnea
+smoking status
+social history
+sodium level
+spinal cord injury
+spontaneous bacterial peritonitis
+st elevation myocardial infarction
+stroke volume
+substance use disorder
+systemic lupus erythematosus
+systemic vascular resistance
+systolic blood pressure
+thyroid stimulating hormone
+total bilirubin
+total cholesterol
+total iron binding capacity
+transient ischemic attack
+transthoracic echocardiogram
+traumatic brain injury
+tricuspid valve
+triglyceride level
+troponin i
+troponin t
+tumor necrosis factor
+type 1 diabetes
+type 1 diabetes mellitus
+type 2 diabetes
+type 2 diabetes mellitus
+ulcerative colitis
+upper gastrointestinal
+urinary tract infection
+urine output
+vaccination status
+venous thromboembolism
+ventricular fibrillation
+ventricular tachycardia
+visual acuity
+vital signs
+vitamin a
+vitamin b12
+vitamin c
+vitamin d
+vitamin e
+vitamin k
+waist circumference
+white blood cell
+white blood cell count
+within normal limits
