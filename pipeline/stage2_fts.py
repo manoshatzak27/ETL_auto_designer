@@ -43,6 +43,10 @@ _RUNG_NAMES = ("all_terms", "phrases_and_any", "all_words_relaxed", "any_term")
 # term cannot reach the review threshold on FTS evidence alone.
 _RUNG_BANDS = ((78.0, 100.0), (68.0, 90.0), (62.0, 85.0), (40.0, 65.0))
 
+# Score a candidate that covers none of the query would get from coverage
+# alone; full coverage reaches 100. Interpolated linearly in between.
+_COVERAGE_FLOOR = 40.0
+
 _BASE_SELECT = """
     SELECT cs.concept_id,
            cs.concept_name,
@@ -56,9 +60,21 @@ _BASE_SELECT = """
            -- repeating a query term, so "Glucose measurements in range out of
            -- Total glucose" outranks "Glucose [Mass/volume] in Serum or
            -- Plasma" purely for saying glucose twice.
-           ts_rank_cd(cs.search_vector, q.query, 16|32) AS rank
+           ts_rank_cd(cs.search_vector, q.query, 16|32) AS rank,
+           -- Fraction of the query's lexemes this concept actually contains.
+           -- Needed because the rung alone cannot distinguish "matched 2 of 3
+           -- terms" from "matched 6 of 15": both fall to the loosest rung, but
+           -- they are not remotely the same quality of evidence.
+           CASE WHEN cardinality(q.lexemes) = 0 THEN 0::float8
+                ELSE cardinality(ARRAY(
+                         SELECT unnest(tsvector_to_array(cs.search_vector))
+                         INTERSECT
+                         SELECT unnest(q.lexemes)))::float8
+                     / cardinality(q.lexemes)
+           END AS coverage
     FROM pipeline.concept_search cs,
-         (SELECT ({expr})::tsquery AS query) q
+         (SELECT ({expr})::tsquery AS query,
+                 tsvector_to_array(to_tsvector('english', %(query_text)s)) AS lexemes) q
     WHERE cs.search_vector @@ q.query
       {domain_filter}
     -- Length is the tie-break, and there are a lot of ties: every
@@ -100,11 +116,13 @@ class FullTextSearcher:
         if not phrases and not plain:
             return []
 
+        query_text = " ".join(phrases + plain)
+
         found: dict[int, Candidate] = {}
         for rung, (expr, params) in enumerate(self._ladder(phrases, plain)):
             if expr is None:
                 continue
-            rows = self._query(expr, params, domains)
+            rows = self._query(expr, params, domains, query_text)
             if not rows:
                 continue
             best_rank = max((float(r["rank"] or 0.0) for r in rows), default=0.0)
@@ -184,8 +202,8 @@ class FullTextSearcher:
 
         return rungs
 
-    def _query(self, expr: str, values: list[str],
-               domains: Sequence[str]) -> list[dict[str, Any]]:
+    def _query(self, expr: str, values: list[str], domains: Sequence[str],
+               query_text: str) -> list[dict[str, Any]]:
         domain_filter = "AND cs.domain_id = ANY(%(domains)s)" if domains else ""
 
         # The expression carries positional %s placeholders while the rest of
@@ -195,6 +213,7 @@ class FullTextSearcher:
         params: dict[str, Any] = {
             "limit": self.config.fts_candidate_limit * 2,
             "domains": list(domains),
+            "query_text": query_text,
         }
         for index, value in enumerate(values):
             key = f"t{index}"
@@ -249,6 +268,17 @@ class FullTextSearcher:
             if best_rank <= 0.0 or raw < self.config.fts_rank_threshold * best_rank:
                 return
             floor, ceiling = _RUNG_BANDS[rung]
+            # Raise the ceiling for a candidate that covers a large share of a
+            # long query. Without this the bands are a trap for verbose input:
+            # a 15-token questionnaire item can never satisfy "every term", so
+            # every candidate lands on the loosest rung and is capped at 65 —
+            # below the review threshold — no matter how good the match is.
+            # Coverage says how much of the query was actually accounted for,
+            # which is the evidence the rung was standing in for.
+            coverage = float(row.get("coverage") or 0.0)
+            ceiling = max(ceiling, _COVERAGE_FLOOR
+                          + (100.0 - _COVERAGE_FLOOR) * coverage)
+            floor = min(floor, ceiling * 0.8)
             score = floor + (ceiling - floor) * (raw / best_rank)
 
         boosts: dict[str, float] = {"fts_rung": float(rung)}

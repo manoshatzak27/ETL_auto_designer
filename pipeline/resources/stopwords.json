@@ -39,7 +39,20 @@
     "hospital", "clinic", "ward", "department", "id", "identifier", "key",
     "pk", "fk", "index", "seq", "sequence", "row", "table",
     "loinc", "snomed", "snomedct", "icd", "icd9", "icd10", "rxnorm", "rxcui",
-    "cpt", "cpt4", "hcpcs", "ndc", "atc", "omop", "vocabulary"
+    "cpt", "cpt4", "hcpcs", "ndc", "atc", "omop", "vocabulary",
+    "tick", "circle", "please", "namely", "specify", "eg", "ie", "etc",
+    "following", "above", "below", "question", "questions", "answer",
+    "answers", "option", "options", "choose", "select", "selected",
+    "indicate", "describes", "describe", "best", "usually", "usual",
+    "considering", "regarding", "overall", "general", "average"
+  ],
+  "_instrument_boilerplate_comment": [
+    "Questionnaire scaffolding. A survey export's item text is mostly",
+    "instructions — 'Tick the one response which best describes your usual",
+    "abilities over the past week' — and every one of those tokens dilutes",
+    "both the FTS query and the Jaccard union without ever distinguishing one",
+    "concept from another. Note 'ability' is NOT here: 'Ability to walk' is a",
+    "real concept name."
   ],
 
   "structural": [
@@ -47,7 +60,20 @@
     "or", "a", "an", "as", "is", "was", "were", "be", "been", "this", "that",
     "these", "those", "it", "its", "per", "via", "into", "onto", "upon",
     "any", "all", "both", "each", "other", "than", "then", "there", "here",
-    "if", "not", "no", "yes"
+    "if", "not", "no", "yes",
+    "how", "what", "when", "where", "which", "who", "whom", "whose", "why",
+    "much", "many", "does", "do", "did", "has", "have", "had", "will", "would",
+    "can", "could", "should", "may", "might", "must", "about", "over", "under",
+    "between", "during", "after", "before", "while", "such", "very", "more",
+    "most", "less", "least", "same", "also", "only", "just", "so", "up", "out"
+  ],
+  "_question_word_comment": [
+    "Question and quantifier words matter more than they look. A description",
+    "like 'how tall the patient is' left 'how' in the token set, so Stage 2",
+    "searched for concepts containing 'how' AND 'tall' — and 'Body height',",
+    "sharing no token with the query, never entered the shortlist at all.",
+    "Stage 5 can only rerank what Stage 2 found, so no embedding model can",
+    "recover from that."
   ],
 
   "corpus_adaptive": [

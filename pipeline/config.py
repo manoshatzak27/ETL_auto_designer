@@ -135,11 +135,15 @@ class PipelineConfig:
         "ICD9CM Chapter", "ATC 1st", "ATC 2nd", "ATC 3rd",
         "LOINC Class", "LOINC Hierarchy", "Context-dependent",
         "Linkage Concept", "Qualifier Value", "Staging / Scales",
-        # LOINC classes that are never a column's ETL target: an answer list
-        # entry, a claims attachment, a survey instrument. Note that "Clinical
-        # Observation" is deliberately absent — it is the class of LOINC vital
-        # signs, which are very much valid targets.
-        "Answer", "Claims Attachment", "Survey",
+        # LOINC classes that are never a column's ETL target: an answer-list
+        # entry (that is a *value*, not a variable) and a claims attachment.
+        #
+        # "Clinical Observation" and "Survey" are deliberately absent. Clinical
+        # Observation is the class of LOINC vital signs. Survey is the class of
+        # every PROMIS / Veterans RAND / PHQ-9 / HAQ item — for questionnaire
+        # data those concepts are precisely the right answer, and penalizing
+        # them was an over-fit to a lab-and-vitals test set.
+        "Answer", "Claims Attachment",
     )
     broad_class_penalty: float = 0.97
 
@@ -244,32 +248,45 @@ class PipelineConfig:
                 setattr(self, head, float(weight))
 
 
-# Known-good settings for the embedding models worth considering here. Used by
-# benchmarks/compare_models.py and as documentation of which models need an
-# instruction prefix; `embedding_model` may name anything sentence-transformers
-# can load, preset or not.
+# Known-good settings for the embedding models worth considering, and which of
+# them need an instruction prefix. `embedding_model` may name anything
+# sentence-transformers can load, preset or not.
+#
+# The `measured` figures come from benchmarks/stage5_rerank.py over the 44
+# winnable cases of benchmarks/gold_set.csv: top-1 accuracy reranking the real
+# Stage 2 shortlist by cosine alone, against 93.2% for the unreranked lexical
+# ordering. The headline result is that a biomedical model does NOT beat
+# general-purpose MiniLM here and costs 2-5x the time — concept names are short
+# noun phrases, which is what MiniLM is trained for, while PubMedBERT-family
+# models are trained on biomedical prose. Re-measure before switching; that is
+# what the benchmark is for.
 EMBEDDING_MODEL_PRESETS: dict[str, dict[str, Any]] = {
     "sentence-transformers/all-MiniLM-L6-v2": {
         "query_prefix": "", "document_prefix": "",
-        "note": "general purpose, 384 dims, ~90MB — fast baseline",
+        "note": "general purpose, 384 dims, ~90MB",
+        "measured": "97.7% top-1, 0.982 MRR, 41 ms/case — default",
     },
     "NeuML/pubmedbert-base-embeddings": {
         "query_prefix": "", "document_prefix": "",
         "note": "PubMedBERT trained for sentence embeddings, 768 dims, ~420MB",
-    },
-    "pritamdeka/S-PubMedBert-MS-MARCO": {
-        "query_prefix": "", "document_prefix": "",
-        "note": "PubMedBERT fine-tuned on MS-MARCO retrieval, 768 dims, ~420MB",
+        "measured": "95.5% top-1, 0.977 MRR, 193 ms/case — worse and 4.7x slower",
     },
     "abhinand/MedEmbed-small-v0.1": {
         "query_prefix": "Represent this sentence for searching relevant passages: ",
         "document_prefix": "",
         "note": "BGE-small fine-tuned on medical retrieval, 384 dims, ~130MB",
+        "measured": "97.7% top-1, 0.981 MRR, 95 ms/case — ties MiniLM, 2.3x slower",
     },
     "abhinand/MedEmbed-base-v0.1": {
         "query_prefix": "Represent this sentence for searching relevant passages: ",
         "document_prefix": "",
         "note": "BGE-base fine-tuned on medical retrieval, 768 dims, ~440MB",
+        "measured": "not benchmarked",
+    },
+    "pritamdeka/S-PubMedBert-MS-MARCO": {
+        "query_prefix": "", "document_prefix": "",
+        "note": "PubMedBERT fine-tuned on MS-MARCO retrieval, 768 dims, ~420MB",
+        "measured": "not benchmarked",
     },
 }
 

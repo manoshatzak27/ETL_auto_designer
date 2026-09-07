@@ -168,10 +168,11 @@ class Preprocessor:
         )
 
         # ── Step 0.1: raw input normalization ───────────────────────────
-        parts = [text_utils.split_identifier(column_name)]
-        if column_description:
-            parts.append(column_description)
-        ctx.raw_input = " ".join(p for p in parts if p).strip()
+        description = _strip_instrument_prefix(column_description, column_name)
+        name_text = text_utils.split_identifier(column_name)
+        if description:
+            name_text = _drop_opaque_code_tokens(name_text, description)
+        ctx.raw_input = " ".join(p for p in (name_text, description) if p).strip()
 
         working = text_utils.fold_characters(ctx.raw_input)
         working = text_utils.collapse_dotted_acronyms(working)   # W.B.C. -> WBC
@@ -557,6 +558,79 @@ class Preprocessor:
 
 
 # ── helpers ─────────────────────────────────────────────────────────────
+
+
+# Survey exports (LimeSurvey, REDCap, Qualtrics) prefix the item text with the
+# item's own code and its position in the form: "HAQ01[HAQ01SQ2]. 1a. Tick the
+# one response ...". None of that is content — the code merely repeats the
+# column name, and the enumeration is form layout.
+_INSTRUMENT_CODE = re.compile(r"^\s*[\w.]+\s*(?:\[[^\]]*\])?\s*\.\s*")
+_ITEM_NUMBER = re.compile(r"^\s*\d{1,3}\s*[a-z]?\s*[.)]\s*", re.IGNORECASE)
+
+
+def _strip_instrument_prefix(description: str | None, column_name: str) -> str | None:
+    """Drop a leading survey item code that just restates the column name.
+
+    Conservative on purpose: the code is only removed when it actually looks
+    like this column's identifier, so a description that genuinely begins with
+    an abbreviation ("ALT. measured in serum") is left alone. The item number
+    that usually follows ("1a.", "12.") is then stripped too, but only once and
+    only directly after a code we recognized.
+    """
+    if not description:
+        return description
+
+    stripped = description.strip()
+    match = _INSTRUMENT_CODE.match(stripped)
+    if not match:
+        return description
+
+    head = match.group(0).strip().rstrip(".").strip()
+    key = re.sub(r"[^a-z0-9]", "", head.lower())
+    column_key = re.sub(r"[^a-z0-9]", "", column_name.lower())
+    # The code must be this column's identifier, or contain it, or be contained
+    # by it — LimeSurvey writes "HAQ01[HAQ01SQ2]" for column "HAQ01HAQ01SQ2".
+    if not key or not column_key:
+        return description
+    if not (key == column_key or key in column_key or column_key in key):
+        return description
+
+    remainder = stripped[match.end():]
+    remainder = _ITEM_NUMBER.sub("", remainder, count=1)
+    return remainder.strip() or description
+
+
+# A description this long can carry the column's meaning on its own, so an
+# opaque code in the name is pure noise rather than the only available signal.
+_MIN_DESCRIPTION_WORDS = 4
+
+
+def _drop_opaque_code_tokens(name_text: str, description: str) -> str:
+    """Remove meaningless identifier fragments from a column name.
+
+    A survey column is called ``HAQ01HAQ01SQ2`` or ``PSS01PDPID0201``. Split
+    into words those become tokens like "haq01" and "sq2", which no concept
+    contains — they inflate the query, dilute the Jaccard union, and drag the
+    FTS coverage down, all while the description right beside them says exactly
+    what the column means.
+
+    The test is deliberately narrow: a token is dropped only if it contains a
+    digit AND is not a known abbreviation or unit AND there is a real
+    description to fall back on. That keeps "hba1c", "spo2", "co2" and "t4",
+    which carry their digits meaningfully and are in the dictionaries.
+    """
+    if len(description.split()) < _MIN_DESCRIPTION_WORDS:
+        return name_text
+
+    known = resources.abbreviations()
+    units = resources.unit_table()
+    kept = [
+        word for word in name_text.split()
+        if not any(ch.isdigit() for ch in word)
+        or word.lower() in known
+        or word.lower() in units
+    ]
+    return " ".join(kept)
 
 
 def _unique_expansions(
