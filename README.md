@@ -348,6 +348,75 @@ the concept the human chose. A stage that consistently over-rates the wrong
 concept is a candidate for a lower weight. Suggestions are never applied
 automatically.
 
+## Choosing an embedding model
+
+Two benchmarks live in `benchmarks/`, graded against `gold_set.csv` (50 cases:
+45 realistic clinical column names, 5 lay paraphrases). Grading is by **name
+rule**, not by concept_id — pinning one correct id per column does not work in
+OMOP, where "Glucose measurement", "Glucose measurement, serum" and the LOINC
+"Glucose [Mass/volume] in Serum or Plasma" are all defensible answers for the
+same column, and `concept_ancestor` does not reliably link across vocabularies.
+
+```bash
+.venv/bin/python benchmarks/compare_models.py    # end to end
+.venv/bin/python benchmarks/stage5_rerank.py     # the model in isolation
+```
+
+**Reranking the Stage 2 shortlist, embeddings only** (44 winnable cases;
+"lexical" is the shortlist order as Stage 2 produced it):
+
+| ranker | top-1 | MRR | ms/case |
+|--------|-------|-----|---------|
+| lexical (no embeddings) | 93.2% | 0.960 | — |
+| all-MiniLM-L6-v2 | **97.7%** | **0.982** | 41 |
+| MedEmbed-small-v0.1 | **97.7%** | 0.981 | 95 |
+| pubmedbert-base-embeddings | 95.5% | 0.977 | 193 |
+
+**The same models, end to end through the whole pipeline:**
+
+| model | overall | literal | semantic | ms/col |
+|-------|---------|---------|----------|--------|
+| none (Stage 5 off) | 90.0% | 93.3% | 60.0% | 196 |
+| all-MiniLM-L6-v2 | 90.0% | 93.3% | 60.0% | 233 |
+| pubmedbert-base-embeddings | 90.0% | 93.3% | 60.0% | 422 |
+| MedEmbed-small-v0.1 | 88.0% | 91.1% | 60.0% | 292 |
+
+Two conclusions, both worth stating plainly because both are the opposite of
+the obvious guess:
+
+1. **A biomedical model does not beat general-purpose MiniLM here.**
+   PubMedBERT is *worse* and 4.7× slower; MedEmbed ties and is 2.3× slower.
+   Concept names are short noun phrases, which is exactly what MiniLM is
+   trained for, whereas PubMedBERT-family models are trained on biomedical
+   prose. MiniLM stays the default on the evidence.
+
+2. **Embeddings help in isolation (+4.5pp) but not end to end (+0.0).** The
+   reranking they do is reranking Stages 3 and 4 have already done: by the time
+   Stage 5 sees the candidates, IDF-weighted Jaccard and fuzzy matching have
+   usually already promoted an acceptable concept to the top. Sweeping the
+   Stage 5 weight from 0.0 to 0.5 leaves end-to-end accuracy flat at 93.3% and
+   degrades it at 0.5.
+
+So Stage 5 earns its place only where the lexical stages are weak. If your
+inputs are free-text clinical descriptions rather than column names, re-measure
+before assuming any of this transfers — that is what the benchmarks are for.
+
+Switching model is one config key plus a cache rebuild, since cached vectors
+are keyed by model, dimension and document prefix:
+
+```bash
+# pipeline.json
+{ "embedding_model": "abhinand/MedEmbed-small-v0.1" }
+
+.venv/bin/python -m pipeline.cli refresh --full
+```
+
+`EMBEDDING_MODEL_PRESETS` in `pipeline/config.py` carries the instruction
+prefix each model needs. BGE- and E5-family models (which most medical
+embedding models are built on) are trained with a prefix on the *query* side
+only and lose accuracy without it; `embedding_query_prefix` and
+`embedding_document_prefix` handle that asymmetry.
+
 ## Testing
 
 ```bash
@@ -407,11 +476,11 @@ spaCy automatically. The built-in fallback handles irregular medical plurals
 from a table and is deliberately conservative — over-stemming a rare token
 destroys the IDF weight Stage 3 depends on.
 
-**The default embedding model is general-purpose.** `all-MiniLM-L6-v2` is
-small and fast but not clinical. For better Stage 5 behaviour set
-`embedding_model` to a biomedical model (e.g.
-`pritamdeka/S-PubMedBert-MS-MARCO`) and run `pipeline.cli refresh --full` to
-drop the cache, which is keyed by model and dimension.
+**Stage 5 contributes little end to end on this workload** — see "Choosing an
+embedding model" below for the measurements. It is kept on by default because
+it is free insurance on inputs where the lexical stages have little to work
+with, but disabling it (`--no-embeddings`) costs nothing measurable on
+column-name matching and saves ~40 ms/column.
 
 **Precision and recall in `report` are proxies.** There is no ground truth to
 measure against, so precision is computed only over the mappings a human later
