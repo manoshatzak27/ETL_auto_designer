@@ -148,6 +148,59 @@ class Preprocessor:
         self.lemmatizer = text_utils.default_lemmatizer(spacy_model)
         self._concept_token_cache: dict[str, tuple[str, ...]] = {}
 
+    # Steps 0.3 / 0.4 / 0.5 ------------------------------------------------
+    def _strip_metadata(
+        self, working: str
+    ) -> tuple[str, tuple[list[ExtractedCode], list[str],
+                          list[DetectedUnit], list[NumericConstraint]]]:
+        """Pull codes, dates, units and numerics out, returning the remainder.
+
+        Split out of ``run`` so the same treatment can be applied to a second
+        base text (the description on its own) without the extraction order
+        drifting between the two.
+        """
+        # Codes first: a LOINC code like 2160-0 would otherwise be eaten by the
+        # numeric-range rule as "2160 to 0".
+        codes, working = self._extract_codes(working)
+
+        # ── Step 0.4: dates and times ───────────────────────────────────
+        dates, working = self._extract_dates(working)
+
+        # ── Steps 0.3 and 0.5: units, then operators and ranges ─────────
+        #
+        # Both are *detected* against the same pre-stripping text, because
+        # stripping the unit takes the measured value with it: run sequentially
+        # and "> 100 bpm" loses the 100 to the unit rule before the comparison
+        # rule ever sees it, and the ">" operator goes unrecorded. Spans are
+        # offsets into that shared string, so blanking can be deferred.
+        units, unit_spans = self._extract_units(working)
+        numerics, numeric_spans = self._extract_numerics(working)
+
+        working = text_utils.squash(_blank_spans(working, [*unit_spans, *numeric_spans]))
+        return working, (codes, dates, units, numerics)
+
+    def _description_base(self, description: str, name_text: str) -> str:
+        """The description on its own, or "" if searching it separately is moot.
+
+        Worth a second pass only when the description is prose in its own right
+        *and* the column name adds words it does not already contain. When the
+        name adds nothing the two queries are identical, and when the
+        description is a stub ("Result value") the name is the only real
+        signal — in both cases the extra pass is pure cost.
+        """
+        if not self.config.description_only_variant:
+            return ""
+        if not description or len(description.split()) < _MIN_DESCRIPTION_WORDS:
+            return ""
+        described = set(text_utils.tokenize(description.lower()))
+        if not set(text_utils.tokenize(name_text.lower())) - described:
+            return ""
+
+        folded = text_utils.collapse_dotted_acronyms(
+            text_utils.fold_characters(description))
+        stripped, _ = self._strip_metadata(text_utils.squash(folded.lower()))
+        return stripped
+
     # Step 0.9 ------------------------------------------------------------
     def run(
         self,
@@ -179,47 +232,44 @@ class Preprocessor:
         ctx.normalized_input = text_utils.squash(working.lower())
         ctx.lookup_key = text_utils.normalize_for_exact_match(ctx.raw_input)
 
-        working = ctx.normalized_input
-
-        # Codes first: a LOINC code like 2160-0 would otherwise be eaten by the
-        # numeric-range rule as "2160 to 0".
-        ctx.codes, working = self._extract_codes(working)
-
-        # ── Step 0.4: dates and times ───────────────────────────────────
-        ctx.date_formats, working = self._extract_dates(working)
-
-        # ── Steps 0.3 and 0.5: units, then operators and ranges ─────────
-        #
-        # Both are *detected* against the same pre-stripping text, because
-        # stripping the unit takes the measured value with it: run sequentially
-        # and "> 100 bpm" loses the 100 to the unit rule before the comparison
-        # rule ever sees it, and the ">" operator goes unrecorded. Spans are
-        # offsets into that shared string, so blanking can be deferred.
-        ctx.units, unit_spans = self._extract_units(working)
-        ctx.numeric_constraints, numeric_spans = self._extract_numerics(working)
-
-        working = text_utils.squash(_blank_spans(working, [*unit_spans, *numeric_spans]))
+        working, metadata = self._strip_metadata(ctx.normalized_input)
+        ctx.codes, ctx.date_formats, ctx.units, ctx.numeric_constraints = metadata
 
         # Step 0.1: the logical components the input decomposed into.
         ctx.components = self._components(ctx, working)
 
         # ── Step 0.2: abbreviation expansion (may fan out) ──────────────
-        variants = self._expand_abbreviations(working)
+        #
+        # Two base texts where the description justifies it: name +
+        # description, and the description alone. A column name is an
+        # identifier, not prose — DOC_PAT_HAIR contributes "doc" and "pat",
+        # which match nothing and dilute every score, while the description
+        # "Hair sample has been collected" says the whole thing. Dropping the
+        # name outright is wrong too (plenty of descriptions are "Result
+        # value" and the name carries everything), so both are searched and
+        # Stage 6 keeps whichever scored a concept higher.
+        bases = [(working, "")]
+        description_base = self._description_base(description, name_text)
+        if description_base:
+            bases.append((description_base, "description"))
 
         # ── Steps 0.6 / 0.7 / 0.8 per variant ───────────────────────────
         built: list[SearchVariant] = []
-        for label, text, expansions in variants:
-            phrases, phrase_text = self._protect_phrases(text)
-            tokens = self._tokens(phrase_text, corpus_stopwords)
-            if not tokens:
-                continue
-            built.append(SearchVariant(
-                search_string=" ".join(text_utils.split_phrase(t) for t in tokens),
-                tokens=tuple(tokens),
-                protected_phrases=tuple(phrases),
-                label=label,
-                expansions=tuple(expansions),
-            ))
+        seen_tokens: set[tuple[str, ...]] = set()
+        for base_text, base_label in bases:
+            for label, text, expansions in self._expand_abbreviations(base_text):
+                phrases, phrase_text = self._protect_phrases(text)
+                tokens = self._tokens(phrase_text, corpus_stopwords)
+                if not tokens or tuple(tokens) in seen_tokens:
+                    continue
+                seen_tokens.add(tuple(tokens))
+                built.append(SearchVariant(
+                    search_string=" ".join(text_utils.split_phrase(t) for t in tokens),
+                    tokens=tuple(tokens),
+                    protected_phrases=tuple(phrases),
+                    label=f"{base_label}/{label}" if base_label else label,
+                    expansions=tuple(expansions),
+                ))
 
         if not built:
             # Everything was stripped (a column called "value_1", say). Fall
@@ -488,9 +538,12 @@ class Preprocessor:
         return found, text
 
     # ── Steps 0.7 and 0.8 ───────────────────────────────────────────────
-    def _tokens(self, text: str, corpus_stopwords: frozenset[str]) -> list[str]:
+    def _tokens(self, text: str, corpus_stopwords: frozenset[str],
+                drop_boilerplate: bool = True) -> list[str]:
         words = resources.stopwords()
         drop = words["generic"] | words["metadata"] | words["structural"] | corpus_stopwords
+        if drop_boilerplate:
+            drop = drop | words["instrument_boilerplate"]
         keep = words["keep_always"]
 
         raw = text_utils.tokenize(text)
@@ -542,7 +595,11 @@ class Preprocessor:
 
         folded = text_utils.squash(text_utils.fold_characters(concept_name).lower())
         _, protected = self._protect_phrases(folded)
-        tokens = tuple(self._tokens(protected, frozenset()))
+        # Instrument boilerplate is stripped from the query but kept here:
+        # 'above', 'average' and 'general' are survey scaffolding in a
+        # column description and the entire meaning in a concept name.
+        tokens = tuple(self._tokens(protected, frozenset(),
+                                    drop_boilerplate=False))
 
         if len(self._concept_token_cache) > 200_000:   # keep the cache bounded
             self._concept_token_cache.clear()

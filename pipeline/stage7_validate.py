@@ -398,7 +398,10 @@ class FeedbackStore:
                             l.column_name || ' ' || COALESCE(l.column_description, ''))
                     AND m.active
                 WHERE l.selected_concept_id IS DISTINCT FROM m.concept_id
-                  AND (%(run_id)s IS NULL OR l.run_id = %(run_id)s)
+                  -- Cast required: with run_id unset the parameter is a bare
+                  -- NULL on both sides of the OR, and Postgres has nothing to
+                  -- infer a type from ("could not determine data type of $1").
+                  AND (%(run_id)s::int IS NULL OR l.run_id = %(run_id)s::int)
             )
             SELECT s.stage,
                    count(*)                                                   AS comparisons,

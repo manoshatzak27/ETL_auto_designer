@@ -58,3 +58,33 @@ AS $$
                lower(public.immutable_unaccent($1)),
                '[^a-z0-9]+', ' ', 'g'))
 $$;
+
+
+-- Is this "synonym" actually LOINC's search-keyword dump rather than a name?
+--
+-- 98,462 LOINC synonyms (41% of LOINC's) are a semicolon-delimited bag of
+-- index fragments rather than an alternative name for the concept:
+--
+--   AOEObservation; Coll; Collect; Collected; Drugs; Nominal; Point in time;
+--   Random; Sample timing related to dose; Spec; Typ
+--
+-- Treating that as searchable text lets a concept match any query containing
+-- any of those words. It put "Sample collection timing related to drug dose"
+-- second for the column "Hair sample has been collected": Stage 4 found
+-- literal 'sample' and 'collected' in the dump and scored it 73.3.
+--
+-- Two guards keep real synonyms:
+--   * split on ';' followed by whitespace, never a bare ';' — genomic HGVS and
+--     cytogenetic names ("t(11;22)(q24;q12.2)", "c.[541_543del;545T=]") use a
+--     bare semicolon as syntax, and splitting on it would gut OMOP Genomic.
+--   * require the segments to be *short*. HCPCS writes long prose clauses
+--     separated by "; "; a keyword dump averages one or two words per segment.
+CREATE OR REPLACE FUNCTION public.pipeline_is_keyword_dump(text)
+RETURNS boolean
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+    SELECT cardinality(segs) >= 5
+       AND (SELECT avg(cardinality(regexp_split_to_array(btrim(x), '\s+')))
+              FROM unnest(segs) AS x) <= 3
+    FROM (SELECT regexp_split_to_array($1, ';\s') AS segs) t
+$$;

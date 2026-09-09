@@ -39,7 +39,10 @@
     "hospital", "clinic", "ward", "department", "id", "identifier", "key",
     "pk", "fk", "index", "seq", "sequence", "row", "table",
     "loinc", "snomed", "snomedct", "icd", "icd9", "icd10", "rxnorm", "rxcui",
-    "cpt", "cpt4", "hcpcs", "ndc", "atc", "omop", "vocabulary",
+    "cpt", "cpt4", "hcpcs", "ndc", "atc", "omop", "vocabulary"
+  ],
+
+  "instrument_boilerplate": [
     "tick", "circle", "please", "namely", "specify", "eg", "ie", "etc",
     "following", "above", "below", "question", "questions", "answer",
     "answers", "option", "options", "choose", "select", "selected",
@@ -47,6 +50,14 @@
     "considering", "regarding", "overall", "general", "average"
   ],
   "_instrument_boilerplate_comment": [
+    "Applied to the QUERY only, never to a concept name — see",
+    "Preprocessor.concept_tokens. These words are noise in a survey export's",
+    "item text but meaning in a concept name: stripping them made 'Height",
+    "above average' and 'General finding of height' tokenize to exactly",
+    "{height}, so both scored a perfect Jaccard 1.0 against the column",
+    "'height' while the correct 'Body height' scored LOWER for carrying the",
+    "extra word 'body'. A finding about a variable outranked the variable.",
+    "",
     "Questionnaire scaffolding. A survey export's item text is mostly",
     "instructions — 'Tick the one response which best describes your usual",
     "abilities over the past week' — and every one of those tokens dilutes",
@@ -73,7 +84,17 @@
     "searched for concepts containing 'how' AND 'tall' — and 'Body height',",
     "sharing no token with the query, never entered the shortlist at all.",
     "Stage 5 can only rerank what Stage 2 found, so no embedding model can",
-    "recover from that."
+    "recover from that.",
+    "",
+    "Personal and possessive pronouns are deliberately NOT here, though the",
+    "argument for adding them looks identical. Postgres already drops them,",
+    "so Stage 2 is unaffected either way; what changes is Stages 3 and 4.",
+    "Adding you/your/my/their cost 2 agreed-on-meaning and 2 more unmapped",
+    "columns on the 206-column curated set, because a questionnaire item",
+    "('Are you able to shampoo your hair') matches a questionnaire concept",
+    "partly ON those pronouns — question shape is real signal when both",
+    "sides are questions. They are harmless in Stage 3 now that a stopword",
+    "is weighted 0 rather than as the rarest token in the corpus."
   ],
 
   "corpus_adaptive": [

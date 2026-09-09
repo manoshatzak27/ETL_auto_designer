@@ -54,3 +54,25 @@ def make_adjuster(config: PipelineConfig, ctx: ContextBundle,
         return min(score, 100.0)
 
     return adjust
+
+
+def provisional_score(config: PipelineConfig, cand: Candidate) -> float:
+    """Weighted mean of the stage scores a candidate has collected so far.
+
+    Used for the Stage 3 and Stage 4 *survival* cuts. Those stages rank by
+    their own score to decide what to keep, which lets a stage veto evidence
+    it never measured: for the column "What is your profession?" the concept
+    ``36203487 Occupation [Type]`` scored 100 on Stage 2 and 100 on Stage 3,
+    then Stage 4 dropped it because "profession" and "occupation type" are not
+    similar *strings* — which is true, and is not a reason to discard the
+    best-matching concept in the shortlist.
+
+    Stage 5 already works this way: it re-scores and eliminates nothing.
+    """
+    scores = {name: value for name, value in cand.stage_scores().items()
+              if value is not None}
+    total_weight = sum(config.weight_for(name) for name in scores)
+    if total_weight <= 0:
+        return 0.0
+    return sum(value * config.weight_for(name)
+               for name, value in scores.items()) / total_weight

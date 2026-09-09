@@ -59,6 +59,16 @@ class PipelineConfig:
     stopword_corpus_threshold: float = 0.8
     # Below this, a bare digit run is not taken to be a SNOMED/RxNorm id.
     min_bare_code_digits: int = 6
+    # When a column has a real description, also search the description on its
+    # own, as a second interpretation alongside name+description. A column name
+    # is an identifier, not prose: DOC_PAT_HAIR contributes "doc" and "pat",
+    # which match nothing and drag every candidate's score down.
+    #
+    # It is a trade, not a free win — see "Measured behaviour" in the README.
+    # Columns whose name carries the signal and whose description is a vague
+    # paraphrase (clotting_time / "How long blood takes to clot") get worse.
+    # Set false to search name+description only.
+    description_only_variant: bool = True
 
     # ── Stage 2: full-text search ───────────────────────────────────────
     # Step 2.1. Device/Specimen/etc. are deliberately absent: they stay
@@ -76,9 +86,25 @@ class PipelineConfig:
     # Trigram recall net for when FTS matches nothing at all.
     trigram_fallback_limit: int = 30
     trigram_fallback_threshold: float = 0.35
+    # Step 2.3b: least a candidate keeps when every content word of its name
+    # is one the query never asked for. 1.0 disables the precision discount.
+    #
+    # DEFAULT IS OFF, on measurement. The idea is sound — a concept full of
+    # words the query never asked for is a worse match — but at 0.70 it cost
+    # 2.2pp of gold-set literal accuracy and 4pp of top-5, because a long
+    # LOINC name ('Glucose [Mass/volume] in Serum or Plasma') is *specifying*
+    # the measurement, not padding it. Stage 3's Jaccard expresses the same
+    # preference through its union denominator without that cost.
+    specificity_floor: float = 1.0
 
     # ── Stage 3: weighted Jaccard ───────────────────────────────────────
     jaccard_keep: int = 15                 # Stage 3 scoring line
+    # Fold equivalent words onto one representative before comparing token
+    # sets, so a candidate Stage 2 found through an equivalence
+    # (profession -> occupation) does not then score a flat Jaccard 0.
+    # Measured cost and benefit are in the README; set false to compare
+    # token sets literally.
+    equivalence_folding: bool = True
 
     # ── Stage 4: fuzzy ──────────────────────────────────────────────────
     fuzzy_keep: int = 10                   # Stage 4 scoring line
@@ -129,6 +155,28 @@ class PipelineConfig:
     final_domain_boost: float = 1.05       # Step 6.1
     hierarchy_depth_boost: float = 1.02    # Step 6.2
     hierarchy_tie_margin: float = 2.0      # "nearly identical scores"
+    # Step 1.2/1.3: classes an exact name match must never resolve to. This is
+    # a HARD filter, so it is deliberately much narrower than
+    # broad_concept_classes below (which is only a 3% Stage 6 penalty).
+    #
+    # A Qualifier Value is a modifier word, not a variable: the column "Weight"
+    # matched SNOMED 37111521 'Weight' (Qualifier Value) exactly and was
+    # auto-accepted at 100, when the ETL target is 'Body weight' (Measurement).
+    # The classification containers below are branches of a hierarchy, never a
+    # column's target.
+    #
+    # "Staging / Scales" and "Answer" are deliberately ABSENT even though both
+    # sit in broad_concept_classes. Blocking Staging / Scales cost 3 exact
+    # agreements on the curated set — 'Swollen joint count', 'Tender joint
+    # count' and 'Enthesitis index' are SNOMED/Measurement/Staging-Scales and
+    # are exactly the right target for a rheumatology study. A clinical score
+    # is a measurement, not a classification.
+    never_variable_classes: tuple[str, ...] = (
+        "Qualifier Value",
+        "Classification", "ICD10 Chapter", "ICD10 SubChapter", "ICD9CM Chapter",
+        "ATC 1st", "ATC 2nd", "ATC 3rd", "LOINC Class", "LOINC Hierarchy",
+    )
+
     # Step 6.2: concept classes that are broad classifications, not findings.
     broad_concept_classes: tuple[str, ...] = (
         "Classification", "ICD10 Chapter", "ICD10 SubChapter",

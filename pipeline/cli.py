@@ -2,6 +2,8 @@
 
     python -m pipeline.cli check
     python -m pipeline.cli match --name SBP --description "Systolic blood pressure (mmHg)"
+    python -m pipeline.cli match --description "Hair sample collected" --explain
+    python -m pipeline.cli shell
     python -m pipeline.cli batch columns.csv --out mappings.csv
     python -m pipeline.cli report [--run 3]
     python -m pipeline.cli feedback --column SBP --concept 4152194
@@ -54,13 +56,30 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("check", help="verify the database is ready")
 
     match = sub.add_parser("match", help="map a single column")
-    match.add_argument("--name", required=True, help="source column name")
-    match.add_argument("--description", help="source column description")
+    match.add_argument("--name", help="source column name; optional if "
+                                      "--description is given")
+    match.add_argument("--description", help="source column description; "
+                                             "may be used on its own")
     match.add_argument("--table", help="source table name")
     match.add_argument("--source-system", help="source system identifier")
     match.add_argument("--json", action="store_true", help="emit JSON")
+    match.add_argument("--explain", action="store_true",
+                       help="per-stage breakdown: what each stage was given, "
+                            "how it ranked, and the composite arithmetic")
     match.add_argument("--candidates", type=int, default=5,
                        help="how many candidates to show (default 5)")
+
+    shell = sub.add_parser(
+        "shell", help="interactive: type columns, see matches",
+        description="One column per line, as `name | description` or just free "
+                    "text. The database connection and the embedding model are "
+                    "opened once and reused, so each query costs milliseconds "
+                    "rather than a model load.")
+    shell.add_argument("--candidates", type=int, default=5,
+                       help="how many candidates to show (default 5)")
+    shell.add_argument("--source-system", help="source system identifier")
+    shell.add_argument("--explain", action="store_true",
+                       help="per-stage breakdown for every query")
 
     batch = sub.add_parser("batch", help="map many columns from CSV or JSON")
     batch.add_argument("input", type=Path, help="CSV (name,description) or JSON")
@@ -155,19 +174,123 @@ def cmd_check(config: PipelineConfig) -> int:
     return 0
 
 
+def _idf_weights(matcher: ConceptMatcher, result: MatchResult) -> dict[str, float]:
+    """Stage 3's corpus weights for the query tokens, for the explain view."""
+    tokens = {t for variant in result.context.variants for t in variant.tokens}
+    if not tokens:
+        return {}
+    try:
+        return matcher.stage3.idf.weights(tokens)
+    except Exception:            # explaining must never break the query itself
+        return {}
+
+
+def _name_probes(matcher: ConceptMatcher, result: MatchResult) -> list[str] | None:
+    """The exact-match keys Stage 1 tried, for the explain view."""
+    try:
+        return matcher.stage1.name_probes(result.context)
+    except Exception:        # explaining must never break the query itself
+        return None
+
+
 def cmd_match(config: PipelineConfig, args: argparse.Namespace) -> int:
+    if not (args.name or args.description):
+        print("match needs --name, --description, or both", file=sys.stderr)
+        return 1
+
     matcher = ConceptMatcher(config)
     try:
-        result = matcher.match(args.name, args.description, args.table,
+        # An absent name is passed through as "" rather than folded into the
+        # description: Stage 0 joins name and description, so reusing the
+        # description as the name would search every one of its words twice.
+        result = matcher.match(args.name or "", args.description, args.table,
                                args.source_system)
         if args.json:
             print(json.dumps(result.as_dict(), indent=2, default=str))
+        elif args.explain:
+            print(render_explain(result, config, args.candidates,
+                                 _idf_weights(matcher, result),
+                                 _name_probes(matcher, result)))
         else:
             print(render_result(result, args.candidates))
         matcher.finish_run()
     finally:
         matcher.close()
     return 0 if result.status != "error" else 1
+
+
+_SHELL_BANNER = """\
+Type a column to map, one per line:
+
+    creat_mgdl | Serum creatinine mg/dL      name and description
+    creat_mgdl                               name only
+    | Serum creatinine mg/dL                 description only
+
+Ctrl-D or `quit` to leave.
+"""
+
+
+def _split_shell_input(line: str) -> tuple[str, str | None]:
+    """Split a shell line into (name, description).
+
+    `|` separates the two because it does not occur in identifiers and, unlike
+    a comma or a colon, does not occur in LOINC-style descriptions either.
+    Without one the whole line is the name — Stage 0 concatenates name and
+    description anyway, so free text still searches exactly as typed. A line
+    that *starts* with the separator is description-only, which is the one
+    combination the concatenation cannot express.
+    """
+    name, sep, description = line.partition("|")
+    return name.strip(), (description.strip() or None) if sep else None
+
+
+def cmd_shell(config: PipelineConfig, args: argparse.Namespace) -> int:
+    matcher = ConceptMatcher(config)
+    mapped = 0
+    try:
+        # Force the lazy connection pool and model open before the first
+        # prompt, so the wait happens visibly here instead of looking like the
+        # first query is inexplicably slow.
+        print("Opening database and embedding model...", flush=True)
+        if matcher.stage5.enabled:
+            matcher.stage5.model.encode(["warmup"])
+        else:
+            matcher.db.vocabulary_version()
+        print(f"\n{_SHELL_BANNER}")
+
+        while True:
+            try:
+                line = input("column> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not line:
+                continue
+            if line in {"quit", "exit", ":q"}:
+                break
+
+            name, description = _split_shell_input(line)
+            if not (name or description):
+                continue
+            try:
+                result = matcher.match(name, description,
+                                       source_system=args.source_system)
+            except Exception as exc:               # keep the session alive
+                print(f"  failed: {exc}\n")
+                continue
+            mapped += 1
+            if args.explain:
+                print(render_explain(result, config, args.candidates,
+                                     _idf_weights(matcher, result),
+                                     _name_probes(matcher, result)))
+            else:
+                print(render_result(result, args.candidates))
+            print()
+    finally:
+        if mapped:
+            matcher.finish_run()
+        matcher.close()
+    return 0
 
 
 def cmd_batch(config: PipelineConfig, args: argparse.Namespace) -> int:
@@ -313,6 +436,12 @@ def render_result(result: MatchResult, candidate_limit: int = 5) -> str:
         f"  search string : {ctx.search_string!r}",
         f"  tokens        : {ctx.tokens}",
     ]
+    if len(ctx.variants) > 1:
+        # Which interpretations were actually searched. Worth showing: the
+        # winning concept is often lifted by a variant other than the primary,
+        # and without this the printed search string looks unrelated to it.
+        lines.append("  searched as   :")
+        lines += [f"    [{v.label}] {v.search_string!r}" for v in ctx.variants]
     if ctx.protected_phrases:
         lines.append(f"  phrases       : {ctx.protected_phrases}")
     if ctx.units:
@@ -368,6 +497,190 @@ def _fmt(value: float | None) -> str:
     return "-" if value is None else f"{value:.1f}"
 
 
+# Boosts Stage 6 applies to the weighted mean, in the order _composite applies
+# them. Everything else in `Candidate.boosts` was recorded by an earlier stage
+# and is already baked into that stage's own score.
+_STAGE6_MULTIPLIERS = ("final_vocabulary", "final_domain", "broad_class")
+
+
+def render_explain(result: MatchResult, config: PipelineConfig,
+                   candidate_limit: int = 5,
+                   idf_weights: dict[str, float] | None = None,
+                   name_probes: list[str] | None = None) -> str:
+    """Per-stage breakdown: what each stage was given, did, and handed on."""
+    ctx = result.context
+    timings = {t.stage: t for t in result.timings}
+    lines: list[str] = []
+
+    def head(title: str, stage_key: str | None = None) -> None:
+        bar = ""
+        if stage_key and stage_key in timings:
+            t = timings[stage_key]
+            flow = ("" if t.candidates_in is None
+                    else f"{t.candidates_in:>4} -> ")
+            out = "" if t.candidates_out is None else f"{t.candidates_out}"
+            bar = f"{t.elapsed_ms:9.1f} ms   {flow}{out}"
+        lines.append("")
+        lines.append(f"{title:<44}{bar}")
+        lines.append("-" * 78)
+
+    # ── Stage 0 ─────────────────────────────────────────────────────────
+    head("Stage 0 — preprocessing", "stage0_preprocess")
+    lines += [
+        f"  column name    : {ctx.column_name or '(none)'}",
+        f"  description    : {ctx.column_description or '(none)'}",
+        f"  raw input      : {ctx.raw_input!r}",
+        f"  normalized     : {ctx.normalized_input!r}",
+        f"  lookup key     : {ctx.lookup_key!r}",
+    ]
+    if ctx.components:
+        lines.append(f"  components     : {ctx.components}")
+    lines.append("  extracted      : "
+                 + (", ".join(filter(None, [
+                     ", ".join(f"code {c.vocabulary_id}:{c.code}" for c in ctx.codes),
+                     ", ".join(f"unit {u.canonical} ({u.unit_type})" for u in ctx.units),
+                     ", ".join(f"{n.kind} {n.operator or ''}{list(n.values)}"
+                               for n in ctx.numeric_constraints),
+                     ", ".join(f"date {d}" for d in ctx.date_formats),
+                 ])) or "(nothing)"))
+    if ctx.abbreviations:
+        lines.append("  abbreviations  : " + ", ".join(
+            f"{a.abbreviation}->{a.expansion}" + (" (ambiguous)" if a.ambiguous else "")
+            for a in ctx.abbreviations))
+    lines.append(f"  hints          : domain={ctx.domain_hint or '(none)'} "
+                 f"vocabulary={ctx.vocabulary_hint or '(none)'} "
+                 f"numeric={ctx.numeric_flag} temporal={ctx.temporal_flag}")
+    lines.append(f"  interpretations: {len(ctx.variants)} "
+                 f"(each one searched separately through Stages 2-5)")
+    for variant in ctx.variants:
+        lines.append(f"    [{variant.label}] {variant.search_string!r}")
+        lines.append(f"        tokens   {list(variant.tokens)}")
+        if variant.protected_phrases:
+            lines.append(f"        phrases  {list(variant.protected_phrases)}")
+    if idf_weights:
+        lines.append("  token IDF (the Stage 3 weights; higher = rarer, "
+                     "so more discriminating):")
+        for token, weight in sorted(idf_weights.items(), key=lambda kv: -kv[1]):
+            lines.append(f"    {token:<28} {weight:6.2f}")
+
+    # ── Stage 1 ─────────────────────────────────────────────────────────
+    head("Stage 1 — exact and code match", "stage1_exact")
+    lines.append("  order          : manual mapping, then code, then exact "
+                 "concept name, then exact synonym")
+    lines.append("  codes probed   : " + (", ".join(
+        f"{c.vocabulary_id}:{c.code}" for c in ctx.codes) or "(none extracted)"))
+    if name_probes is None:
+        lines.append(f"  name probes    : (not available)")
+    else:
+        lines.append("  name probes    : " + (
+            ", ".join(repr(p) for p in name_probes) or
+            "(none — every candidate key was a bare acronym, which is excluded)"))
+    if ctx.domain_hint:
+        lines.append(f"  domain filter  : {ctx.domain_hint} (a hard filter here, "
+                     "not a preference)")
+    if result.decided_at_stage == "stage1":
+        lines.append(f"  RESULT         : hit — {result.decision_reason}")
+    else:
+        lines.append("  RESULT         : no hit; continuing to the ranked stages")
+
+    # ── Stages 2-5 ──────────────────────────────────────────────────────
+    for title, key, attr in (
+        ("Stage 2 — full-text search", "stage2_fts", "fts_score"),
+        ("Stage 3 — IDF-weighted Jaccard", "stage3_jaccard", "jaccard_score"),
+        ("Stage 4 — fuzzy / trigram", "stage4_fuzzy", "fuzzy_score"),
+        ("Stage 5 — embeddings", "stage5_embedding", "embedding_score"),
+    ):
+        head(title, key)
+        scored = [c for c in result.candidates if getattr(c, attr) is not None]
+        if not scored:
+            lines.append("  (stage did not run, or scored nothing)")
+            continue
+        if key == "stage2_fts":
+            lines.append("  rung 0 = every term, adjacent | 1 = phrase, looser | "
+                         "2 = every term, any order | 3 = some terms")
+        # `scored` is the surviving candidate set, not everything the stage saw
+        # — Stage 2 may have returned 30 and handed 15 on. The counts in the
+        # header bar are the real per-stage flow; this is only the reordering.
+        lines.append(f"  how this stage alone ranked the {len(scored)} "
+                     f"candidates that survived to the end:")
+        for cand in sorted(scored, key=lambda c: -getattr(c, attr))[:candidate_limit]:
+            extra = ""
+            if key == "stage2_fts":
+                extra = (f"  rung={int(cand.boosts.get('fts_rung', -1))}"
+                         f" raw={cand.raw_rank:.4f}")
+            lines.append(f"    {getattr(cand, attr):6.1f}{extra}  "
+                         f"{cand.concept_id} {cand.concept_name[:52]}")
+            if key == "stage2_fts" and cand.variant_label != "primary":
+                lines.append(f"            found by interpretation "
+                             f"[{cand.variant_label}]")
+
+    # ── Stage 6 ─────────────────────────────────────────────────────────
+    head("Stage 6 — composite scoring", "stage6_composite")
+    lines.append("  weights        : " + "  ".join(
+        f"{name} {config.weight_for(name):.2f}"
+        for name in ("fts", "jaccard", "fuzzy", "embedding")))
+    lines.append(f"  thresholds     : auto_accept >= {config.auto_accept_threshold}, "
+                 f"review >= {config.review_threshold}, "
+                 f"ambiguity margin {config.ambiguity_margin}")
+    for rank, cand in enumerate(result.candidates[:candidate_limit], start=1):
+        lines.append("")
+        marker = "  <- selected" if (result.selected is not None
+                                     and cand.concept_id == result.selected.concept_id) else ""
+        lines.append(f"  #{rank} {cand.concept_id} {cand.concept_name[:56]}{marker}")
+        lines.append(f"       {cand.vocabulary_id} / {cand.domain_id} / "
+                     f"{cand.concept_class_id}")
+        available = {n: v for n, v in cand.stage_scores().items() if v is not None}
+        total_weight = sum(config.weight_for(n) for n in available)
+        for name, value in available.items():
+            weight = config.weight_for(name)
+            lines.append(f"       {name:<10} {value:6.1f} x {weight:.2f} "
+                         f"= {value * weight:6.2f}")
+        running = (sum(v * config.weight_for(n) for n, v in available.items())
+                   / total_weight) if total_weight > 0 else 0.0
+        if len(available) < 4:
+            lines.append(f"       {'':<10} weights renormalized over "
+                         f"{'/'.join(available)} (sum {total_weight:.2f})")
+        lines.append(f"       {'weighted':<10} {running:6.2f}")
+        for name in _STAGE6_MULTIPLIERS:
+            if name in cand.boosts:
+                running = min(running * cand.boosts[name], 100.0)
+                lines.append(f"       x {name:<8} {cand.boosts[name]:6.2f} "
+                             f"-> {running:6.2f}")
+        if "hierarchy_depth" in cand.boosts:
+            running = min(running * cand.boosts["hierarchy_depth"], 100.0)
+            lines.append(f"       x {'hierarchy':<8} "
+                         f"{cand.boosts['hierarchy_depth']:6.2f} -> {running:6.2f}")
+        lines.append(f"       {'COMPOSITE':<10} {cand.composite_score:6.2f}")
+        if abs(running - cand.composite_score) > 0.05:
+            # Say so rather than let a silently-wrong sum look authoritative.
+            lines.append(f"       (reconstruction differs by "
+                         f"{cand.composite_score - running:+.2f} — an adjustment "
+                         f"above is not accounted for here)")
+        earlier = {k: v for k, v in cand.boosts.items()
+                   if k not in _STAGE6_MULTIPLIERS and k
+                   not in ("hierarchy_depth", "fts_rung")}
+        if earlier:
+            lines.append("       already in the stage scores: " + ", ".join(
+                f"{k}={v:.2f}" for k, v in earlier.items()))
+        if cand.notes:
+            lines += [f"       note: {note}" for note in cand.notes]
+
+    # ── Stage 7 ─────────────────────────────────────────────────────────
+    head("Stage 7 — validation and decision")
+    lines += [
+        f"  status         : {result.status.upper()}",
+        f"  confidence     : {result.confidence:.1f}",
+        f"  decided at     : {result.decided_at_stage or '-'}",
+        f"  reason         : {result.decision_reason or '-'}",
+    ]
+    lines.append("  flags          : " + ("(none)" if not result.validation_flags else ""))
+    lines += [f"    ! {flag}" for flag in result.validation_flags]
+
+    lines.append("")
+    lines.append(f"  {'total':<26} {result.elapsed_ms:8.1f} ms")
+    return "\n".join(line.rstrip() for line in lines)
+
+
 # ── entry point ─────────────────────────────────────────────────────────
 
 
@@ -382,6 +695,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "check": lambda: cmd_check(config),
         "match": lambda: cmd_match(config, args),
+        "shell": lambda: cmd_shell(config, args),
         "batch": lambda: cmd_batch(config, args),
         "report": lambda: cmd_report(config, args),
         "feedback": lambda: cmd_feedback(config, args),

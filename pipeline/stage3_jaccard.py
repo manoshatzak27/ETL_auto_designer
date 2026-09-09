@@ -24,7 +24,7 @@ import math
 import threading
 from typing import Iterable, Sequence
 
-from . import text_utils
+from . import resources, text_utils
 from .config import PipelineConfig
 from .db import Database
 from .models import Candidate, ContextBundle, SearchVariant
@@ -80,21 +80,36 @@ class IdfIndex:
         rows = self.db.fetch_all(
             """
             SELECT w.word,
-                   COALESCE(i.doc_freq, 1) AS doc_freq
+                   COALESCE(i.doc_freq, 1) AS doc_freq,
+                   -- english_stem returns an empty array (not NULL) for a word
+                   -- it recognizes as a stopword, and {word} for one it simply
+                   -- does not know. The two must not be conflated: see below.
+                   cardinality(s.lexemes) = 0 AS is_stopword
             FROM unnest(%s::text[]) AS w(word)
             LEFT JOIN LATERAL (
-                SELECT (ts_lexize('english_stem', w.word))[1] AS stem
+                SELECT ts_lexize('english_stem', w.word) AS lexemes
             ) s ON TRUE
-            LEFT JOIN pipeline.token_idf i ON i.token = s.stem
+            LEFT JOIN pipeline.token_idf i ON i.token = s.lexemes[1]
             """,
             (words,),
         )
         doc_freq = {r["word"]: float(r["doc_freq"]) for r in rows}
+        stopword = {r["word"]: bool(r["is_stopword"]) for r in rows}
 
         total = self.total_concepts
         with self._lock:
             for token, parts in lookup.items():
-                freqs = [doc_freq.get(p, 1.0) for p in parts] or [1.0]
+                # A stopword is absent from token_idf because it was never
+                # indexed, not because it is rare. Falling through to the
+                # unseen-word weight made it the *most* discriminating token in
+                # the query: "What is your profession?" scored 'your' at 14.38
+                # against 'profession' at 12.03, so Stage 3 ranked candidates
+                # mainly on a word Postgres had already thrown away.
+                content = [p for p in parts if not stopword.get(p, False)]
+                if not content:
+                    self._idf[token] = 0.0
+                    continue
+                freqs = [doc_freq.get(p, 1.0) for p in content] or [1.0]
                 df = min(freqs)
                 # Smoothed IDF: strictly decreasing in df, never zero or
                 # negative even for a token present in every concept.
@@ -117,14 +132,17 @@ class JaccardScorer:
         if not candidates:
             return []
 
-        input_tokens = set(variant.tokens)
+        fold = _canonical if self.config.equivalence_folding else (lambda t: t)
+        input_tokens = {fold(t) for t in variant.tokens}
 
         # Step 3.1: token sets for every candidate, name and synonyms alike.
         candidate_tokens: dict[int, tuple[tuple[str, ...], list[tuple[str, ...]]]] = {}
         vocabulary: set[str] = set(input_tokens)
         for cand in candidates:
-            name_tokens = self.pre.concept_tokens(cand.concept_name)
-            synonym_tokens = [self.pre.concept_tokens(s) for s in cand.synonyms[:12]]
+            name_tokens = tuple(
+                fold(t) for t in self.pre.concept_tokens(cand.concept_name))
+            synonym_tokens = [tuple(fold(t) for t in self.pre.concept_tokens(s))
+                              for s in cand.synonyms[:12]]
             candidate_tokens[cand.concept_id] = (name_tokens, synonym_tokens)
             vocabulary.update(name_tokens)
             for tokens in synonym_tokens:
@@ -154,6 +172,26 @@ class JaccardScorer:
 
         ranked = sorted(candidates, key=lambda c: -(c.jaccard_score or 0.0))
         return ranked[: self.config.jaccard_keep]
+
+
+def _canonical(token: str) -> str:
+    """Fold a token onto one representative of its equivalence group.
+
+    Stage 2 expands "profession" into (profession|occupation|...) on the query
+    side, but Stage 3 compares token *sets*: without the same folding,
+    {profession} and {occupation, type} intersect in nothing and every
+    candidate Stage 2 found through an equivalence scores a flat 0.0 — a
+    quarter of the composite weight contributing nothing while still being
+    averaged in.
+
+    Multi-word tokens are folded word by word, so "manual_job" and
+    "manual_occupation" meet. Stage 4 is deliberately NOT folded: it is a
+    string-similarity stage, and making it equivalence-aware would turn a
+    typo detector into a second semantic stage.
+    """
+    parts = token.split("_")
+    folded = [resources.equivalents().get(p, (p,))[0] for p in parts]
+    return "_".join(folded)
 
 
 def _weighted_jaccard(left: set[str], right: set[str],

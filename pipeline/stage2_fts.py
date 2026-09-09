@@ -18,9 +18,10 @@ order rank significantly higher").
 
 from __future__ import annotations
 
+from functools import lru_cache
 from typing import Any, Sequence
 
-from . import text_utils
+from . import resources, text_utils
 from .config import PipelineConfig
 from .db import Database
 from .models import Candidate, ContextBundle, SearchVariant
@@ -65,16 +66,52 @@ _BASE_SELECT = """
            -- Needed because the rung alone cannot distinguish "matched 2 of 3
            -- terms" from "matched 6 of 15": both fall to the loosest rung, but
            -- they are not remotely the same quality of evidence.
-           CASE WHEN cardinality(q.lexemes) = 0 THEN 0::float8
-                ELSE cardinality(ARRAY(
-                         SELECT unnest(tsvector_to_array(cs.search_vector))
-                         INTERSECT
-                         SELECT unnest(q.lexemes)))::float8
-                     / cardinality(q.lexemes)
-           END AS coverage
-    FROM pipeline.concept_search cs,
-         (SELECT ({expr})::tsquery AS query,
-                 tsvector_to_array(to_tsvector('english', %(query_text)s)) AS lexemes) q
+           -- Counted per *group*, not per lexeme, so that an equivalence
+           -- (sample|specimen) counts once whichever member matched, and a
+           -- concept containing both is not credited twice.
+           CASE WHEN cardinality(q.groups) = 0 THEN 0::float8
+                ELSE (SELECT count(*) FROM unnest(q.groups) AS g
+                      WHERE EXISTS (
+                          SELECT 1
+                          FROM unnest(string_to_array(g, ' ')) AS lex
+                          WHERE lex = ANY(tsvector_to_array(cs.search_vector))
+                      ))::float8 / cardinality(q.groups)
+           END AS coverage,
+           -- Step 2.3b: the mirror of coverage. Coverage is recall — how much
+           -- of the query the concept accounts for. This is precision — how
+           -- much of the concept NAME the query accounts for. Without it,
+           -- "Burial occupation" and "Occupation [Type]" are indistinguishable
+           -- for the column "What is your profession?": both contain the query
+           -- word once, but one is a specific occupation (a value) and the
+           -- other names the variable being asked for.
+           --
+           -- Generic words are excluded from the denominator, so "[Type]",
+           -- "- finding", "code" and "value" do not count as unrelated
+           -- content. They are exactly the words OMOP appends when naming a
+           -- variable rather than a value.
+           CASE WHEN cardinality(n.content) = 0 THEN 1.0::float8
+                ELSE cardinality(ARRAY(SELECT unnest(n.content)
+                                       INTERSECT
+                                       SELECT unnest(q.lexemes)))::float8
+                     / cardinality(n.content)
+           END AS specificity
+    FROM pipeline.concept_search cs
+    CROSS JOIN (
+        SELECT ({expr})::tsquery AS query,
+               (SELECT array_agg(array_to_string(
+                           tsvector_to_array(to_tsvector('english', g)), ' '))
+                  FROM unnest(%(group_texts)s::text[]) AS g
+                 WHERE to_tsvector('english', g) <> ''::tsvector) AS groups,
+               tsvector_to_array(to_tsvector('english', %(query_all)s)) AS lexemes,
+               (SELECT array_agg((ts_lexize('english_stem', w))[1])
+                  FROM unnest(%(generic_words)s::text[]) AS w
+                 WHERE ts_lexize('english_stem', w) <> '{{}}'::text[]) AS generic
+    ) q
+    CROSS JOIN LATERAL (
+        SELECT ARRAY(SELECT unnest(cs.name_lexemes)
+                     EXCEPT
+                     SELECT unnest(q.generic)) AS content
+    ) n
     WHERE cs.search_vector @@ q.query
       {domain_filter}
     -- Length is the tie-break, and there are a lot of ties: every
@@ -85,6 +122,63 @@ _BASE_SELECT = """
     ORDER BY rank DESC, length(cs.concept_name), cs.concept_id
     LIMIT %(limit)s
 """
+
+
+@lru_cache(maxsize=1)
+def _generic_words() -> list[str]:
+    """Words that do not count as "unrelated" in the specificity measure.
+
+    OMOP names a variable by appending exactly these to the subject:
+    "Occupation [Type]", "Type of job - finding", "Employment status".
+    Counting them as unrelated content is what buried the concept naming
+    the variable beneath several hundred concepts naming its values.
+    """
+    return sorted(resources.stopwords().get("generic", ()))
+
+
+def _expand(term: str) -> list[str]:
+    """A query term plus every word it may be swapped for, itself first.
+
+    Multi-word terms are left alone: the equivalence table is a word table, and
+    substituting inside a phrase ("blood pressure" -> "blood tension") is not
+    something a flat word list can be trusted to do.
+    """
+    if " " in term:
+        return [term]
+    group = resources.equivalents().get(term.lower())
+    if not group:
+        return [term]
+    return [term] + [word for word in group if word != term.lower()]
+
+
+def _coverage_groups(phrases: list[str], plain: list[str]) -> list[str]:
+    """One coverage slot per query *word*, with equivalents sharing a slot.
+
+    Coverage is "how much of the query did this concept account for", and the
+    unit has to stay the word. Counting a protected phrase as a single slot
+    instead of one per word silently reweights the whole query: for the input
+    "egfr / Estimated glomerular filtration rate" it made the four words of the
+    phrase worth as much as the single word "receptor", and the wrong
+    expansion of the acronym — "Epidermal growth factor receptor" — overtook
+    the right concept.
+
+    So a phrase contributes its words individually, exactly as the old
+    lexeme-based count did, and only an equivalence group collapses several
+    words into one slot, because only one of them was ever asked for.
+    """
+    groups = [[word] for phrase in phrases for word in phrase.split()]
+    for term in plain:
+        if " " in term:
+            groups.extend([word] for word in term.split())
+        else:
+            groups.append(_expand(term))
+    return [" ".join(group) for group in groups]
+
+
+def _or_group(size: int) -> str:
+    """SQL skeleton for one query term: a bare term, or its members ORed."""
+    one = "plainto_tsquery('english', %s)"
+    return one if size == 1 else "(" + " || ".join([one] * size) + ")"
 
 
 class FullTextSearcher:
@@ -116,13 +210,13 @@ class FullTextSearcher:
         if not phrases and not plain:
             return []
 
-        query_text = " ".join(phrases + plain)
+        group_texts = _coverage_groups(phrases, plain)
 
         found: dict[int, Candidate] = {}
         for rung, (expr, params) in enumerate(self._ladder(phrases, plain)):
             if expr is None:
                 continue
-            rows = self._query(expr, params, domains, query_text)
+            rows = self._query(expr, params, domains, group_texts)
             if not rows:
                 continue
             best_rank = max((float(r["rank"] or 0.0) for r in rows), default=0.0)
@@ -162,7 +256,12 @@ class FullTextSearcher:
         any-term one. Precision order is preserved; the recall hole is not.
         """
         phrase_terms = ["phraseto_tsquery('english', %s)"] * len(phrases)
-        plain_terms = ["plainto_tsquery('english', %s)"] * len(plain)
+        # One OR group per plain term, over that term and its equivalents.
+        # A single-member group renders as the bare term, so a query with
+        # no equivalences produces byte-identical SQL to before.
+        plain_groups = [_expand(t) for t in plain]
+        plain_terms = [_or_group(len(g)) for g in plain_groups]
+        plain = [word for group in plain_groups for word in group]
         # A phrase, relaxed: its words ANDed together with no adjacency.
         # plainto_tsquery already ANDs the words of a multi-word string.
         relaxed_terms = ["plainto_tsquery('english', %s)"] * len(phrases)
@@ -203,7 +302,7 @@ class FullTextSearcher:
         return rungs
 
     def _query(self, expr: str, values: list[str], domains: Sequence[str],
-               query_text: str) -> list[dict[str, Any]]:
+               group_texts: list[str]) -> list[dict[str, Any]]:
         domain_filter = "AND cs.domain_id = ANY(%(domains)s)" if domains else ""
 
         # The expression carries positional %s placeholders while the rest of
@@ -213,7 +312,9 @@ class FullTextSearcher:
         params: dict[str, Any] = {
             "limit": self.config.fts_candidate_limit * 2,
             "domains": list(domains),
-            "query_text": query_text,
+            "group_texts": group_texts,
+            "query_all": " ".join(group_texts),
+            "generic_words": _generic_words(),
         }
         for index, value in enumerate(values):
             key = f"t{index}"
@@ -280,6 +381,14 @@ class FullTextSearcher:
                           + (100.0 - _COVERAGE_FLOOR) * coverage)
             floor = min(floor, ceiling * 0.8)
             score = floor + (ceiling - floor) * (raw / best_rank)
+            # Step 2.3b: discount a concept whose name is mostly words the
+            # query never asked for. Bounded below by _SPECIFICITY_FLOOR so
+            # this re-orders within a rung rather than overriding it — a
+            # concept that satisfies every term is still better evidence
+            # than a short one that satisfies one.
+            floor_ = self.config.specificity_floor
+            specificity = float(row.get("specificity") or 0.0)
+            score *= floor_ + (1.0 - floor_) * specificity
 
         boosts: dict[str, float] = {"fts_rung": float(rung)}
 

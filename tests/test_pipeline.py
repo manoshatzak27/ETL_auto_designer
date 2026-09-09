@@ -23,7 +23,19 @@ from pipeline.stage6_composite import CompositeScorer, merge_candidates
 
 
 def make_config() -> PipelineConfig:
+    """Shipped defaults, with only the database connection read from the
+    environment — so the integration tests find Postgres whether they run on
+    the host (`localhost:5433`) or inside the pipeline container
+    (`postgres:5432`).
+
+    Everything else stays at the built-in defaults on purpose: the unit tests
+    assert on shipped thresholds and weights, and a local `pipeline.json` must
+    not be able to quietly change what they are testing.
+    """
     config = PipelineConfig()
+    environment = PipelineConfig.load()
+    for name in ("host", "port", "dbname", "user", "password"):
+        setattr(config, name, getattr(environment, name))
     config.log_to_db = False
     return config
 
@@ -72,6 +84,61 @@ class TestPreprocessing(unittest.TestCase):
         # Insurance against a wrong expansion being the only thing searched.
         ctx = self.pre.run("map", "map")
         self.assertIn("literal", {v.label for v in ctx.variants})
+
+    def test_description_is_searched_without_the_column_name(self):
+        # DOC_PAT_HAIR contributes "doc" and "pat", which match no concept and
+        # drag every candidate down; the description alone is the real query.
+        ctx = self.pre.run("DOC_PAT_HAIR", "Hair sample has been collected")
+        variants = {v.label: v.tokens for v in ctx.variants}
+        self.assertIn("primary", variants)
+        self.assertIn("description/primary", variants)
+        self.assertIn("doc", variants["primary"])
+        self.assertNotIn("doc", variants["description/primary"])
+
+    def test_no_description_variant_when_the_name_adds_nothing(self):
+        # Same words on both sides: a second identical query is pure cost.
+        ctx = self.pre.run("hair_sample", "Hair sample has been collected")
+        self.assertFalse([v for v in ctx.variants
+                          if v.label.startswith("description/")])
+
+    def test_no_description_variant_for_a_stub_description(self):
+        # "Result value" is not prose; the name carries everything.
+        ctx = self.pre.run("DOC_PAT_HAIR", "Result value")
+        self.assertFalse([v for v in ctx.variants
+                          if v.label.startswith("description/")])
+
+    def test_description_variant_can_be_switched_off(self):
+        config = make_config()
+        config.description_only_variant = False
+        ctx = Preprocessor(config).run("DOC_PAT_HAIR",
+                                       "Hair sample has been collected")
+        self.assertFalse([v for v in ctx.variants
+                          if v.label.startswith("description/")])
+
+    def test_equivalent_words_expand_on_the_query_side(self):
+        from pipeline import resources
+        from pipeline.stage2_fts import _expand, _or_group
+
+        self.assertEqual(resources.equivalents()["sample"], ("sample", "specimen"))
+        self.assertEqual(_expand("sample"), ["sample", "specimen"])
+        # Unknown words and phrases pass through untouched, and a single-member
+        # group must render identical SQL to the pre-equivalence version.
+        self.assertEqual(_expand("creatinine"), ["creatinine"])
+        self.assertEqual(_expand("blood pressure"), ["blood pressure"])
+        self.assertEqual(_or_group(1), "plainto_tsquery('english', %s)")
+        self.assertEqual(_or_group(2),
+                         "(plainto_tsquery('english', %s) || "
+                         "plainto_tsquery('english', %s))")
+
+    def test_equivalence_groups_are_single_words(self):
+        # _expand only substitutes whole words; a multi-word member would be
+        # silently mis-counted by the group coverage calculation.
+        from pipeline import resources
+
+        for word, group in resources.equivalents().items():
+            self.assertNotIn(" ", word)
+            for member in group:
+                self.assertNotIn(" ", member)
 
     def test_units_are_extracted_and_removed(self):
         ctx = self.pre.run("glucose", "Glucose 120 mg/dL")
@@ -362,6 +429,36 @@ class TestIntegration(unittest.TestCase):
 
     def match(self, name, description=None):
         return self.matcher.match(name, description, log_result=False)
+
+    def test_loinc_keyword_dumps_are_not_searchable_text(self):
+        """LOINC ships an index dump in the synonym field; it is not a name.
+
+        "AOEObservation; Coll; Collect; Collected; Drugs; Nominal; ..." made
+        concept 1176344 ("Sample collection timing related to drug dose")
+        score 73.3 on Stage 4 for the column "Hair sample has been collected",
+        because the dump contains the literal words 'sample' and 'collected'.
+        """
+        db = self.matcher.db
+        self.assertTrue(db.fetch_value(
+            "SELECT public.pipeline_is_keyword_dump(%s)",
+            ("AOEObservation; Coll; Collect; Collected; Drugs; Nominal; "
+             "Point in time; Random; Sample timing related to dose; Spec; Typ",)))
+        # A bare ';' is syntax in genomic and cytogenetic names, not a delimiter.
+        self.assertFalse(db.fetch_value(
+            "SELECT public.pipeline_is_keyword_dump(%s)",
+            ("t(11;22)(q24;q12.2)(FLI1,EWSR1) fusion transcript analysis, "
+             "Blood or tissue specimen",)))
+        # HCPCS separates long prose clauses with '; '; those are real text.
+        self.assertFalse(db.fetch_value(
+            "SELECT public.pipeline_is_keyword_dump(%s)",
+            ("Technical component; under certain circumstances, a charge may "
+             "be made for the technical component alone; under those "
+             "circumstances the technical component charge is identified by "
+             "adding modifier tc",)))
+        # And the dump must be gone from the searchable view.
+        synonyms = db.fetch_value(
+            "SELECT synonyms FROM pipeline.concept_search WHERE concept_id = 1176344")
+        self.assertTrue(all("AOEObservation" not in s for s in (synonyms or [])))
 
     def test_exact_name_match_exits_at_stage_1(self):
         result = self.match("bp", "Systolic blood pressure")

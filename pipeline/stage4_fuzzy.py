@@ -28,7 +28,7 @@ from . import resources, text_utils
 from .config import PipelineConfig
 from .db import Database
 from .models import Candidate, ContextBundle, SearchVariant
-from .scoring import make_adjuster
+from .scoring import make_adjuster, provisional_score
 from .stage0_preprocess import Preprocessor
 
 # An acronym shorter than this is too collision-prone to trust: two letters
@@ -78,7 +78,10 @@ class FuzzyScorer:
 
             cand.fuzzy_score = adjust(cand, score)
 
-        ranked = sorted(candidates, key=lambda c: -(c.fuzzy_score or 0.0))
+        # Cut on the evidence so far, not on this stage's score alone —
+        # see scoring.provisional_score for why.
+        ranked = sorted(candidates,
+                        key=lambda c: -provisional_score(self.config, c))
         return ranked[: self.config.fuzzy_keep]
 
     # ── Step 4.1 ────────────────────────────────────────────────────────
@@ -97,6 +100,11 @@ class FuzzyScorer:
                        FROM vocab.concept_synonym s
                        WHERE s.concept_id = cs.concept_id
                          AND s.language_concept_id = 4180186
+                         -- This reads vocab.concept_synonym directly rather
+                         -- than cs.synonyms, so it needs the same keyword-dump
+                         -- exclusion the matview applies.
+                         AND NOT public.pipeline_is_keyword_dump(
+                                     s.concept_synonym_name)
                    ), 0) AS synonym_sim
             FROM pipeline.concept_search cs
             WHERE cs.concept_id = ANY(%(ids)s)

@@ -76,9 +76,9 @@ def protected_phrases() -> tuple[str, ...]:
 
 @lru_cache(maxsize=1)
 def stopwords() -> dict[str, frozenset[str]]:
-    """Step 0.7: the four stopword buckets, already de-duplicated."""
+    """Step 0.7: the stopword buckets, already de-duplicated."""
     buckets: dict[str, set[str]] = {
-        "generic": set(), "metadata": set(),
+        "generic": set(), "metadata": set(), "instrument_boilerplate": set(),
         "structural": set(), "corpus_adaptive": set(), "keep_always": set(),
     }
     for name in ("stopwords.json", "stopwords_local.json"):
@@ -89,9 +89,33 @@ def stopwords() -> dict[str, frozenset[str]]:
     # keep_always vetoes every removal list — the spec is explicit that
     # domain-bearing words must survive even if someone lists them as noise.
     keep = buckets["keep_always"]
-    for key in ("generic", "metadata", "structural", "corpus_adaptive"):
+    for key in ("generic", "metadata", "instrument_boilerplate",
+                "structural", "corpus_adaptive"):
         buckets[key] -= keep
     return {k: frozenset(v) for k, v in buckets.items()}
+
+
+@lru_cache(maxsize=1)
+def equivalents() -> dict[str, tuple[str, ...]]:
+    """Step 2.2b: word -> every word it may be swapped for, itself included.
+
+    Groups are written once in the file and indexed here from each member, so
+    "sample" and "specimen" both resolve to the same pair. Groups sharing a
+    member are merged, which keeps the file from having to be de-duplicated by
+    hand as it grows.
+    """
+    groups: list[set[str]] = []
+    for name in ("equivalents.json", "equivalents_local.json"):
+        for raw in _read_json(name).get("groups", []):
+            words = {str(w).lower().strip() for w in raw if str(w).strip()}
+            if len(words) < 2:
+                continue
+            overlapping = [g for g in groups if g & words]
+            for g in overlapping:
+                words |= g
+                groups.remove(g)
+            groups.append(words)
+    return {word: tuple(sorted(group)) for group in groups for word in group}
 
 
 @lru_cache(maxsize=1)
@@ -110,7 +134,7 @@ def irregular_lemmas() -> tuple[dict[str, str], frozenset[str]]:
 def reload_all() -> None:
     """Drop the caches — used after the feedback loop writes new entries."""
     for fn in (abbreviations, unit_table, expected_unit_types,
-               protected_phrases, stopwords, irregular_lemmas):
+               protected_phrases, stopwords, irregular_lemmas, equivalents):
         fn.cache_clear()
 
 

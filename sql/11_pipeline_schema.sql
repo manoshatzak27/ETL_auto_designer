@@ -41,6 +41,11 @@ SELECT
     c.concept_class_id,
     c.concept_code,
     public.pipeline_normalize(c.concept_name)               AS concept_name_norm,
+    -- Step 2.3b: the concept NAME's own lexemes, synonyms excluded. Stage 2
+    -- uses these to measure how much of the name the query accounts for —
+    -- precision, where `coverage` is recall. Precomputed here because the
+    -- alternative is to_tsvector() per row over every FTS match.
+    tsvector_to_array(to_tsvector('english', c.concept_name)) AS name_lexemes,
     COALESCE(s.synonyms, ARRAY[]::text[])                   AS synonyms,
     c.concept_name
         || COALESCE(' ' || array_to_string(s.synonyms, ' '), '')  AS search_text,
@@ -54,6 +59,9 @@ LEFT JOIN LATERAL (
     WHERE cs.concept_id = c.concept_id
       AND cs.language_concept_id = 4180186          -- English language
       AND cs.concept_synonym_name <> c.concept_name
+      -- LOINC's search-keyword dumps are not names; see
+      -- public.pipeline_is_keyword_dump in 10_pipeline_extensions.sql.
+      AND NOT public.pipeline_is_keyword_dump(cs.concept_synonym_name)
 ) s ON TRUE;
 
 -- ─────────────────────────────────────────────────────────────────────────

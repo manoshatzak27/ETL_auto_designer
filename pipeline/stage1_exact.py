@@ -98,6 +98,16 @@ class ExactMatcher:
         # confidently wrong. Better to find nothing and let Stages 2-6 weigh it.
         allowed = _allowed_domains(ctx.domain_hint)
 
+        # Concept class is a hard filter here for the same reason (see
+        # config.never_variable_classes, which is narrower than the
+        # Stage 6 penalty list). A
+        # Qualifier Value is a modifier word, not a variable: the column
+        # "Weight" matched SNOMED 37111521 'Weight' (Observation /
+        # Qualifier Value) exactly and was auto-accepted at 100, when the
+        # ETL target is 'Body weight' (Measurement). Stage 6 already
+        # penalizes these classes, but a Stage 1 hit exits before Stage 6
+        # ever runs, so the penalty could never apply.
+
         for probe in self._name_probes(ctx):
             hit = self._by_exact_name(probe, ctx, allowed)
             if hit is not None:
@@ -109,6 +119,14 @@ class ExactMatcher:
                 return hit, f"exact synonym match on {probe!r}", flags
 
         return None, "", flags
+
+    def name_probes(self, ctx: ContextBundle) -> list[str]:
+        """The exact-match keys this stage would try, in order.
+
+        Public so `match --explain` can show what was actually looked up
+        instead of paraphrasing it.
+        """
+        return self._name_probes(ctx)
 
     def _unresolved_code_flag(self, code: ExtractedCode) -> str:
         if not self._vocabulary_present(code.vocabulary_id):
@@ -240,8 +258,10 @@ class ExactMatcher:
             FROM pipeline.concept_search c
             WHERE c.concept_name_norm = %(probe)s
               AND (%(allowed)s::text[] IS NULL OR c.domain_id = ANY(%(allowed)s::text[]))
+              AND NOT (c.concept_class_id = ANY(%(broad)s::text[]))
             """ + _TIEBREAK,
-            {"probe": probe, "domain_hint": ctx.domain_hint, "allowed": allowed},
+            {"probe": probe, "domain_hint": ctx.domain_hint, "allowed": allowed,
+             "broad": list(self.config.never_variable_classes)},
         )
         return _to_candidate(row, "stage1_name") if row else None
 
@@ -256,8 +276,10 @@ class ExactMatcher:
             WHERE public.pipeline_normalize(s.concept_synonym_name) = %(probe)s
               AND s.language_concept_id = 4180186
               AND (%(allowed)s::text[] IS NULL OR c.domain_id = ANY(%(allowed)s::text[]))
+              AND NOT (c.concept_class_id = ANY(%(broad)s::text[]))
             """ + _TIEBREAK,
-            {"probe": probe, "domain_hint": ctx.domain_hint, "allowed": allowed},
+            {"probe": probe, "domain_hint": ctx.domain_hint, "allowed": allowed,
+             "broad": list(self.config.never_variable_classes)},
         )
         return _to_candidate(row, "stage1_synonym") if row else None
 
