@@ -7,6 +7,14 @@ Two things live here:
 2. **A multi-stage matching pipeline** that maps source column names and
    descriptions onto concepts in that vocabulary.
 
+Both are containerized; Docker is the only prerequisite. From cold:
+
+```bash
+./load_vocab.sh        # load the vocabulary (10-20 min)
+./setup_pipeline.sh    # build the pipeline's database objects (~2 min)
+./pipeline.sh check    # builds the pipeline image, then verifies the setup
+```
+
 This is a separate stack from `../ETL_auto_designer`, which runs its own
 **unfiltered** OMOP database on host port 5432 (container `omop-postgres`).
 This one uses a different container name, volume, and host port (`5433`) so
@@ -177,24 +185,15 @@ confidence score and an accept / review / unmapped decision.
 ## Setup
 
 ```bash
-./setup_pipeline.sh                      # database objects (~2 min)
-
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-
-# Optional — Stage 5 semantic matching. CPU build keeps this to ~250MB
-# instead of the ~2.5GB CUDA default.
-.venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch
-.venv/bin/pip install -r requirements-embeddings.txt
-
-.venv/bin/python -m pipeline.cli check
+./setup_pipeline.sh      # database objects (~2 min)
+./pipeline.sh check      # builds the image on first use, then verifies
 ```
 
 `setup_pipeline.sh` runs four more SQL steps on top of the loaded vocabulary:
 
 | file | what it builds |
 |------|----------------|
-| `10_pipeline_extensions.sql` | `pg_trgm`, `fuzzystrmatch`, `unaccent`, `btree_gin`, plus the `pipeline_normalize()` function that Stage 1 matches on |
+| `10_pipeline_extensions.sql` | `pg_trgm`, `fuzzystrmatch`, `unaccent`, `btree_gin`, the `pipeline_normalize()` function Stage 1 matches on, and `pipeline_is_keyword_dump()` (see "Synonyms that are not synonyms") |
 | `11_pipeline_schema.sql` | `pipeline.concept_search` materialized view, the IDF and embedding-cache tables, the Stage 7 log/feedback tables, the Stage 9 reporting views |
 | `12_pipeline_indexes.sql` | GIN FTS index on `(domain_id, search_vector)`, GIN trigram index, exact-match and logging indexes |
 | `13_pipeline_idf.sql` | `pipeline.token_idf` — 316,026 corpus token frequencies |
@@ -202,34 +201,79 @@ python3 -m venv .venv
 Re-running is safe. Derived structures (matview, IDF) are rebuilt; captured
 history (mapping logs, manual mappings, embedding cache) is preserved.
 
-Without `sentence-transformers` installed the pipeline still works — Stage 5
-is skipped and its 20% weight is redistributed across the stages that did run,
-rather than scoring every candidate zero.
+## The pipeline container
+
+`./pipeline.sh` is a wrapper for `docker compose run --rm pipeline`. Whatever
+it is given goes to the CLI, so every command below is the documented
+`python -m pipeline.cli …` with the prefix dropped. Three verbs are not CLI
+subcommands and are handled by the entrypoint instead: `test`, `python`, and
+`bash`.
+
+| what | where |
+|------|-------|
+| image | built from `Dockerfile` on first use; `docker compose build pipeline` to rebuild |
+| database | reached at `postgres:5432` over the compose network, not through the published host port |
+| `./data` | mounted at `/app/data` — put input CSVs there, write outputs there, and they appear on the host |
+| `./pipeline`, `./tests` | mounted **read-only** over the image's copy, so editing a stopword list or a threshold takes effect on the next run with no rebuild |
+| `./benchmarks` | mounted read-write; the benchmark scripts emit CSVs next to their gold sets |
+| model cache | named volume `new_concept_finding_hf_cache`, so the ~90MB MiniLM downloads once rather than per run |
+| config overrides | `data/pipeline.json` (copy `pipeline.example.json`); the container points `PIPELINE_CONFIG` at it |
+
+The image is ~2GB on disk, nearly all of it CPU torch. `WITH_EMBEDDINGS=0
+docker compose build pipeline` drops that to ~310MB; the pipeline then behaves
+as it does on any host without torch — Stage 5 is skipped and its 20% weight
+is redistributed across the stages that did run, rather than scoring every
+candidate zero.
+
+The image also carries its own copy of the source, so `docker run
+vocab-pipeline:latest …` works standalone with no bind mounts — the mounts are
+a development convenience, not a requirement.
+
+To work without Docker instead, the pipeline is an ordinary Python package:
+`python3 -m venv .venv && .venv/bin/pip install -r requirements.txt` (plus
+`--index-url https://download.pytorch.org/whl/cpu torch` and
+`requirements-embeddings.txt` for Stage 5), then
+`.venv/bin/python -m pipeline.cli …` against `localhost:5433`.
 
 ## Usage
 
 ```bash
-# one column, with full stage-by-stage explanation
-.venv/bin/python -m pipeline.cli match \
-    --name SBP --description "Systolic blood pressure (mmHg)"
+# one column — name, description, or both (--name is optional if you give one)
+./pipeline.sh match --name SBP --description "Systolic blood pressure (mmHg)"
+./pipeline.sh match --description "Hair sample has been collected"
+
+# the full per-stage breakdown of how that answer was reached
+./pipeline.sh match --name SBP --description "..." --explain
+
+# interactive; the model loads once, so each query costs ms instead of ~10s
+#   creat_mgdl | Serum creatinine mg/dL     name and description
+#   creat_mgdl                              name only
+#   | Serum creatinine mg/dL                description only
+./pipeline.sh shell
+
+# the same, interactively — `name | description`, or just free text.
+# The connection and the embedding model open once, so after the first
+# query each one costs ~250 ms instead of a ~10 s model load.
+./pipeline.sh shell
 
 # many columns; CSV needs a `name` header, optionally `description` and `table`
-.venv/bin/python -m pipeline.cli batch columns.csv \
-    --out mappings.csv --source-system my_ehr --report
+# paths are container paths — data/ is the same directory on both sides
+./pipeline.sh batch data/columns.csv \
+    --out data/mappings.csv --source-system my_ehr --report
 
 # Stage 9 reporting for a run
-.venv/bin/python -m pipeline.cli report --run 3
+./pipeline.sh report --run 3
 
 # record a human correction (Stage 1 short-circuits to it from then on)
-.venv/bin/python -m pipeline.cli feedback \
+./pipeline.sh feedback \
     --column creat_mgdl --description "Serum creatinine mg/dL" \
     --concept 3016723 --source-system my_ehr
 
 # abbreviations Stage 4 discovered on its own
-.venv/bin/python -m pipeline.cli abbreviations
+./pipeline.sh abbreviations
 
 # after a vocabulary refresh (Step 8.3)
-.venv/bin/python -m pipeline.cli refresh
+./pipeline.sh refresh
 ```
 
 Useful flags on any subcommand: `--no-embeddings` (skip Stage 5),
@@ -312,9 +356,10 @@ commented in the source where it happens; the substantive ones:
 
 ## Tuning
 
-Copy `pipeline.example.json` to `pipeline.json` and edit. Precedence:
-`pipeline/config.py` defaults < that file < the `pipeline.scoring_weight`
-table < CLI flags.
+Copy `pipeline.example.json` to `data/pipeline.json` and edit — that is the
+path the container's `PIPELINE_CONFIG` points at. (Running from a host venv
+instead, the default is `./pipeline.json`.) Precedence: `pipeline/config.py`
+defaults < that file < the `pipeline.scoring_weight` table < CLI flags.
 
 Site-specific dictionary entries go in `*_local` siblings under
 `pipeline/resources/`, which are merged over the shipped defaults and survive
@@ -358,8 +403,8 @@ OMOP, where "Glucose measurement", "Glucose measurement, serum" and the LOINC
 same column, and `concept_ancestor` does not reliably link across vocabularies.
 
 ```bash
-.venv/bin/python benchmarks/compare_models.py    # end to end
-.venv/bin/python benchmarks/stage5_rerank.py     # the model in isolation
+./pipeline.sh python benchmarks/compare_models.py    # end to end
+./pipeline.sh python benchmarks/stage5_rerank.py     # the model in isolation
 ```
 
 **Reranking the Stage 2 shortlist, embeddings only** (44 winnable cases;
@@ -376,10 +421,15 @@ same column, and `concept_ancestor` does not reliably link across vocabularies.
 
 | model | overall | literal | semantic | ms/col |
 |-------|---------|---------|----------|--------|
-| none (Stage 5 off) | 90.0% | 93.3% | 60.0% | 196 |
-| all-MiniLM-L6-v2 | 90.0% | 93.3% | 60.0% | 233 |
-| pubmedbert-base-embeddings | 90.0% | 93.3% | 60.0% | 422 |
-| MedEmbed-small-v0.1 | 88.0% | 91.1% | 60.0% | 292 |
+| none (Stage 5 off) | 90.0% | 95.6% | 40.0% | 243 |
+| all-MiniLM-L6-v2 | 90.0% | 95.6% | 40.0% | 1579 |
+| pubmedbert-base-embeddings | 90.0% | 95.6% | 40.0% | 529 |
+| MedEmbed-small-v0.1 | 88.0% | 93.3% | 40.0% | 382 |
+
+(Re-measured after the description-only interpretation was added; before it,
+every row read 93.3% literal / 60.0% semantic at the same 90.0% overall. The
+ms/col figures include per-process model load, so they are not comparable
+across rows measured in different runs.)
 
 Two conclusions, both worth stating plainly because both are the opposite of
 the obvious guess:
@@ -394,7 +444,7 @@ the obvious guess:
    reranking they do is reranking Stages 3 and 4 have already done: by the time
    Stage 5 sees the candidates, IDF-weighted Jaccard and fuzzy matching have
    usually already promoted an acceptable concept to the top. Sweeping the
-   Stage 5 weight from 0.0 to 0.5 leaves end-to-end accuracy flat at 93.3% and
+   Stage 5 weight from 0.0 to 0.5 leaves end-to-end accuracy flat and
    degrades it at 0.5.
 
 So Stage 5 earns its place only where the lexical stages are weak. If your
@@ -405,10 +455,10 @@ Switching model is one config key plus a cache rebuild, since cached vectors
 are keyed by model, dimension and document prefix:
 
 ```bash
-# pipeline.json
+# data/pipeline.json
 { "embedding_model": "abhinand/MedEmbed-small-v0.1" }
 
-.venv/bin/python -m pipeline.cli refresh --full
+./pipeline.sh refresh --full
 ```
 
 `EMBEDDING_MODEL_PRESETS` in `pipeline/config.py` carries the instruction
@@ -420,13 +470,239 @@ only and lose accuracy without it; `embedding_query_prefix` and
 ## Testing
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+./pipeline.sh test -v
 ```
 
-50 tests. The Stage 0-6 tests are pure and run anywhere; the integration tests
+57 tests. The Stage 0-6 tests are pure and run anywhere; the integration tests
 need the loaded database and skip themselves cleanly when it is unreachable.
 
+## Searching the description on its own
+
+A column name is an identifier, not prose. `DOC_PAT_HAIR` contributes the
+tokens `doc` and `pat`, which match no concept and dilute every score, while
+its description — "Hair sample has been collected" — says the whole thing.
+So when a column has a real description, Stage 0 emits **two**
+interpretations: `name + description`, and the description alone. Stage 6
+merges them per concept and keeps whichever scored higher, which is the same
+machinery that already handles ambiguous abbreviations.
+
+The second interpretation is only built when it can change something: the
+description has to be at least four words (not a `Result value` stub, where
+the name is the only signal) and the name has to contribute a word the
+description does not already contain.
+
+`match` prints both under `searched as`, so it is visible which query found
+the winner:
+
+```
+  searched as   :
+    [primary] 'doc pat hair sample collected'
+    [description/primary] 'hair sample collected'
+```
+
+**This is a trade, not a free win.** Measured on both benchmarks:
+
+| | name+description only | + description-only |
+|---|---|---|
+| gold set, literal (45 cases) | 93.3% | **95.6%** |
+| gold set, semantic (5 cases) | **60.0%** | 40.0% |
+| gold set, overall | 90.0% | 90.0% |
+| user mappings, exact (117) | 28.2% | **29.1%** |
+| user mappings, agreed on meaning | 57.3% | **59.0%** |
+| user mappings, in top-5 | 45.3% | **47.9%** |
+| user mappings, unmapped | 46 | **44** |
+| ms/column | 459 | 834 |
+
+(Both columns predate the keyword-dump filter and the equivalence table; see
+the cumulative table under "Measured behaviour" for current numbers.)
+
+It fixes columns whose *name* is noise (`spo2_pct` now finds oxygen
+saturation) and breaks columns whose *description* is noise — `clotting_time`
+/ "How long blood takes to clot" now ranks the morphologic "Blood clot" over
+prothrombin time, because the name held the only precise term. On the gold set
+that is one case each way; on the 206 real curated columns everything moved in
+the right direction, which is why it is on by default.
+
+Set `"description_only_variant": false` in `data/pipeline.json` to search
+name + description only. That also halves the per-column cost, since most
+columns otherwise run two interpretations through Stages 2-5.
+
+## Synonyms that are not synonyms
+
+41% of LOINC's synonyms (98,462 rows) are not alternative names but LOINC's
+own search-keyword dump:
+
+```
+AOEObservation; Coll; Collect; Collected; Drugs; Nominal; Point in time;
+Random; Sample timing related to dose; Spec; Typ
+```
+
+Indexed as searchable text, that lets a concept match any query containing any
+fragment in the bag. For the column "Hair sample has been collected" it made
+"Sample collection timing related to drug dose" the runner-up: Stage 4 found
+the literal words `sample` and `collected` in the dump and scored it 73.3,
+against a trigram similarity on the actual concept name of 0.32.
+
+`public.pipeline_is_keyword_dump()` excludes them from `concept_search` and
+from Stage 4's synonym probe. Two guards keep real synonyms:
+
+- **Split on `;` followed by whitespace, never a bare `;`.** Genomic and
+  cytogenetic names use a bare semicolon as syntax — `t(11;22)(q24;q12.2)`,
+  `NM_005228.5:c.[2239_2256del;2258C>T]`. Splitting on it would have gutted
+  1,611 OMOP Genomic synonyms.
+- **Require short segments** (5+ of them, averaging ≤3 words). HCPCS separates
+  long prose clauses with `"; "`; a keyword dump averages one or two words.
+
+## Equivalent words
+
+A column says `hair sample collected`; OMOP files the concept as "Collection
+of hair **specimen**". Both sides stem, but `sampl` and `specimen` are
+different stems, so the concept could not satisfy any rung requiring every
+term — it fell to the loosest rung and was capped there.
+
+[`resources/equivalents.json`](pipeline/resources/equivalents.json) holds
+groups of interchangeable words, expanded on the **query** side only: Stage 2
+asks for `hair & (sample|specimen) & collect`. The index is untouched, so the
+table can be edited without a rebuild, and 3.5M concepts do not each become
+matchable by more queries. `equivalents_local.json` adds site-specific groups.
+
+The rules for adding a group are strict, because a wrong entry silently widens
+every future search. Words must be substitutable in a concept *name*:
+`kidney`/`renal` qualifies, `blood`/`serum` does not — "blood glucose" and
+"serum glucose" are different LOINC concepts. No hypernyms, and no groups for
+inflection, which stemming already handles.
+
+Coverage is counted one slot per query **word**, with an equivalence group
+sharing a slot. Collapsing a protected phrase into a single slot instead
+reweights the query badly: for `egfr` / "Estimated glomerular filtration rate"
+it made the phrase's four words worth as much as the single word `receptor`,
+and the wrong expansion of the acronym overtook the right concept.
+
+## Variables and values
+
+The single largest remaining source of wrong answers is that OMOP contains
+both the concept naming a **variable** and many concepts naming *statements
+about* that variable, and the pipeline has no reliable way to prefer the
+former:
+
+| column | wanted | pipeline picks |
+|---|---|---|
+| `height` | `3036277 Body height` (Measurement) | `4203099 Normal height` (Clinical Finding) |
+| "What is your profession?" | `36203487 Occupation [Type]` | `4076340 Employed` (Clinical Finding) |
+| "Weight" | `4099154 Body weight` | fixed — see `never_variable_classes` |
+
+Two mechanisms in the code address parts of this, and one measured attempt is
+recorded here as a dead end:
+
+**Stopwords are asymmetric.** `Preprocessor.concept_tokens` strips the
+`generic`, `metadata` and `structural` buckets from a concept name but keeps
+`instrument_boilerplate`. Those words — `above`, `below`, `average`,
+`general` — are survey scaffolding in a column description and the entire
+meaning in a concept name. Stripping them from both sides made
+
+```
+Height above average       -> {height}
+General finding of height  -> {height}
+Body height                -> {body, height}
+```
+
+so three concepts scored an identical, perfect Jaccard 1.0 against the column
+`height` while the correct concept scored *lower* for carrying the extra word
+`body`. A finding about the variable outranked the variable, structurally.
+
+**`specificity_floor` is a measured dead end, kept as a config knob and
+disabled by default.** Stage 2 can discount a candidate in proportion to how
+much of its name the query never asked for — the mirror of `coverage`. It
+does surface the variable-shaped concept (`Occupation [Type]` moves from rank
+53 to 7), but at 0.70 it costs 2.2pp of gold-set literal accuracy and 4pp of
+top-5, measured twice, before and after the stopword fix above.
+
+The reason it cannot work as a word count: there are two kinds of extra word,
+and this measure cannot tell them apart. *Specifying* words narrow the same
+measurement — "Glucose **[Mass/volume] in Serum or Plasma**" — and penalising
+them is what breaks the gold set. *Qualifying* words turn the variable into an
+assertion about it — "**Normal** height", "Height **above average**" — and
+penalising those is exactly right. The distinction is not in the name; it is
+in `concept_class_id` and `domain_id`, which the database already carries.
+That is where a real fix belongs.
+
 ## Measured behaviour
+
+Cumulative effect of the four changes above, measured after each one. The
+gold set is 50 lab/vitals columns graded by name rule; "user mappings" is 206
+real curated columns from a rheumatology study, graded by concept_id over the
+117 whose chosen concept exists in this standard-only database.
+
+| | baseline | + description-only | + keyword-dump filter | + equivalents | + IDF stopword fix | **shipped** |
+|---|---|---|---|---|---|---|
+| gold literal (45) | 93.3% | 95.6% | **97.8%** | 97.8% | 97.8% | **97.8%** |
+| gold semantic (5) | 60.0% | 40.0% | 40.0% | 40.0% | 40.0% | 40.0% |
+| gold overall | 90.0% | 90.0% | **92.0%** | 92.0% | 92.0% | **92.0%** |
+| gold top-5 | 94.0% | 92.0% | 94.0% | 94.0% | 94.0% | **96.0%** |
+| user exact | 33 | 34 | **36** | 36 | 36 | **36** |
+| user agreed on meaning | 67 | 69 | **71** | 71 | 69 | **71** |
+| user in top-5 | 53 | 56 | 67 | 67 | 67 | **68** |
+| user unmapped | 46 | 44 | **43** | 43 | 44 | 44 |
+| ms/column | 459 | 834 | 749 | 784 | 683 | 700 |
+
+The final column adds three fixes, all prompted by inspecting individual
+wrong answers rather than by the benchmarks:
+
+- **Stage 4 no longer eliminates on its own score.** It kept 10 of 15 ranked
+  by fuzzy similarity alone, so a string-comparison stage could veto a
+  candidate that Stage 2 and Stage 3 had both scored 100 — which is what
+  happened to `36203487 Occupation [Type]` for the column "What is your
+  profession?". It now cuts on the weighted mean of the evidence gathered so
+  far (`scoring.provisional_score`), the way Stage 5 already behaves. Gold
+  top-5 94% → 96%.
+- **Stage 1 hard-filters `never_variable_classes`.** An exact name match could
+  auto-accept at confidence 100 a class the config had already marked as never
+  an ETL target, because a Stage 1 hit exits before Stage 6's penalty runs.
+  The column "Weight" resolved to SNOMED 37111521 `Weight`
+  (Observation / **Qualifier Value**) instead of `Body weight` (Measurement).
+- **Instrument boilerplate is stripped from queries but kept in concept
+  names** (see below).
+
+Two honest readings of that table:
+
+- **The keyword-dump filter is the biggest single win**, and most of it is
+  recall: +11 columns gained their correct concept in the top 5. Junk synonyms
+  were pushing real candidates out of the shortlist across the whole set, not
+  just on the one column that exposed the bug.
+- **The equivalence table changed nothing measurable here.** Only 16 of the
+  206 columns contain any word in it, and none is a `sample`/`specimen` case.
+  It demonstrably fixes that class of column — "Hair sample has been
+  collected" goes from `unmapped 65.5` to `review 70.1`, reaching rung 0 with
+  an FTS score of 100 instead of 87.5 — but neither benchmark covers it. It is
+  kept because it is neutral on both and costs ~5% latency, not because
+  either benchmark endorses it. A study with no specimen or anatomy language
+  can set `equivalents_local.json` aside and lose nothing.
+- **The IDF stopword fix costs 2 agreed-on-meaning columns and is kept
+  anyway.** `ts_lexize('english_stem', 'your')` returns an empty array — the
+  dictionary's way of saying "stopword" — where an unknown word returns
+  `{word}`. Joining on `lexemes[1]` turned that into NULL, `COALESCE(doc_freq,
+  1)` made it df=1, and the word scored `log(1 + 3,518,557/2)` = **14.38**, the
+  maximum possible weight. For "What is your profession?" Stage 3 weighted
+  `your` above `profession`. Every stopword reaching Stage 3 was scored as the
+  rarest token in the corpus. The two columns lost were riding on that: a
+  questionnaire item and a questionnaire concept share those pronouns, so the
+  inflated weight was accidentally rewarding a real match. Correct behaviour
+  arrived at for the wrong reason is still a bug.
+
+**A change that measured worse and was reverted:** adding personal and
+possessive pronouns to the Stage 0 stopword list. The argument looked
+identical to the question-word case — Postgres discards them anyway, so
+keeping them can only add noise. It is true for Stage 2 and false for Stages 3
+and 4: a questionnaire column matches a questionnaire concept partly *on* those
+pronouns, and question shape is real signal when both sides are questions. It
+cost 2 agreed-on-meaning and 2 more unmapped columns. Isolating it needed one
+benchmark run per change rather than one for the batch.
+
+| variant | exact | agreed | top-5 | unmapped |
+|---|---|---|---|---|
+| all four changes | 36 | 67 | 66 | 46 |
+| equivalence folding off | 36 | 68 | 66 | 47 |
+| **pronoun stopwords reverted (shipped)** | **36** | **69** | **67** | **44** |
 
 Against a 32-column synthetic EHR schema (vitals, labs, conditions,
 encounters, one deliberate nonsense column), with embeddings on, 4 workers,
