@@ -42,6 +42,53 @@ services:
       timeout: 5s
       retries: 20
 
+  # The matching pipeline. Run through ./pipeline.sh, which is a wrapper for
+  # `docker compose run --rm pipeline ...`.
+  #
+  # It sits behind a profile on purpose: it is a one-shot command, not a
+  # daemon, so a plain `docker compose up -d` (which load_vocab.sh and
+  # setup_pipeline.sh both do) must not try to start it. `compose run` enables
+  # the profile of the service it is given, so the wrapper needs no --profile.
+  pipeline:
+    profiles: ["cli"]
+    build:
+      context: .
+      args:
+        WITH_EMBEDDINGS: ${WITH_EMBEDDINGS:-1}
+    image: vocab-pipeline:latest
+    init: true
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Container-internal address. POSTGRES_PORT in .env is the *host* port
+      # (5433) and does not apply on this side of the network, so both are set
+      # explicitly rather than inherited.
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: ${POSTGRES_USER:-vocab}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-vocab_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-athena_vocab}
+      # Config overrides go in data/pipeline.json (copy pipeline.example.json).
+      # config.py tolerates the file being absent.
+      PIPELINE_CONFIG: /app/data/pipeline.json
+    working_dir: /app
+    volumes:
+      # Source is mounted read-only over the copy in the image so that editing
+      # a stopword list or a threshold takes effect on the next run without a
+      # rebuild. The image still carries its own copy, so `docker run
+      # vocab-pipeline` works standalone with no bind mounts at all.
+      - ./pipeline:/app/pipeline:ro
+      - ./tests:/app/tests:ro
+      # Writable: the benchmark scripts emit CSVs next to their gold sets.
+      - ./benchmarks:/app/benchmarks
+      # Where input columns and output mappings live, on both sides.
+      - ./data:/app/data
+      # ~90MB for the default MiniLM, downloaded once instead of per run.
+      - hf_cache:/cache/huggingface
+
 volumes:
   vocab_pgdata:
     name: new_concept_finding_vocab_pgdata
+  hf_cache:
+    name: new_concept_finding_hf_cache

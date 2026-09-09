@@ -58,4 +58,4 @@ run_sql 13_pipeline_idf.sql
 
 echo
 echo "==> Pipeline schema ready."
-echo "    Next: python -m pipeline.cli match --name SBP --description 'Systolic blood pressure (mmHg)'"
+echo "    Next: ./pipeline.sh match --name SBP --description 'Systolic blood pressure (mmHg)'"

@@ -5,3 +5,6 @@
 /athena_ALL/
 __pycache__/
 *.py[cod]
+# Working directory shared with the pipeline container; the note stays.
+/data/*
+!/data/README.md
