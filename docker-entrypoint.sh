@@ -11,6 +11,7 @@
 #
 # The verbs cover the things that are not the CLI:
 #
+#   ./pipeline.sh serve                            # the HTTP service
 #   ./pipeline.sh test                             # the unittest suite
 #   ./pipeline.sh python benchmarks/compare_models.py
 #   ./pipeline.sh bash                             # a shell in the image
@@ -18,6 +19,14 @@
 set -euo pipefail
 
 case "${1:-}" in
+  serve)
+    # The one long-running verb: pipeline.service puts the matcher behind HTTP
+    # so another application (the ETL Auto-Designer's Concepts step) can map a
+    # whole column list in one call. Listen address comes from SERVICE_HOST /
+    # SERVICE_PORT.
+    shift
+    exec python -m pipeline.service "$@"
+    ;;
   test|tests)
     shift
     exec python -m unittest discover -s tests "$@"

@@ -205,9 +205,9 @@ history (mapping logs, manual mappings, embedding cache) is preserved.
 
 `./pipeline.sh` is a wrapper for `docker compose run --rm pipeline`. Whatever
 it is given goes to the CLI, so every command below is the documented
-`python -m pipeline.cli …` with the prefix dropped. Three verbs are not CLI
-subcommands and are handled by the entrypoint instead: `test`, `python`, and
-`bash`.
+`python -m pipeline.cli …` with the prefix dropped. Four verbs are not CLI
+subcommands and are handled by the entrypoint instead: `serve` (see "Serving it
+over HTTP"), `test`, `python`, and `bash`.
 
 | what | where |
 |------|-------|
@@ -278,6 +278,55 @@ To work without Docker instead, the pipeline is an ordinary Python package:
 
 Useful flags on any subcommand: `--no-embeddings` (skip Stage 5),
 `--no-log` (do not write to the log tables), `--config FILE`, `-v`.
+
+## Serving it over HTTP
+
+`pipeline/service.py` puts the same matcher behind two JSON endpoints, so
+another application can map a whole column list in one call instead of shelling
+out per column:
+
+```bash
+./pipeline.sh serve      # or: docker compose run --rm -p 8000:8000 pipeline serve
+```
+
+| endpoint | |
+|---|---|
+| `GET /health` | readiness, vocabulary version, concept count, whether Stage 5 is available |
+| `POST /match` | `{"columns": [{"name", "description"?, "table"?}, ...], "source_system"?, "note"?, "candidates"?}` |
+
+`/match` is Stage 8 — the same path `pipeline.cli batch` takes, logging to the
+same tables — and answers with one object per column, in request order:
+`status` (`auto_accept` / `review` / `unmapped` / `manual` / `error`),
+`confidence`, the selected concept, and the top candidates.
+
+```bash
+curl -s localhost:8000/match -H 'Content-Type: application/json' \
+  -d '{"columns":[{"name":"SBP","description":"Systolic blood pressure (mmHg)"}]}'
+```
+
+The listen address comes from `SERVICE_HOST` / `SERVICE_PORT` (default
+`0.0.0.0:8000`); the database comes from the same `POSTGRES_*` variables as
+everything else here. The matcher — connection pool, IDF index, embedding model
+— is built once in the background at startup and shared by every request, and
+rebuilt lazily if the database was not reachable then, so the service can start
+before the vocabulary is ready.
+
+This is what `../ETL_auto_designer` uses: its Concepts step has a **Load
+concepts** button that posts every source column here and fills in the answers.
+That stack's `conceptmatcher` service builds from this directory and shares the
+`vocab-pipeline:latest` tag, so only one of the two ever builds the image, and
+it bind-mounts `pipeline/` and `data/` from here just as the `pipeline` service
+above does — so edits made here apply there too.
+
+One difference from every other verb: `serve` is long-running, so it imports the
+code once at startup. An edit that a CLI invocation would pick up immediately
+needs a restart here (`docker compose restart conceptmatcher` in that stack, or
+Ctrl-C and re-run). A stale server is otherwise silent — it keeps answering,
+with the old ranking.
+
+Written against the standard library on purpose — adding a web framework to
+`requirements.txt` would invalidate the pip layer and re-download the whole
+~2GB torch install on the next build, to save perhaps thirty lines.
 
 ## How it works
 
