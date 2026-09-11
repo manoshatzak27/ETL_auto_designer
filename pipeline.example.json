@@ -8,6 +8,15 @@
     "Values below are the shipped defaults, shown for reference."
   ],
 
+  "_restrict_domains_comment": [
+    "A hard allow-list: nothing outside these domains can be returned, by any",
+    "stage. Empty (the default) means no restriction. This is the persistent",
+    "form of the --domain flag; `./pipeline.sh domains` lists the valid names.",
+    "Unlike eligible_domains below, it is never relaxed — not by Stage 0's",
+    "inferred hint and not by the Stage 6.4 retry."
+  ],
+  "restrict_domains": [],
+
   "eligible_domains": ["Measurement", "Observation", "Condition", "Procedure", "Drug"],
 
   "fts_candidate_limit": 30,

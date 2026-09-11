@@ -245,6 +245,13 @@ To work without Docker instead, the pipeline is an ordinary Python package:
 # the full per-stage breakdown of how that answer was reached
 ./pipeline.sh match --name SBP --description "..." --explain
 
+# accept concepts from one domain only, and nothing else
+./pipeline.sh --domain Measurement match --name height
+./pipeline.sh --domain Measurement --domain Observation batch data/columns.csv
+
+# which domains can be named, and how many concepts each one holds
+./pipeline.sh domains
+
 # interactive; the model loads once, so each query costs ms instead of ~10s
 #   creat_mgdl | Serum creatinine mg/dL     name and description
 #   creat_mgdl                              name only
@@ -276,8 +283,69 @@ To work without Docker instead, the pipeline is an ordinary Python package:
 ./pipeline.sh refresh
 ```
 
-Useful flags on any subcommand: `--no-embeddings` (skip Stage 5),
-`--no-log` (do not write to the log tables), `--config FILE`, `-v`.
+Useful flags on any subcommand: `--domain DOMAIN` (see below),
+`--no-embeddings` (skip Stage 5), `--no-log` (do not write to the log tables),
+`--config FILE`, `-v`. They are **global** flags, so they go before the
+subcommand.
+
+## Restricting the search to a domain
+
+`--domain` is a hard allow-list. Only concepts in the domains you name can come
+back — from any stage, including the deterministic Stage 1 hits and the Stage
+6.4 "retry without domain filters" fallback, neither of which any scoring
+preference can reach.
+
+```bash
+./pipeline.sh domains                                   # the valid names, with counts
+./pipeline.sh --domain Measurement match --name height
+./pipeline.sh --domain measurement,observation shell     # case-insensitive, comma-separated
+./pipeline.sh --domain 'Meas Value' match --name smoker  # quote the ones with a space
+```
+
+Inside `shell` it can be changed without paying the model load again:
+
+```
+column> :domain Measurement          accept only this domain from now on
+column> :domain Measurement, Observation
+column> :domain off                  drop the restriction
+column> :domain                      show what is in force
+```
+
+Over HTTP it is per request — `"domains": ["Measurement"]` in the `/match` body
+(omit the key to use the server's own setting, pass `[]` to lift it for one
+request). In `data/pipeline.json` it is `"restrict_domains": ["Measurement"]`.
+
+What it is good for, measured on the column `height`:
+
+| | top candidates |
+|---|---|
+| unrestricted | **Normal height** (Observation / Clinical Finding), Height - finding, … |
+| `--domain Measurement` | Patient height, **Body height**, Knee height, … |
+
+That is the "variables and values" defect below. The restriction does not
+*solve* it — it lets you state the answer you already know, which is the part
+the pipeline cannot infer. A rheumatology study's lab columns are all
+Measurement; saying so removes a whole class of wrong answer in one flag.
+
+Three details worth knowing:
+
+* **It is a filter, not a preference.** It never boosts and never penalizes, so
+  within the allowed domains the ranking is exactly what it was.
+* **It outranks the inferred domain hint.** A unit in the description infers
+  Measurement (Step 0.3); `--domain Condition` wins, because an inference
+  should not overrule an instruction. When the two do not overlap at all the
+  restriction is used alone rather than intersecting to nothing.
+* **A misspelled domain is an error, not an empty result.** Names are resolved
+  against `vocab.domain` before anything runs, and a domain that holds no
+  standard concept in this database (`Modifier`, `Place of Service`, every
+  `Condition/Device`-style combination domain) is refused too — restricting to
+  one could only ever return nothing. `./pipeline.sh domains` lists what is
+  real: 33 of the 50 defined domains.
+
+It applies to a stored manual mapping as well, which is the one place it can
+surprise you: the mapping is skipped and a validation flag says so, on the
+grounds that whoever set the restriction did so more recently than whoever
+recorded the mapping.
 
 ## Serving it over HTTP
 
@@ -291,8 +359,8 @@ out per column:
 
 | endpoint | |
 |---|---|
-| `GET /health` | readiness, vocabulary version, concept count, whether Stage 5 is available |
-| `POST /match` | `{"columns": [{"name", "description"?, "table"?}, ...], "source_system"?, "note"?, "candidates"?}` |
+| `GET /health` | readiness, vocabulary version, concept count, whether Stage 5 is available, the domains it will accept |
+| `POST /match` | `{"columns": [{"name", "description"?, "table"?}, ...], "domains"?, "source_system"?, "note"?, "candidates"?}` |
 
 `/match` is Stage 8 — the same path `pipeline.cli batch` takes, logging to the
 same tables — and answers with one object per column, in request order:
@@ -302,7 +370,15 @@ same tables — and answers with one object per column, in request order:
 ```bash
 curl -s localhost:8000/match -H 'Content-Type: application/json' \
   -d '{"columns":[{"name":"SBP","description":"Systolic blood pressure (mmHg)"}]}'
+
+# one request, restricted to a domain; the response echoes what it used
+curl -s localhost:8000/match -H 'Content-Type: application/json' \
+  -d '{"columns":[{"name":"height"}],"domains":["Measurement"]}'
 ```
+
+`domains` is scoped to the request that carries it and is restored afterwards,
+so a restricted call cannot leak its filter into the next caller's. An unknown
+domain name is a 400 listing the valid ones, never a run that matches nothing.
 
 The listen address comes from `SERVICE_HOST` / `SERVICE_PORT` (default
 `0.0.0.0:8000`); the database comes from the same `POSTGRES_*` variables as
@@ -522,7 +598,7 @@ only and lose accuracy without it; `embedding_query_prefix` and
 ./pipeline.sh test -v
 ```
 
-57 tests. The Stage 0-6 tests are pure and run anywhere; the integration tests
+71 tests. The Stage 0-6 tests are pure and run anywhere; the integration tests
 need the loaded database and skip themselves cleanly when it is unreachable.
 
 ## Searching the description on its own
@@ -675,6 +751,15 @@ penalising those is exactly right. The distinction is not in the name; it is
 in `concept_class_id` and `domain_id`, which the database already carries.
 That is where a real fix belongs.
 
+**What exists today is `--domain`**, which does not infer the distinction but
+lets the caller state it: `--domain Measurement` removes `Normal height`
+(Observation / Clinical Finding) from contention entirely and leaves `Body
+height` in the top two. It is a hard filter, described under "Restricting the
+search to a domain" above. It is the right tool when a whole batch of columns
+shares a domain — a study's lab panel, a questionnaire — and no help at all for
+a mixed schema, where the domain is the thing that has to be inferred per
+column. That inference is still the open problem.
+
 ## Measured behaviour
 
 Cumulative effect of the four changes above, measured after each one. The
@@ -798,6 +883,40 @@ twice** ("the concept contains every query term"), holding 0.35 + 0.20 of the
 weight between them. De-correlating those two signals, or using
 `concept_class_id` and `domain_id`, is where the next attempt should go — not
 another length penalty.
+
+**What `--domain` measures as.** It is off by default and both benchmarks are
+unchanged with it off, to the number. Turned on, it does not move either
+benchmark's accuracy either — and that is the useful finding, because it says
+where the restriction does and does not belong.
+
+| | gold overall | gold literal | gold top-5 | ms/col |
+|---|---|---|---|---|
+| **no restriction (default)** | 92.0% | 97.8% | 96.0% | 208 |
+| `--domain Measurement` | 92.0% | 97.8% | 96.0% | **130** |
+| `--domain Measurement,Observation` | 92.0% | 97.8% | 96.0% | **129** |
+
+| 206 curated columns | exact | agreed | top-5 | unmapped |
+|---|---|---|---|---|
+| **no restriction (default)** | **35** | 69 | **68** | 43 |
+| `--domain Measurement,Observation` | 35 | **70** | 67 | **41** |
+
+Three things follow:
+
+- **It is free when it is right.** The gold set's answers are Measurement
+  concepts already, so restricting to Measurement changes no answer — and cuts
+  **38% of the latency** (208 → 130 ms/column), because Stage 2's candidate
+  pool is smaller. Measured warm, three runs, reproducible to ±1 ms.
+- **It does not fix what is actually wrong on the curated set.** +1 agreed, −1
+  top-5, −2 unmapped is noise. 94 of the 113 reachable human answers there are
+  already Observation concepts, and the pipeline's wrong answers are wrong
+  *within* the right domain — another LOINC instrument's copy of the same
+  question. The domain was never what was going wrong on that set.
+- **Where it does work is the single column.** `height` unrestricted returns
+  `4203099 Normal height` (Observation / Clinical Finding); with `--domain
+  Measurement` the top two are `37174447 Patient height` and `3036277 Body
+  height`. That is the "variables and values" defect, and this is the only tool
+  here that touches it — by letting the caller supply the answer rather than
+  inferring it.
 
 Against a 32-column synthetic EHR schema (vitals, labs, conditions,
 encounters, one deliberate nonsense column), with embeddings on, 4 workers,

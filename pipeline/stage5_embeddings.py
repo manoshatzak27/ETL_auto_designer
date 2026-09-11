@@ -307,7 +307,9 @@ class EmbeddingScorer:
         if not probe:
             return []
         known = {c.concept_id for c in existing}
-        domains = list(ctx.eligible_domains)
+        # This is the one place a candidate enters the funnel without passing
+        # through Stage 2, so the restriction has to be applied here too.
+        domains = self.config.domain_filter(ctx.eligible_domains)
 
         rows = self.db.fetch_all(
             f"""

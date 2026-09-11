@@ -3,6 +3,8 @@
     python -m pipeline.cli check
     python -m pipeline.cli match --name SBP --description "Systolic blood pressure (mmHg)"
     python -m pipeline.cli match --description "Hair sample collected" --explain
+    python -m pipeline.cli --domain Measurement match --name height
+    python -m pipeline.cli domains
     python -m pipeline.cli shell
     python -m pipeline.cli batch columns.csv --out mappings.csv
     python -m pipeline.cli report [--run 3]
@@ -19,9 +21,10 @@ import logging
 import sys
 import time
 from pathlib import Path
+from typing import Sequence
 
 from .config import PipelineConfig
-from .db import Database
+from .db import Database, shared_database
 from .models import MatchResult
 from .runner import ConceptMatcher
 from .stage7_validate import FeedbackStore
@@ -45,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", type=Path,
                         help="JSON file of PipelineConfig overrides")
+    parser.add_argument("--domain", action="append", metavar="DOMAIN",
+                        help="only accept concepts from this OMOP domain; "
+                             "repeat the flag or comma-separate for several. "
+                             "Names are case-insensitive; `domains` lists them")
     parser.add_argument("--no-embeddings", action="store_true",
                         help="skip Stage 5 (its weight is redistributed)")
     parser.add_argument("--no-log", action="store_true",
@@ -54,6 +61,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("check", help="verify the database is ready")
+
+    sub.add_parser("domains",
+                   help="list the domains --domain accepts, with concept counts")
 
     match = sub.add_parser("match", help="map a single column")
     match.add_argument("--name", help="source column name; optional if "
@@ -134,6 +144,40 @@ def load_config(args: argparse.Namespace) -> PipelineConfig:
     return config
 
 
+def requested_domains(args: argparse.Namespace) -> list[str]:
+    """The --domain values, flattened.
+
+    Split on commas only, never on whitespace: several OMOP domain names
+    contain a space ("Meas Value", "Spec Anatomic Site").
+    """
+    values = getattr(args, "domain", None) or []
+    return [part.strip() for value in values
+            for part in value.split(",") if part.strip()]
+
+
+def apply_domain_restriction(config: PipelineConfig, names: list[str]) -> int:
+    """Resolve and install the domain restriction. Returns an exit code.
+
+    Resolved against the database rather than accepted as typed, because a
+    misspelled domain would otherwise filter every candidate away and report
+    206 unmapped columns — which looks like a broken pipeline, not a typo.
+    The shared pool is reused, so this costs one query and no extra connection.
+    """
+    try:
+        config.restrict_domains = tuple(shared_database(config).resolve_domains(names))
+    except ValueError as exc:
+        print(f"--domain: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        print(f"--domain: cannot reach the vocabulary database: {exc}",
+              file=sys.stderr)
+        return 1
+    # stderr, so that `match --json | jq` stays valid.
+    print(f"Restricted to domain: {', '.join(config.restrict_domains)}",
+          file=sys.stderr)
+    return 0
+
+
 # ── commands ────────────────────────────────────────────────────────────
 
 
@@ -171,6 +215,21 @@ def cmd_check(config: PipelineConfig) -> int:
         print("                       Stage 5 will be skipped and its weight "
               "redistributed.")
     db.close()
+    return 0
+
+
+def cmd_domains(config: PipelineConfig) -> int:
+    db = shared_database(config)
+    rows = db.domain_counts()
+    print(format_table(rows))
+    print(f"\n{len(rows)} domains hold standard, valid concepts. Restrict a "
+          "search to one or more with, e.g.:")
+    print("  --domain Measurement --domain Observation")
+    print("  --domain 'Meas Value'")
+    empty = sorted(set(db.domain_ids()) - {r["domain_id"] for r in rows})
+    if empty:
+        print(f"\nDefined but empty here (non-standard by nature): "
+              f"{', '.join(empty)}")
     return 0
 
 
@@ -212,7 +271,7 @@ def cmd_match(config: PipelineConfig, args: argparse.Namespace) -> int:
                                  _idf_weights(matcher, result),
                                  _name_probes(matcher, result)))
         else:
-            print(render_result(result, args.candidates))
+            print(render_result(result, args.candidates, config.restrict_domains))
         matcher.finish_run()
     finally:
         matcher.close()
@@ -225,6 +284,11 @@ Type a column to map, one per line:
     creat_mgdl | Serum creatinine mg/dL      name and description
     creat_mgdl                               name only
     | Serum creatinine mg/dL                 description only
+
+    :domain Measurement                      accept only this domain from now on
+    :domain Measurement, Observation         several
+    :domain off                              drop the restriction
+    :domain                                  show what is in force
 
 Ctrl-D or `quit` to leave.
 """
@@ -242,6 +306,32 @@ def _split_shell_input(line: str) -> tuple[str, str | None]:
     """
     name, sep, description = line.partition("|")
     return name.strip(), (description.strip() or None) if sep else None
+
+
+def _shell_domain(matcher: ConceptMatcher, argument: str) -> None:
+    """Handle `:domain ...` — set, clear or report the restriction.
+
+    Mutating the live config is safe here and nowhere else: the shell is one
+    thread asking one question at a time, and the alternative (restarting the
+    process to change a filter) would cost the model load that the shell exists
+    to amortize.
+    """
+    config = matcher.config
+    current = ", ".join(config.restrict_domains) or "(none)"
+    if not argument:
+        print(f"  domain restriction: {current}")
+        return
+    if argument.lower() in {"off", "none", "any", "clear", "-"}:
+        config.restrict_domains = ()
+        print("  domain restriction: (none) — every domain accepted")
+        return
+    try:
+        resolved = matcher.db.resolve_domains(argument.split(","))
+    except ValueError as exc:
+        print(f"  {exc}\n  restriction unchanged: {current}")
+        return
+    config.restrict_domains = tuple(resolved)
+    print(f"  domain restriction: {', '.join(resolved)}")
 
 
 def cmd_shell(config: PipelineConfig, args: argparse.Namespace) -> int:
@@ -268,6 +358,10 @@ def cmd_shell(config: PipelineConfig, args: argparse.Namespace) -> int:
                 continue
             if line in {"quit", "exit", ":q"}:
                 break
+            if line.split()[0] == ":domain":
+                _shell_domain(matcher, line[len(":domain"):].strip())
+                print()
+                continue
 
             name, description = _split_shell_input(line)
             if not (name or description):
@@ -284,7 +378,8 @@ def cmd_shell(config: PipelineConfig, args: argparse.Namespace) -> int:
                                      _idf_weights(matcher, result),
                                      _name_probes(matcher, result)))
             else:
-                print(render_result(result, args.candidates))
+                print(render_result(result, args.candidates,
+                                    config.restrict_domains))
             print()
     finally:
         if mapped:
@@ -426,7 +521,8 @@ def cmd_refresh(config: PipelineConfig, args: argparse.Namespace) -> int:
 # ── rendering ───────────────────────────────────────────────────────────
 
 
-def render_result(result: MatchResult, candidate_limit: int = 5) -> str:
+def render_result(result: MatchResult, candidate_limit: int = 5,
+                  restrict_domains: Sequence[str] = ()) -> str:
     ctx = result.context
     lines = [
         f"Column      : {ctx.column_name}",
@@ -460,6 +556,9 @@ def render_result(result: MatchResult, candidate_limit: int = 5) -> str:
             for n in ctx.numeric_constraints))
     lines.append(f"  domain hint   : {ctx.domain_hint or '(none)'}  "
                  f"numeric={ctx.numeric_flag} temporal={ctx.temporal_flag}")
+    if restrict_domains:
+        lines.append("  restricted to : " + ", ".join(restrict_domains)
+                     + "  (hard filter — nothing else can be returned)")
 
     lines += ["", "Result", f"  status     : {result.status.upper()}",
               f"  confidence : {result.confidence:.1f}",
@@ -550,6 +649,12 @@ def render_explain(result: MatchResult, config: PipelineConfig,
     lines.append(f"  hints          : domain={ctx.domain_hint or '(none)'} "
                  f"vocabulary={ctx.vocabulary_hint or '(none)'} "
                  f"numeric={ctx.numeric_flag} temporal={ctx.temporal_flag}")
+    if config.restrict_domains:
+        lines.append("  restricted to  : " + ", ".join(config.restrict_domains))
+        lines.append("                   a hard filter in Stages 1, 2 and 5. It "
+                     "outranks the domain hint above,")
+        lines.append("                   and the Stage 6.4 retry cannot widen "
+                     "past it.")
     lines.append(f"  interpretations: {len(ctx.variants)} "
                  f"(each one searched separately through Stages 2-5)")
     for variant in ctx.variants:
@@ -578,6 +683,11 @@ def render_explain(result: MatchResult, config: PipelineConfig,
     if ctx.domain_hint:
         lines.append(f"  domain filter  : {ctx.domain_hint} (a hard filter here, "
                      "not a preference)")
+    if config.restrict_domains:
+        lines.append("  restriction    : " + ", ".join(config.restrict_domains)
+                     + " — applies to the deterministic hits too,")
+        lines.append("                   including a stored manual mapping, "
+                     "which is otherwise never overruled")
     if result.decided_at_stage == "stage1":
         lines.append(f"  RESULT         : hit — {result.decision_reason}")
     else:
@@ -692,8 +802,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     config = load_config(args)
 
+    names = requested_domains(args)
+    if names and apply_domain_restriction(config, names) != 0:
+        return 1
+
     handlers = {
         "check": lambda: cmd_check(config),
+        "domains": lambda: cmd_domains(config),
         "match": lambda: cmd_match(config, args),
         "shell": lambda: cmd_shell(config, args),
         "batch": lambda: cmd_batch(config, args),

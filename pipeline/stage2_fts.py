@@ -198,10 +198,14 @@ class FullTextSearcher:
         """Return up to ``fts_candidate_limit`` candidates for one variant.
 
         ``domains`` overrides Step 2.1's domain pre-filter; the Stage 6.4
-        retry passes an empty sequence to search every domain.
+        retry passes an empty sequence to search every domain. Either way
+        ``config.restrict_domains`` is applied on top — that is the whole point
+        of it being a restriction rather than a hint, and it is why the 6.4
+        retry cannot widen past it.
         """
         if domains is None:
             domains = ctx.eligible_domains
+        domains = self.config.domain_filter(domains)
 
         phrases = [text_utils.split_phrase(p) for p in variant.protected_phrases]
         plain = [text_utils.split_phrase(t) for t in variant.tokens

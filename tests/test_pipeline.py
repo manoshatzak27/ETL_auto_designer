@@ -396,6 +396,85 @@ class TestAdjuster(unittest.TestCase):
         self.assertLessEqual(adjust(candidates[0], 99.0), 100.0)
 
 
+class TestDomainRestriction(unittest.TestCase):
+    """The caller's `--domain` allow-list, as pure logic."""
+
+    def setUp(self) -> None:
+        self.config = make_config()
+
+    def test_nothing_is_restricted_by_default(self):
+        self.assertEqual(self.config.restrict_domains, ())
+        self.assertTrue(self.config.domain_allowed("Drug"))
+        self.assertTrue(self.config.domain_allowed(None))
+        # The pre-filter must pass through untouched, or every default run
+        # would change behaviour the moment this feature was added.
+        self.assertEqual(self.config.domain_filter(["Measurement"]), ["Measurement"])
+        self.assertEqual(self.config.domain_filter(()), [])
+
+    def test_only_the_named_domains_are_allowed(self):
+        self.config.restrict_domains = ("Measurement",)
+        self.assertTrue(self.config.domain_allowed("Measurement"))
+        self.assertFalse(self.config.domain_allowed("Observation"))
+        # "Only these domains" cannot be satisfied by an unknown domain.
+        self.assertFalse(self.config.domain_allowed(None))
+
+    def test_an_empty_stage_filter_becomes_the_restriction(self):
+        # This is the Stage 6.4 retry: it passes () to mean "every domain",
+        # and must still not escape the restriction.
+        self.config.restrict_domains = ("Measurement", "Observation")
+        self.assertEqual(self.config.domain_filter(()),
+                         ["Measurement", "Observation"])
+
+    def test_the_restriction_narrows_the_inferred_filter(self):
+        self.config.restrict_domains = ("Measurement",)
+        self.assertEqual(
+            self.config.domain_filter(["Measurement", "Observation", "Drug"]),
+            ["Measurement"])
+
+    def test_the_restriction_wins_when_the_two_disagree(self):
+        # Units infer Measurement; the caller asked for Condition. Intersecting
+        # would leave nothing and silently return no candidates at all, so the
+        # explicit instruction outranks the inference.
+        self.config.restrict_domains = ("Condition",)
+        self.assertEqual(self.config.domain_filter(["Measurement"]), ["Condition"])
+
+    def test_no_hint_means_no_stage1_filter(self):
+        from pipeline.stage1_exact import _allowed_domains
+
+        # Empty, not None: domain_filter() uses empty to mean "no filter" on
+        # both sides, and Stage 1's SQL reads NULL the same way.
+        self.assertEqual(_allowed_domains(None), [])
+        self.assertIn("Measurement", _allowed_domains("Measurement"))
+
+    def test_the_restriction_is_recorded_in_the_run_config(self):
+        self.config.restrict_domains = ("Meas Value",)
+        self.assertEqual(self.config.to_json()["restrict_domains"], ["Meas Value"])
+
+    def test_cli_flag_splits_on_commas_only(self):
+        import argparse
+
+        from pipeline.cli import requested_domains
+
+        args = argparse.Namespace(domain=["Measurement,Observation", "Meas Value"])
+        # Never on whitespace: several OMOP domain names contain a space.
+        self.assertEqual(requested_domains(args),
+                         ["Measurement", "Observation", "Meas Value"])
+        self.assertEqual(requested_domains(argparse.Namespace(domain=None)), [])
+
+    def test_service_tells_absent_from_empty(self):
+        from pipeline.service import parse_domains
+
+        # Absent: keep whatever the process was configured with.
+        self.assertIsNone(parse_domains({"columns": []}))
+        # Present and empty: lift the restriction for this request.
+        self.assertEqual(parse_domains({"domains": []}), [])
+        self.assertEqual(parse_domains({"domains": "Measurement"}), ["Measurement"])
+        self.assertEqual(parse_domains({"domains": [" Measurement ", ""]}),
+                         ["Measurement"])
+        with self.assertRaises(ValueError):
+            parse_domains({"domains": 5})
+
+
 # ── integration ─────────────────────────────────────────────────────────
 
 
@@ -507,6 +586,83 @@ class TestIntegration(unittest.TestCase):
         for cand in result.candidates:
             self.assertIsNone(cand.embedding_score)
         self.assertGreater(result.confidence, 0.0)
+
+
+@unittest.skipUnless(database_available(),
+                     "vocabulary database not reachable; run ./load_vocab.sh "
+                     "and ./setup_pipeline.sh")
+class TestDomainRestrictionIntegration(unittest.TestCase):
+    """`--domain` against the real vocabulary."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from pipeline.runner import ConceptMatcher
+
+        config = make_config()
+        config.embeddings_enabled = False
+        cls.matcher = ConceptMatcher(config)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.matcher.close()
+
+    def restrict(self, *domains: str) -> None:
+        """Apply a restriction for the duration of one test."""
+        self.matcher.config.restrict_domains = domains
+        self.addCleanup(setattr, self.matcher.config, "restrict_domains", ())
+
+    def match(self, name, description=None):
+        return self.matcher.match(name, description, log_result=False)
+
+    def test_no_candidate_escapes_the_restriction(self):
+        self.restrict("Measurement")
+        result = self.match("height")
+        self.assertTrue(result.candidates)
+        self.assertEqual({c.domain_id for c in result.candidates}, {"Measurement"})
+
+    def test_the_restriction_outranks_the_inferred_domain(self):
+        # The unit infers Measurement (Step 0.3). The caller said Condition,
+        # and the caller is the one who knows what they are mapping.
+        self.restrict("Condition")
+        result = self.match("glucose_mgdl", "Glucose 120 mg/dL")
+        self.assertEqual(result.context.domain_hint, "Measurement")
+        self.assertTrue(result.candidates)
+        self.assertEqual({c.domain_id for c in result.candidates}, {"Condition"})
+
+    def test_an_out_of_domain_exact_hit_does_not_short_circuit(self):
+        """Stage 1 exits at 100 before Stage 6, so it must filter itself.
+
+        "Body height" is an exact concept name in Measurement. Under a
+        Condition restriction that hit has to be abandoned rather than returned
+        at confidence 100, and the ranked stages must get their turn.
+        """
+        unrestricted = self.match("Body height")
+        self.assertEqual(unrestricted.decided_at_stage, "stage1")
+
+        self.restrict("Condition")
+        result = self.match("Body height")
+        self.assertNotEqual(result.decided_at_stage, "stage1")
+        self.assertNotIn("Measurement",
+                         {c.domain_id for c in result.candidates})
+
+    def test_unmapped_says_the_restriction_was_in_force(self):
+        self.restrict("Currency")
+        result = self.match("systolic blood pressure")
+        self.assertEqual(result.status, "unmapped")
+        self.assertIn("Currency", result.decision_reason)
+
+    def test_domain_names_are_resolved_against_the_vocabulary(self):
+        db = self.matcher.db
+        # Case-insensitive, because "Meas Value" is not a guessable spelling.
+        self.assertEqual(db.resolve_domains(["measurement", "MEAS VALUE"]),
+                         ["Measurement", "Meas Value"])
+        self.assertEqual(db.resolve_domains([]), [])
+        with self.assertRaises(ValueError):
+            db.resolve_domains(["Measurment"])
+        # Defined in vocab.domain, but holds no standard concept here — a
+        # restriction to it could only ever return nothing.
+        with self.assertRaises(ValueError):
+            db.resolve_domains(["Modifier"])
 
 
 if __name__ == "__main__":

@@ -18,7 +18,7 @@ import json
 import os
 from dataclasses import dataclass, field, fields, asdict
 from pathlib import Path
-from typing import Any
+from typing import Any, Sequence
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 RESOURCE_DIR = Path(__file__).resolve().parent / "resources"
@@ -69,6 +69,24 @@ class PipelineConfig:
     # paraphrase (clotting_time / "How long blood takes to clot") get worse.
     # Set false to search name+description only.
     description_only_variant: bool = True
+
+    # ── Domain restriction (caller-supplied) ────────────────────────────
+    # A hard allow-list: when non-empty, no concept outside these OMOP domains
+    # can be returned by any stage. Empty means no restriction. Set it with
+    # `--domain Measurement` on the CLI, `:domain` in the shell, `"domains"` in
+    # a /match request body, or `restrict_domains` in pipeline.json.
+    #
+    # Deliberately separate from `eligible_domains` below. That one is a
+    # *default* pre-filter: Stage 0's inferred hint narrows it and the Stage 6.4
+    # retry drops it entirely. This one is never relaxed — it outranks an
+    # inferred hint it disagrees with, survives the 6.4 retry, and applies to
+    # Stage 1's deterministic hits, which exit before Stage 6 and so are beyond
+    # the reach of every score-based preference.
+    #
+    # It is a filter, not a boost: the restriction is not fed in as a domain
+    # hint, because every surviving candidate satisfies it and a multiplier
+    # applied to the whole shortlist only costs headroom (see scoring.py).
+    restrict_domains: tuple[str, ...] = ()
 
     # ── Stage 2: full-text search ───────────────────────────────────────
     # Step 2.1. Device/Specimen/etc. are deliberately absent: they stay
@@ -242,11 +260,44 @@ class PipelineConfig:
             return 1.0
         return float(self.vocabulary_boost.get(vocabulary_id, 1.0))
 
+    # ── the domain restriction ──────────────────────────────────────────
+    def domain_allowed(self, domain_id: str | None) -> bool:
+        """May a candidate from this domain be returned at all?
+
+        Always true with no restriction set. A candidate whose domain is
+        unknown (``None``) is *not* admitted under a restriction — "only these
+        domains" cannot be satisfied by a domain nobody knows.
+        """
+        if not self.restrict_domains:
+            return True
+        return domain_id in set(self.restrict_domains)
+
+    def domain_filter(self, domains: Sequence[str] | None) -> list[str]:
+        """A stage's domain pre-filter, narrowed by the restriction.
+
+        An empty list means "no filter" on both sides, in and out — which is
+        what Stage 2 and Stage 5 already use to mean "search every domain".
+
+        When the restriction and the stage's own filter do not overlap, the
+        restriction wins outright rather than the intersection emptying the
+        result: a stage filter comes from an inferred hint (units imply
+        Measurement), the restriction comes from the caller, and the caller's
+        explicit choice is the better evidence of the two.
+        """
+        restriction = list(self.restrict_domains)
+        if not restriction:
+            return list(domains or ())
+        if not domains:
+            return restriction
+        overlap = [d for d in domains if d in set(restriction)]
+        return overlap or restriction
+
     def to_json(self) -> dict[str, Any]:
         """Serializable snapshot, minus the password, for run logging."""
         data = asdict(self)
         data.pop("password", None)
         data["eligible_domains"] = list(self.eligible_domains)
+        data["restrict_domains"] = list(self.restrict_domains)
         data["broad_concept_classes"] = list(self.broad_concept_classes)
         data["expected_source_vocabularies"] = list(self.expected_source_vocabularies)
         return data

@@ -16,6 +16,10 @@ here rather than in Stage 6, because retrying means re-entering Stages 2-5 —
 which is orchestration, not scoring. It fires only when the first pass came
 back unmapped *and* a domain hint was actually applied, since a retry with an
 identical filter would just do the same work twice.
+
+"Without domain filters" means without the *inferred* ones.
+``config.restrict_domains`` is the caller's own allow-list and no stage may
+widen past it, including this retry — see ``_in_scope``.
 """
 
 from __future__ import annotations
@@ -114,6 +118,14 @@ class ConceptMatcher:
         # the column went on to match by name.
         result.validation_flags.extend(flags)
 
+        if exact is not None and not self.config.domain_allowed(exact.domain_id):
+            # Stage 1 filters in SQL and flags what it drops, so this is the
+            # invariant restated where no future code path can bypass it —
+            # a Stage 1 hit is the one candidate that never reaches Stage 6.
+            log.warning("discarding out-of-domain Stage 1 hit %s (%s)",
+                        exact.concept_id, exact.domain_id)
+            exact = None
+
         if exact is not None:
             result.candidates = [exact]
             result.selected = exact
@@ -138,6 +150,13 @@ class ConceptMatcher:
                 ranked, status = retry, retry_status
                 confidence, reason = retry_confidence, retry_reason
                 reason += " (domain filter dropped, Step 6.4 retry)"
+
+        if status == "unmapped" and self.config.restrict_domains:
+            # Worth saying: under a restriction, "nothing matched" and "nothing
+            # in these domains matched" are very different findings, and only
+            # the caller can tell which one they asked for.
+            reason += (" (restricted to domain "
+                       f"{', '.join(self.config.restrict_domains)})")
 
         result.candidates = ranked
         result.decided_at_stage = "stage6"
@@ -196,10 +215,23 @@ class ConceptMatcher:
         result.add_timing(f"stage5_embedding{pass_label}", embed_total,
                           candidates_in=fuzzy_out, candidates_out=embed_out)
 
-        merged = merge_candidates(groups)
+        merged = self._in_scope(merge_candidates(groups))
         result.add_timing(f"stage6_composite{pass_label}", 0.0,
                           candidates_in=embed_out, candidates_out=len(merged))
         return merged
+
+    def _in_scope(self, candidates: list[Candidate]) -> list[Candidate]:
+        """Drop anything outside ``config.restrict_domains``.
+
+        Stages 2 and 5 already filter in SQL, so under normal operation this
+        removes nothing. It is here because the restriction is a promise to the
+        caller — "only these domains" — and a promise that holds only as long as
+        every candidate source remembers to filter is not one worth making. The
+        cost is one pass over at most 30 rows.
+        """
+        if not self.config.restrict_domains:
+            return candidates
+        return [c for c in candidates if self.config.domain_allowed(c.domain_id)]
 
     # ────────────────────────────────────────────────────────────────────
     def start_run(self, source_system: str | None = None,

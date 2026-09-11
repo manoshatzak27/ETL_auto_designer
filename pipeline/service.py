@@ -7,7 +7,14 @@ Three endpoints, all JSON:
 
     GET  /health   readiness, plus what the pipeline actually has loaded
     GET  /         alias for /health, so a container healthcheck can hit `/`
-    POST /match    {"columns": [{"name", "description"?, "table"?}, ...]}
+    POST /match    {"columns": [{"name", "description"?, "table"?}, ...],
+                    "domains"?: ["Measurement", ...], "candidates"?: 5,
+                    "source_system"?, "note"?}
+
+``domains`` restricts that request to those OMOP domains and nothing else; an
+unknown domain name is a 400 rather than a run that quietly matches nothing.
+Omit the key to use whatever the process was configured with; pass ``[]`` to
+lift the restriction for one request.
 
 Written against the standard library on purpose. The image already carries CPU
 torch and sentence-transformers and is ~2GB; adding a web framework to
@@ -100,6 +107,8 @@ class MatchService:
             "embedding_model": self.config.embedding_model if stage5.enabled else None,
             "auto_accept_threshold": self.config.auto_accept_threshold,
             "review_threshold": self.config.review_threshold,
+            "restrict_domains": list(self.config.restrict_domains),
+            "domains": [row["domain_id"] for row in db.domain_counts()],
         }
 
     def match(
@@ -108,15 +117,38 @@ class MatchService:
         source_system: str | None = None,
         note: str | None = None,
         candidate_limit: int = DEFAULT_CANDIDATES,
+        domains: list[str] | None = None,
     ) -> dict[str, Any]:
+        """Map every column. ``domains`` restricts this request's candidates.
+
+        ``None`` keeps the process-wide restriction; a list (including an empty
+        one) replaces it for the duration of this request. Raises ValueError on
+        a domain name the vocabulary does not define.
+        """
         batch = self.batcher()
+        # Resolved before the lock is taken, so a bad domain name costs the
+        # caller a 400 and costs a concurrent request nothing.
+        restriction = (None if domains is None
+                       else tuple(batch.matcher.db.resolve_domains(domains)))
+
         # Serialized: Stage 8 already parallelizes across `batch_workers`, so
         # letting two batches run at once would only oversubscribe the same
-        # connection pool and interleave their run ids.
+        # connection pool and interleave their run ids. The restriction rides on
+        # the shared config, which is safe only because of this lock — and it is
+        # restored afterwards so one request's filter cannot leak into the next.
         with self._run_lock:
-            run_id, results = batch.run(columns, source_system, note)
+            default = self.config.restrict_domains
+            if restriction is not None:
+                self.config.restrict_domains = restriction
+            try:
+                run_id, results = batch.run(columns, source_system, note)
+            finally:
+                self.config.restrict_domains = default
         return {
             "run_id": run_id,
+            # Echoed so a caller can see which filter the run actually used,
+            # after case-correction ("meas value" -> "Meas Value").
+            "domains": list(restriction if restriction is not None else default),
             "results": [_result_json(r, candidate_limit) for r in results],
         }
 
@@ -198,6 +230,26 @@ def parse_columns(payload: Any) -> list[dict[str, Any]]:
     return columns
 
 
+def parse_domains(payload: Any) -> list[str] | None:
+    """The request's ``domains``, or None when the key is absent.
+
+    Absent and empty are deliberately different: absent means "use the
+    process's restriction", ``[]`` means "no restriction for this request". A
+    bare string is accepted as a one-element list, because that is what a caller
+    writes when they want a single domain.
+    """
+    if not isinstance(payload, dict) or "domains" not in payload:
+        return None
+    value = payload["domains"]
+    if value is None:
+        return []
+    if isinstance(value, str):
+        value = [value]
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise ValueError("'domains' must be a string or a list of strings")
+    return [v.strip() for v in value if v.strip()]
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "omop-concept-matcher/1.0"
     protocol_version = "HTTP/1.1"
@@ -261,6 +313,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             payload = self._read_body()
             columns = parse_columns(payload)
+            domains = parse_domains(payload)
         except ValueError as exc:
             self._send(400, {"detail": str(exc)})
             return
@@ -270,7 +323,7 @@ class Handler(BaseHTTPRequestHandler):
             options.get("candidates") or DEFAULT_CANDIDATES)))
 
         if not columns:
-            self._send(200, {"run_id": 0, "results": []})
+            self._send(200, {"run_id": 0, "domains": domains or [], "results": []})
             return
 
         try:
@@ -279,7 +332,13 @@ class Handler(BaseHTTPRequestHandler):
                 source_system=options.get("source_system") or None,
                 note=options.get("note") or None,
                 candidate_limit=candidate_limit,
+                domains=domains,
             )
+        except ValueError as exc:
+            # An unresolvable domain name is the caller's mistake, not a
+            # pipeline failure — 400, with the list of valid names in the text.
+            self._send(400, {"detail": str(exc)})
+            return
         except Exception as exc:
             log.exception("match failed")
             self._send(503, {"detail": f"match failed: {exc}"})

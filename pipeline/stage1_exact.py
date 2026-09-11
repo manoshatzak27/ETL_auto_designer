@@ -81,10 +81,20 @@ class ExactMatcher:
 
         manual = self._manual_mapping(ctx, source_system)
         if manual is not None:
-            return manual, "manual mapping (Step 7.5 feedback loop)", flags
+            if self.config.domain_allowed(manual.domain_id):
+                return manual, "manual mapping (Step 7.5 feedback loop)", flags
+            # A restriction overrides even a stored human decision, because the
+            # human who set the restriction is the more recent of the two. Said
+            # out loud rather than silently skipped: a manual mapping that does
+            # not fire is exactly the kind of thing that looks like a bug.
+            flags.append(self._out_of_scope_flag("manual mapping", manual))
 
         for code in sorted(ctx.codes, key=lambda c: -c.confidence):
             hit = self._by_code(code, ctx)
+            if hit is not None and not self.config.domain_allowed(hit.domain_id):
+                flags.append(self._out_of_scope_flag(
+                    f"code {code.vocabulary_id} {code.code}", hit))
+                continue
             if hit is not None:
                 label = "labeled" if code.labeled else "inferred"
                 return hit, f"exact {code.vocabulary_id} code {code.code} ({label})", flags
@@ -96,7 +106,10 @@ class ExactMatcher:
         # match: "Glucose 120 mg/dL" matches the RxNorm *drug ingredient*
         # "glucose" exactly, and returning that at confidence 100 would be
         # confidently wrong. Better to find nothing and let Stages 2-6 weigh it.
-        allowed = _allowed_domains(ctx.domain_hint)
+        #
+        # `domain_filter` then narrows that to the caller's restriction, and an
+        # empty result becomes NULL — the SQL below reads NULL as "any domain".
+        allowed = self.config.domain_filter(_allowed_domains(ctx.domain_hint)) or None
 
         # Concept class is a hard filter here for the same reason (see
         # config.never_variable_classes, which is narrower than the
@@ -127,6 +140,12 @@ class ExactMatcher:
         instead of paraphrasing it.
         """
         return self._name_probes(ctx)
+
+    def _out_of_scope_flag(self, what: str, hit: Candidate) -> str:
+        allowed = ", ".join(self.config.restrict_domains)
+        return (f"{what} resolved to {hit.concept_id} {hit.concept_name!r} "
+                f"({hit.domain_id}), which the domain restriction ({allowed}) "
+                "excludes")
 
     def _unresolved_code_flag(self, code: ExtractedCode) -> str:
         if not self._vocabulary_present(code.vocabulary_id):
@@ -296,16 +315,17 @@ def _is_bare_acronym(probe: str) -> bool:
     return " " not in probe and len(probe) < _MIN_PROBE_LEN
 
 
-def _allowed_domains(hint: str | None) -> list[str] | None:
+def _allowed_domains(hint: str | None) -> list[str]:
     """Domains an exact match may come from, given a Stage 0 domain hint.
 
-    None means "no restriction" (no hint was inferred). Otherwise the hinted
-    domain plus the ones DOMAIN_COMPATIBILITY calls plausible — everything the
+    Empty means "no restriction" (no hint was inferred) — the same convention
+    ``PipelineConfig.domain_filter`` uses on both sides. Otherwise the hinted
+    domain plus the ones DOMAIN_COMPATIBILITY calls plausible: everything the
     'wrong' bucket would have penalized is excluded outright, because at this
     stage there is no score to penalize, only a yes or no.
     """
     if not hint:
-        return None
+        return []
     rules = DOMAIN_COMPATIBILITY.get(hint)
     if rules is None:
         return [hint]
