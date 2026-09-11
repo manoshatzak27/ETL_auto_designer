@@ -17,6 +17,8 @@ flowchart LR
   Backend --> SQLite[(SQLite wizard state)]
   Backend --> OpenAI
   Backend --> EntityLinker[EntityLinker / SapBERT+FAISS]
+  Backend --> ConceptMatcher[Concept matcher / staged pipeline]
+  ConceptMatcher --> VocabDb[(Athena vocabulary, standard-only)]
   Backend --> Executor[etl_executor]
   Executor --> Outputs[outputs/PROJECT_ID/*.csv]
   Outputs --> Loader[omop_loader]
@@ -56,8 +58,11 @@ ETL_auto_designer/
 │   └── requirements.txt
 │
 ├── scripts/init-omop.sh    Calls python -m app.services.ddl_applier bootstrap to split vocab/clinical DDL into separate schemas
-├── docker-compose.yml      Postgres + omop-init + entitylinker + backend + frontend
+├── docker-compose.yml      Postgres + omop-init + entitylinker + conceptmatcher + backend + frontend
 └── .env.example            Stack-wide environment variables
+
+../new concept finding/     Sibling checkout — the staged concept matcher (see below).
+                            Built here as the `conceptmatcher` service; not vendored in.
 ```
 
 ---
@@ -124,6 +129,119 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 | `OMOP_VOCAB_SCHEMA`     | `vocab`                                | Target schema for the shared vocabulary tables                |
 | `ATHENA_BUNDLE_ROOT`    | *(empty)*                              | Allow-list root for `/load-vocabulary` (security guard)       |
 | `MAPPINGS_BUNDLE_ROOT`  | *(empty → uploads dir)*                | Allow-list root for `/load-mappings-from-dir`                 |
+| `CONCEPT_MATCHER_URL`   | (inside Docker: `http://conceptmatcher:8000`) | Bulk concept matcher behind the Concepts step's "Load concepts" button. Empty disables the button. |
+| `CONCEPT_PIPELINE_PATH` | `../new concept finding`               | Docker build context for that service — the sibling checkout  |
+| `VOCAB_DB_HOST` / `VOCAB_DB_PORT` | `host.docker.internal` / `5433` | Where the matcher finds the standard-only Athena vocabulary   |
+
+---
+
+## Automatic concept matching (Concepts step → "Load concepts")
+
+The Concepts step has two, quite different, concept finders:
+
+| | **AI Search** (per row) | **Load concepts** (whole project) |
+|---|---|---|
+| service | `entitylinker` — SapBERT + FAISS | `conceptmatcher` — the staged pipeline in `../new concept finding` |
+| answers | "what concepts look like this phrase?" — a ranked list you pick from | "what is this column?" — one concept per column, plus a decision |
+| you get | candidates + optional GPT justification | `auto_accept` / `review` / `unmapped` per column, with a confidence |
+| vocabulary | the Athena bundle at `ATHENA_BUNDLE_PATH` | that project's own Postgres: **standard + valid concepts only** |
+
+### Give it descriptions first
+
+The matcher's accuracy hinges on what it is given. A column *name* is an
+identifier — `DOC_PAT_HAIR`, `creat_mgdl` — while a description is prose a
+vocabulary can actually be searched with, and the pipeline searches both. Same
+project, `city` as the only input versus `city` + "City of residence": the
+second is an exact hit on concept 4335813 at confidence 100; the first is a
+guess.
+
+So the **Descriptions** button next to *Load concepts* opens the project's data
+dictionary:
+
+- **Download template** — a CSV of every source column (`name,table,description`),
+  pre-filled with whatever is already stored, so it doubles as an export.
+- **Upload CSV / Excel** — merges a dictionary in (tick *Replace* to start over).
+  Bring whatever you already have: `.csv`, `.tsv` or `.xlsx`; delimiter and
+  encoding are sniffed; the header row can say `name`/`column`/`variable`/`field`
+  and `description`/`definition`/`label`/`meaning`; column names match regardless
+  of case, spaces or underscores; other columns are ignored. Rows naming a column
+  the project doesn't have are reported back, not dropped silently.
+- Each row also has an editable **Description** field, for fixing one entry
+  without another round-trip through a spreadsheet.
+
+Descriptions live on the project (`projects.column_descriptions`) and the backend
+attaches them to every match request, so they apply no matter where the match is
+triggered from.
+
+### Running it
+
+Every variable starts on **Map variable**, so one click on **Load concepts**
+maps the whole project. It sends every included, still-unmapped column — across
+*all* source files, not just the selected one. A variable that already has a
+concept is never overwritten.
+
+What happens to each answer depends on how sure the pipeline was:
+
+| its verdict | what the step does |
+|---|---|
+| **auto-accept** (≥ 90) | sets the concept, with a green confidence chip on the row |
+| **review** (70–90) | **sets nothing.** The row offers the 5 ranked candidates, best first and marked *Best match*, for you to click |
+| **unmapped** (< 70) | leaves the row untouched |
+
+The review case is the one that matters. A serum-creatinine column, for
+instance, comes back at 82 with *Creatinine in peritoneal fluid/Creatinine in
+serum* on top — while the concept you actually want, *Creatinine [Mass/volume]
+in Serum or Plasma*, is fourth on the same shortlist, 2.7 points behind.
+Writing the leader would have been quietly wrong; showing all five and letting
+you pick takes one click and is right.
+
+Rows awaiting a choice are badged while collapsed and have their own **Review**
+filter in the toolbar, and the shortlists are saved with the rest of the step,
+so a run survives a reload. The panel at the top lists, by name, what needs a
+look and what came back unmapped.
+
+### Bringing the matcher up
+
+It needs the sibling project's **own** database — the standard-only Athena
+vocabulary plus its `pipeline` schema, roughly 9GB — which is a separate stack
+on host port 5433. That stack is not duplicated here; the container reaches the
+running one through the host gateway, so the two stay independently startable.
+
+```bash
+cd "../new concept finding"
+./load_vocab.sh          # the vocabulary (10-20 min, once)
+./setup_pipeline.sh      # the pipeline's database objects (~2 min, once)
+
+cd -                     # back here
+docker compose up -d conceptmatcher
+curl localhost:8002/health
+```
+
+The service is `pipeline/service.py` in that project, run as `serve`. The
+`conceptmatcher` compose service and that project's own `pipeline` service share
+one image tag (`vocab-pipeline:latest`), so whichever stack builds it first, the
+other reuses it rather than building ~2GB of CPU torch twice.
+
+Without all that, the button is disabled and says why — the step works exactly
+as before, by hand.
+
+### Keeping it current
+
+That project's `pipeline/` and `data/` are bind-mounted read-only over the
+image's own copies, the same way its own compose does it, so a changed
+threshold, stopword list or scoring stage does **not** need a rebuild. What it
+does need is a restart, because unlike the CLI — one-shot, so it re-reads
+everything on each invocation — this is a long-running process that imported the
+code once at startup:
+
+```bash
+docker compose restart conceptmatcher     # after editing the pipeline
+docker compose build conceptmatcher       # only for requirements.txt changes
+```
+
+A stale matcher is otherwise invisible: it keeps answering, just with the old
+ranking. `docker exec omop-conceptmatcher md5sum /app/pipeline/config.py`
+against the host file settles it.
 
 ---
 
@@ -141,7 +259,7 @@ Steps 2–4 and Death are optional (toggled from the Source step's table picker)
 | `visit`           | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`.   |
 | `obs-period`      | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
 | `death` *         | Death                      | Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                            |
-| `concepts`        | Concept mapping            | Per-column decision: map-with-AI, use defaults, or skip. Shared `ConceptSearch` picker. Gate-on-progress before next.            |
+| `concepts`        | Concept mapping            | Per-column decision, defaulting to **Map variable**. Upload a data dictionary under **Descriptions**, then **Load concepts** maps every variable at once through the staged matcher (see above); AI Search and manual entry handle the rest. Gate-on-progress before next. |
 | `stem-table`      | Stem table                 | Variable groups derived from the visit labels defined in the Visit step. Structural FK columns hidden from the picker.           |
 | `finalize`        | Generate + Load            | Generate all scripts (or per-table), execute them in dependency order with per-table logs, then load results into Postgres. Two cards: **Card 1** bulk-loads the Athena vocab bundle; **Card 2** bulk-COPYs the project's output CSVs and optionally applies indices + FK constraints. |
 
@@ -270,6 +388,11 @@ Per-project `cdm_<id>` schemas are unaffected.
 | GET    | `/api/vocab-bundle-info?path=/vocab`              | Auto-detect vocab CSVs at a path (path must lie inside `ATHENA_BUNDLE_ROOT`) |
 | GET    | `/api/db-health`                                  | Postgres reachability + per-schema DDL + vocab row count  |
 | POST   | `/api/projects/{id}/chat`                         | AI assistant for a specific table's generated code        |
+| GET    | `/api/projects/concept-matcher/health`            | Is the bulk concept matcher up, and what has it loaded    |
+| POST   | `/api/projects/{id}/match-concepts`               | Map a column list onto standard OMOP concepts in one pass |
+| GET/PUT| `/api/projects/{id}/column-descriptions`          | Read / replace the project's data dictionary              |
+| POST   | `/api/projects/{id}/column-descriptions/upload`   | Merge in a CSV/Excel dictionary (`?replace=true` to overwrite) |
+| GET    | `/api/projects/{id}/column-descriptions/template` | Pre-filled `name,table,description` CSV to fill in        |
 
 ---
 

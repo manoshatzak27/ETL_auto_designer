@@ -109,6 +109,7 @@ def copy_project(project_id: str, db: Session = Depends(get_db)):
         last_execution_status=source.last_execution_status,
         output_files=[_rewrite_path(f) for f in (source.output_files or [])],
         concept_decisions=dict(source.concept_decisions or {}),
+        column_descriptions=dict(source.column_descriptions or {}),
         custom_vocabulary_id=source.custom_vocabulary_id,
         mapping_files={k: _rewrite_path(v) for k, v in (source.mapping_files or {}).items()},
         source_files=new_source_files,

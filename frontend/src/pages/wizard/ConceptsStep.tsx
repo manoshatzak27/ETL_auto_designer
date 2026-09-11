@@ -10,7 +10,17 @@ import {
   lookupConceptDomain,
   conceptSearch,
   getApiHealth,
+  getConceptMatcherHealth,
+  matchConcepts,
+  getColumnDescriptions,
+  putColumnDescriptions,
+  uploadColumnDescriptions,
+  downloadDescriptionsTemplate,
   updateTableConfig,
+} from '../../api/client'
+import type {
+  ConceptMatchRequestColumn, ConceptMatchResult, ConceptMatchCandidate,
+  DescriptionUploadResult,
 } from '../../api/client'
 import type { Project } from '../../types'
 import { getStructuralColumns, getStructuralColFileMap } from '../../utils'
@@ -20,7 +30,7 @@ import {
   ChevronDown, ChevronUp, CheckCircle, Loader2,
   Hash, List, Layers, SkipForward, X,
   AlertTriangle, Tag, Sparkles, Plus, Scale, FileText, Info, Download, Pill, Lock,
-  Pencil, Trash2,
+  Pencil, Trash2, Wand2, BookOpen, Upload,
 } from 'lucide-react'
 import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
@@ -97,6 +107,14 @@ interface VariableDecision {
   variable_concept: ConceptRef | null
   value_concepts: Record<string, ConceptRef>
   domain_id: number | null
+  // Left behind by "Load concepts" when the pipeline's answer needed review:
+  // the ranked alternatives it was choosing between, best first, with nothing
+  // committed. Picking one (or setting a concept any other way) clears them.
+  //
+  // Rides along in concept_decisions rather than in component state so a run
+  // survives a reload — mapping_generator only reads the keys it knows, so an
+  // extra one is inert as far as the ETL is concerned.
+  suggestions?: ConceptRef[]
   // Whether this variable is included in mapping at all — ticked by default. Unticking
   // excludes it from the "Variables to map" totals and locks the row so it can't be mapped,
   // independent of `strategy` (which only applies once the variable is included).
@@ -161,14 +179,26 @@ interface VariableDecision {
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
+// Every column starts on "map variable": that is what the bulk matcher fills in,
+// and it is the common case for a clinical source table. Columns that aren't OMOP
+// variables get switched to "skip" by hand (or left unmapped — an unmapped
+// map_variable decision generates no rows either way).
+const DEFAULT_STRATEGY: Strategy = 'map_variable'
+
 // Stable reference so an untouched column's fallback decision doesn't defeat
 // VariableRow's memoization by being recreated on every render.
-const DEFAULT_DECISION: VariableDecision = { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
+const DEFAULT_DECISION: VariableDecision = { strategy: DEFAULT_STRATEGY, variable_concept: null, value_concepts: {}, domain_id: null }
 
 // map_values has no row-level domain picker (domain is detected per value), so a
 // column mapped that way never sets decision.domain_id itself — fall back to
 // checking whether any mapped value resolved to the domain in question. Mirrors
 // the isDrugExposure/isProcedureOccurrence/etc. checks inside VariableRow.
+// A column carrying an undecided shortlist from a "Load concepts" run: the
+// pipeline had an answer but wasn't sure enough to commit it.
+function awaitingReview(d: VariableDecision | undefined): boolean {
+  return !!d && !d.variable_concept && (d.suggestions?.length ?? 0) > 0
+}
+
 function decisionMatchesDomain(d: VariableDecision | undefined, domainId: number): boolean {
   if (!d) return false
   if (d.domain_id === domainId) return true
@@ -255,6 +285,49 @@ interface ColumnInfo {
   null_count: number
   total_rows: number
   completion_rate: number
+}
+
+// ── Bulk matcher ("Load concepts") ─────────────────────────────────────────
+
+// One of the pipeline's ranked alternatives, in the shape the pickers use.
+// `score` is the composite out of 100; the picker's confidence chip expects 0-1.
+function conceptRefFromCandidate(
+  candidate: ConceptMatchCandidate, reason: string,
+): ConceptRef {
+  return {
+    concept_id: candidate.concept_id,
+    concept_name: candidate.concept_name,
+    vocabulary_id: candidate.vocabulary_id ?? undefined,
+    domain: candidate.domain_id ?? undefined,
+    domain_id: candidate.domain_id
+      ? DOMAIN_STRING_MAP[candidate.domain_id.toLowerCase()]
+      : undefined,
+    concept_class_id: candidate.concept_class_id ?? undefined,
+    concept_code: candidate.concept_code ?? undefined,
+    score: candidate.score / 100,
+    justification: reason,
+  }
+}
+
+interface MatcherHealth {
+  available: boolean
+  detail?: string | null
+  vocabulary_version?: string
+  concepts?: number
+  embeddings?: boolean
+}
+
+// What one "Load concepts" run did, kept so the user can see which columns the
+// pipeline was sure about and which ones it wants a human to look at — that
+// distinction is the whole point of running it, and it's invisible once the
+// concepts are just sitting in the rows.
+interface MatchSummary {
+  requested: number
+  accepted: string[]      // status auto_accept — filled in, high confidence
+  review: string[]        // filled in, but below the auto-accept threshold
+  offDomain: string[]     // filled in, but the domain isn't one of our 5 tables
+  unmapped: string[]      // nothing confident enough; left untouched
+  failed: string[]        // the pipeline errored on this column
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -702,6 +775,20 @@ function ConceptPicker({
             <span>{isUnmapped ? '0 · Not mapped' : value.concept_id}</span>
             {!isUnmapped && value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
             {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
+            {/* Confidence, when the concept came from a scored source (the bulk
+                matcher or AI Search) rather than being typed in. Amber below the
+                pipeline's 90-point auto-accept threshold: that's a concept a
+                human is meant to look at, and once the chip is locked there is
+                otherwise nothing to distinguish it from a certain one. */}
+            {!isUnmapped && typeof value.score === 'number' && (
+              <span
+                title={value.justification || undefined}
+                className={clsx(
+                  'ml-1 px-1 rounded text-[10px] font-bold',
+                  value.score >= 0.9 ? 'bg-green-200 text-green-900' : 'bg-amber-200 text-amber-900',
+                )}
+              >{Math.round(value.score * 100)}%</span>
+            )}
             <button onClick={clearId} className="opacity-60 hover:opacity-100 hover:text-destructive ml-1"><X className="w-3 h-3" /></button>
           </div>
           {/* Editable name field with X — clears only name, preserves ID; fills remaining row width and wraps up to 4 lines */}
@@ -913,6 +1000,89 @@ function ConceptPicker({
           }}
         />
       )}
+    </div>
+  )
+}
+
+// ── Shortlist from a "Load concepts" run that needed review ────────────────
+
+/**
+ * The pipeline's ranked alternatives for one column, nothing committed.
+ *
+ * Shown only when the matcher scored below its auto-accept threshold. Its own
+ * first choice leads and is marked, because that is genuinely the most likely
+ * answer and dropping that ordering would waste the ranking — but it is a
+ * proposal to click, not a value that was written. Where two candidates score
+ * within a point of each other the highlight is exactly what a human needs to
+ * overrule, so the score is on every row, not just the leader's.
+ *
+ * Plain card colours, like every other table on this page: this is a list to
+ * read and compare, and tinting the whole thing washes out the one distinction
+ * that matters — which row leads. The leader is marked structurally instead
+ * (accent rule, weight, badge), which survives the dark theme too.
+ */
+function SuggestionList({
+  suggestions,
+  onPick,
+  onDismiss,
+}: {
+  suggestions: ConceptRef[]
+  onPick: (c: ConceptRef) => void
+  onDismiss: () => void
+}) {
+  return (
+    <div className="flex flex-col rounded-lg border border-border bg-card overflow-hidden">
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 border-b border-border bg-muted/50">
+        <AlertTriangle className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0" />
+        <span className="text-xs font-semibold text-foreground">
+          Needs review — nothing set. Pick one:
+        </span>
+        <button
+          type="button"
+          onClick={onDismiss}
+          className="ml-auto text-muted-foreground hover:text-destructive"
+          title="Dismiss these suggestions"
+        ><X className="w-3.5 h-3.5" /></button>
+      </div>
+      {suggestions.map((c, i) => (
+        <button
+          key={`${c.concept_id}-${i}`}
+          type="button"
+          onClick={() => onPick(c)}
+          className={clsx(
+            'w-full text-left px-2.5 py-2 border-b last:border-0 border-border bg-card',
+            'flex flex-col gap-0.5 transition-colors hover:bg-muted/60',
+            // Accent rule rather than a fill, so the leader reads as first
+            // without the row looking like it has been selected already.
+            i === 0 ? 'border-l-2 border-l-primary' : 'border-l-2 border-l-transparent',
+          )}
+        >
+          <div className="flex items-baseline gap-1.5 flex-wrap">
+            <span className={clsx(
+              'text-[10px] font-mono w-4 flex-shrink-0',
+              i === 0 ? 'text-primary font-bold' : 'text-muted-foreground',
+            )}>{i + 1}.</span>
+            <span className={clsx(
+              'text-xs text-foreground',
+              i === 0 ? 'font-bold' : 'font-medium',
+            )}>{c.concept_name}</span>
+            {i === 0 && (
+              <span className="text-[10px] font-bold uppercase tracking-wide border border-primary/30 bg-primary/10 text-primary px-1 rounded">
+                Best match
+              </span>
+            )}
+            <span className="text-[10px] text-muted-foreground font-mono">{c.concept_id}</span>
+            {c.domain && <span className="text-[10px] text-indigo-700 bg-indigo-100 px-1 rounded">{c.domain}</span>}
+            {c.vocabulary_id && <span className="text-[10px] text-muted-foreground">{c.vocabulary_id}</span>}
+            {typeof c.score === 'number' && (
+              <span className={clsx(
+                'ml-auto text-[10px] font-semibold',
+                i === 0 ? 'text-foreground' : 'text-muted-foreground',
+              )}>{Math.round(c.score * 100)}%</span>
+            )}
+          </div>
+        </button>
+      ))}
     </div>
   )
 }
@@ -3072,6 +3242,8 @@ const VariableRow = memo(function VariableRow({
   fileColumns,
   columnInfos,
   drugFieldClaims,
+  description,
+  onDescriptionChange,
 }: {
   column: string
   info: ColumnInfo | null
@@ -3084,6 +3256,9 @@ const VariableRow = memo(function VariableRow({
   fileColumns: string[]
   columnInfos: Record<string, ColumnInfo>
   drugFieldClaims: Record<string, { variable: string; fieldKey: string; label: string }>
+  /** From the project's data dictionary — what the bulk matcher searches on. */
+  description: string
+  onDescriptionChange: (text: string) => void
 }) {
   const lockedBy = drugFieldClaims[column] ?? null
   const [open, setOpen] = useState(false)
@@ -3292,11 +3467,28 @@ const VariableRow = memo(function VariableRow({
           className="flex items-center gap-2 flex-1 min-w-0 text-left"
           onClick={() => setOpen(o => !o)}
         >
-          <span className="font-mono text-sm font-medium text-foreground w-64 flex-shrink-0 truncate" title={column}>{column}</span>
+          <span className="w-64 flex-shrink-0 flex flex-col min-w-0">
+            <span className="font-mono text-sm font-medium text-foreground truncate" title={column}>{column}</span>
+            {description && (
+              <span className="text-[11px] text-muted-foreground italic truncate" title={description}>{description}</span>
+            )}
+          </span>
 
           <span className={clsx('flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0', sm.color)}>
             {sm.icon}{sm.label}
           </span>
+
+          {/* A pending shortlist is the one thing here that needs the user to
+              come back to this row, so it has to be visible while collapsed. */}
+          {!decision.variable_concept && (decision.suggestions?.length ?? 0) > 0 && (
+            <span
+              className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 flex-shrink-0"
+              title={`Needs review — ${decision.suggestions!.length} suggestion${decision.suggestions!.length === 1 ? '' : 's'}, best: ${decision.suggestions![0].concept_name}`}
+            >
+              <AlertTriangle className="w-3 h-3" />
+              {decision.suggestions!.length} to review
+            </span>
+          )}
 
           {/* Unit indicator — shown when a unit mapping (fixed or from-column) is configured */}
           {(() => {
@@ -3445,6 +3637,25 @@ const VariableRow = memo(function VariableRow({
             </div>
           )}
 
+          {/* Description — the data-dictionary entry the bulk matcher searches on.
+              Uncontrolled and keyed on the stored value: an upload that changes it
+              remounts the field, so no effect is needed to keep a draft in sync. */}
+          <div className="flex flex-col gap-1.5">
+            <p className="text-xs font-semibold text-muted-foreground">
+              Description <span className="font-normal text-muted-foreground/70">(what "Load concepts" matches on)</span>
+            </p>
+            <textarea
+              key={description}
+              defaultValue={description}
+              onBlur={e => {
+                if (e.target.value.trim() !== description) onDescriptionChange(e.target.value)
+              }}
+              rows={2}
+              placeholder={`What does "${column}" hold? e.g. "Systolic blood pressure in mmHg"`}
+              className="border border-border rounded px-2 py-1.5 text-xs w-full focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground resize-y"
+            />
+          </div>
+
           {/* Domain picker — row-level only for map_variable / map_both; map_values uses per-value domain detection */}
           {(decision.strategy === 'map_variable' || decision.strategy === 'map_both') && (
             <div className="flex flex-col gap-1.5">
@@ -3533,12 +3744,19 @@ const VariableRow = memo(function VariableRow({
           {(decision.strategy === 'map_variable' || decision.strategy === 'map_both') && (
             <div className="flex flex-col gap-1.5">
               <p className="text-xs font-semibold text-muted-foreground">Concept for <code className="bg-muted px-1 rounded">{column}</code></p>
+              {!decision.variable_concept && (decision.suggestions?.length ?? 0) > 0 && (
+                <SuggestionList
+                  suggestions={decision.suggestions!}
+                  onPick={c => onChange({ ...decision, variable_concept: c, suggestions: undefined })}
+                  onDismiss={() => onChange({ ...decision, suggestions: undefined })}
+                />
+              )}
               <ConceptPicker
                 projectId={projectId}
                 label={column}
                 defaultQuery={column}
                 value={decision.variable_concept}
-                onSelect={c => onChange({ ...decision, variable_concept: c })}
+                onSelect={c => onChange({ ...decision, variable_concept: c, suggestions: undefined })}
                 onClear={() => onChange({ ...decision, variable_concept: null })}
               />
             </div>
@@ -3886,7 +4104,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [selectedCols, setSelectedCols] = useState<string[]>([])
 
   // Filter
-  const [filter, setFilter] = useState<'all' | 'mapped' | 'skipped'>('all')
+  const [filter, setFilter] = useState<'all' | 'mapped' | 'review' | 'skipped'>('all')
   const [domainFilter, setDomainFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
 
@@ -3902,11 +4120,92 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // Custom concept currently being edited in the "Custom concepts created" dialog, if any.
   const [editingConcept, setEditingConcept] = useState<CustomConceptEntry | null>(null)
 
+  // Bulk matcher ("Load concepts")
+  const [matcherHealth, setMatcherHealth] = useState<MatcherHealth | null>(null)
+  const [matching, setMatching] = useState(false)
+  const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null)
+  const [matchError, setMatchError] = useState('')
+
+  // Data dictionary — what the matcher actually matches on
+  const [descriptions, setDescriptions] = useState<Record<string, string>>({})
+  const [dictOpen, setDictOpen] = useState(false)
+  const [uploadingDict, setUploadingDict] = useState(false)
+  const [replaceDict, setReplaceDict] = useState(false)
+  const [dictResult, setDictResult] = useState<DescriptionUploadResult | null>(null)
+  const [dictError, setDictError] = useState('')
+  const dictFileRef = useRef<HTMLInputElement>(null)
+
   useEffect(() => {
     getApiHealth()
       .then(h => setOpenaiConfigured(!!h.openai_configured))
       .catch(() => setOpenaiConfigured(false))
   }, [])
+
+  useEffect(() => {
+    getConceptMatcherHealth()
+      .then(h => setMatcherHealth(h))
+      .catch(() => setMatcherHealth({ available: false, detail: 'Concept matcher unreachable' }))
+  }, [])
+
+  useEffect(() => {
+    getColumnDescriptions(project.id)
+      .then(setDescriptions)
+      .catch(() => setDescriptions({}))
+  }, [project.id])
+
+  const handleUploadDictionary = async (file: File) => {
+    setUploadingDict(true)
+    setDictError('')
+    setDictResult(null)
+    try {
+      const result = await uploadColumnDescriptions(project.id, file, replaceDict)
+      setDescriptions(result.descriptions)
+      setDictResult(result)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setDictError(err?.response?.data?.detail || 'Could not read that file.')
+    } finally {
+      setUploadingDict(false)
+      // Let the same file be picked again after a fix — without this, choosing
+      // the identical filename twice fires no change event.
+      if (dictFileRef.current) dictFileRef.current.value = ''
+    }
+  }
+
+  // Single-column edits from a row. Saved immediately (the map is small, and a
+  // description the user typed but that never reached the server would silently
+  // not be used by the next match).
+  //
+  // Read through a ref rather than a dependency so this callback stays stable:
+  // the per-row handlers below are cached for the life of the page, so a
+  // callback that changed with `descriptions` would leave every row holding a
+  // stale copy of the map and silently undo other columns' edits. Updating the
+  // ref synchronously also means two quick edits can't race on a stale base.
+  const descriptionsRef = useRef(descriptions)
+  descriptionsRef.current = descriptions
+
+  const setColumnDescription = useCallback((column: string, text: string) => {
+    const next = { ...descriptionsRef.current }
+    if (text.trim()) next[column] = text.trim()
+    else delete next[column]
+    descriptionsRef.current = next
+    setDescriptions(next)
+    putColumnDescriptions(project.id, next).catch(() => {
+      setDictError('Failed to save the description.')
+    })
+  }, [project.id])
+
+  const clearDictionary = async () => {
+    if (Object.keys(descriptions).length === 0) return
+    if (!window.confirm(`Remove all ${Object.keys(descriptions).length} column descriptions?`)) return
+    setDictError('')
+    setDictResult(null)
+    try {
+      setDescriptions(await putColumnDescriptions(project.id, {}))
+    } catch {
+      setDictError('Failed to clear the descriptions.')
+    }
+  }
 
   const { cols, selectedFile, files, changeFile } = useSourceFile(project, 'concepts')
 
@@ -3954,7 +4253,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             // Exclude only when this file is the owning file (or file is unknown → global exclusion)
             const excludeHere = ownerFile !== undefined && (ownerFile === null || ownerFile === sf.filename)
             if (!excludeHere) {
-              next[col] = { strategy: 'skip', variable_concept: null, value_concepts: {}, domain_id: null }
+              next[col] = { strategy: DEFAULT_STRATEGY, variable_concept: null, value_concepts: {}, domain_id: null }
             }
           }
         }
@@ -4020,6 +4319,12 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const getOnChange = (col: string) => {
     let fn = onChangeCache.current.get(col)
     if (!fn) { fn = (d: VariableDecision) => setDecision(col, d); onChangeCache.current.set(col, fn) }
+    return fn
+  }
+  const onDescriptionCache = useRef<Map<string, (text: string) => void>>(new Map())
+  const getOnDescription = (col: string) => {
+    let fn = onDescriptionCache.current.get(col)
+    if (!fn) { fn = (text: string) => setColumnDescription(col, text); onDescriptionCache.current.set(col, fn) }
     return fn
   }
 
@@ -4148,6 +4453,123 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     return claims
   }, [decisions])
 
+  // ── "Load concepts": map every variable through the staged OMOP pipeline ──
+
+  // Which columns a run would send. Every column of every source file that the
+  // user hasn't excluded and that isn't already mapped or consumed as another
+  // variable's sibling field — deliberately across all files, not just the
+  // selected one, so a multi-file project is covered by a single click.
+  const matchTargets = useMemo((): ConceptMatchRequestColumn[] => {
+    const targets: ConceptMatchRequestColumn[] = []
+    const seen = new Set<string>()
+
+    const consider = (col: string, file: string | null, ownerFile: string | null | undefined) => {
+      if (seen.has(col)) return
+      // Structural columns are mapped in the Person/Visit/... steps; excluded
+      // only from the file they were configured in (or globally when unknown),
+      // the same rule the row list and the decisions initializer use.
+      if (ownerFile !== undefined && (ownerFile === null || ownerFile === file)) return
+      if (drugFieldClaims[col]) return
+      const d = decisions[col]
+      if (d?.enabled === false) return
+      if (d?.variable_concept) return          // already decided — never overwritten
+      seen.add(col)
+      // The backend fills this in from the stored dictionary when it's absent;
+      // sending it too means an edit made seconds ago is used even if its save
+      // hasn't landed yet.
+      targets.push({ name: col, table: file, description: descriptions[col] || null })
+    }
+
+    const files = project.source_files || []
+    if (files.length > 0) {
+      for (const sf of files) {
+        for (const col of (sf.columns || [])) consider(col, sf.filename, structuralColFileMap.get(col))
+      }
+    } else {
+      // Single-source project from before multi-file support.
+      const file = project.source_filename || null
+      for (const col of conceptCols) consider(col, file, structuralColFileMap.get(col))
+    }
+    return targets
+  }, [project.source_files, project.source_filename, conceptCols, structuralColFileMap, drugFieldClaims, decisions, descriptions])
+
+  // How much of what the next run would send carries a description. Worth
+  // showing: name-only is the pipeline's weakest input, and the difference is
+  // invisible until the results come back disappointing.
+  const describedTargets = matchTargets.filter(t => t.description).length
+
+  const handleLoadConcepts = async () => {
+    if (matching || matchTargets.length === 0) return
+    setMatching(true)
+    setMatchError('')
+    setMatchSummary(null)
+    try {
+      const { results } = await matchConcepts(project.id, matchTargets)
+
+      const summary: MatchSummary = {
+        requested: matchTargets.length,
+        accepted: [], review: [], offDomain: [], unmapped: [], failed: [],
+      }
+      const updates: Record<string, VariableDecision> = {}
+
+      for (const r of results as ConceptMatchResult[]) {
+        const col = r.column_name
+        if (r.error) { summary.failed.push(col); continue }
+        if (!r.concept_id || r.status === 'unmapped') { summary.unmapped.push(col); continue }
+
+        const base = decisions[col] ?? DEFAULT_DECISION
+        // A column the user had put on map_both keeps its per-value work; anything
+        // else (including a legacy project's stored "skip") becomes map_variable,
+        // since a variable concept is what the pipeline just produced for it.
+        const strategy: Strategy = base.strategy === 'map_both' ? 'map_both' : 'map_variable'
+
+        // Below the auto-accept threshold the pipeline is explicitly saying it
+        // isn't sure — so nothing is committed. Its shortlist is offered on the
+        // row instead, top-ranked first, for a human to choose from.
+        if (r.status === 'review') {
+          updates[col] = {
+            ...base,
+            strategy,
+            suggestions: r.candidates.map(c => conceptRefFromCandidate(c, r.decision_reason)),
+          }
+          summary.review.push(col)
+          continue
+        }
+
+        const numericDomain = r.domain_id ? DOMAIN_STRING_MAP[r.domain_id.toLowerCase()] : undefined
+        updates[col] = {
+          ...base,
+          strategy,
+          suggestions: undefined,
+          variable_concept: {
+            concept_id: r.concept_id,
+            concept_name: r.concept_name || `Concept ${r.concept_id}`,
+            vocabulary_id: r.vocabulary_id ?? undefined,
+            domain: r.domain_id ?? undefined,
+            domain_id: numericDomain,
+            // Kept so the row can show how sure the pipeline was, and why.
+            score: r.confidence / 100,
+            justification: `${r.status.replace('_', ' ')} · ${r.decision_reason}`,
+          },
+          domain_id: numericDomain ?? base.domain_id,
+        }
+
+        if (numericDomain === undefined) summary.offDomain.push(col)
+        else summary.accepted.push(col)
+      }
+
+      // One state update for the whole run, so hundreds of columns don't each
+      // trigger a render pass and an autosave.
+      if (Object.keys(updates).length > 0) applyBatch(updates)
+      setMatchSummary(summary)
+    } catch (e: unknown) {
+      const err = e as { response?: { data?: { detail?: string } } }
+      setMatchError(err?.response?.data?.detail || 'Concept matching failed.')
+    } finally {
+      setMatching(false)
+    }
+  }
+
   // Same formula as VariableRow's own `mappingCompleteness` badge, so a row only
   // counts as mapped here once its badge actually reads 100% — a map_values/map_both
   // column with some but not all distinct values reviewed is still in progress.
@@ -4178,6 +4600,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   // Stats
   const mappedCount = enabledConceptCols.filter(isColumnMapped).length
+  const reviewCount = enabledConceptCols.filter(c => awaitingReview(decisions[c])).length
   const skippedCount = enabledConceptCols.filter(c => !drugFieldClaims[c] && decisions[c]?.strategy === 'skip').length
   const idsAddedCount = enabledConceptCols.reduce((sum, c) => {
     const d = decisions[c]
@@ -4340,6 +4763,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     if (domainFilter !== 'all') return isColumnMapped(col) && decisionMatchesDomain(decisions[col], domainFilter)
     if (filter === 'skipped') return !drugFieldClaims[col] && decisions[col]?.strategy === 'skip'
     if (filter === 'mapped') return isColumnMapped(col)
+    if (filter === 'review') return awaitingReview(decisions[col])
     return true
   })
 
@@ -4364,7 +4788,44 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
               Use batch mode to map multiple variables at once.
             </p>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          {/* Wraps rather than shrinks: four fixed-width buttons in one row
+              overflow the header on a narrower window, and an overflowing one
+              is simply not there as far as the user is concerned. */}
+          <div className="flex items-center justify-end gap-2 flex-wrap">
+            <button
+              onClick={handleLoadConcepts}
+              disabled={matching || matcherHealth?.available === false || matchTargets.length === 0}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:hover:bg-indigo-600 flex-shrink-0"
+              title={
+                matcherHealth === null
+                  ? 'Checking whether the concept matcher is running…'
+                  : !matcherHealth.available
+                    ? `Concept matcher unavailable — ${matcherHealth.detail || 'the service is not running'}`
+                    : matchTargets.length === 0
+                      ? 'Every included variable already has a concept.'
+                      : `Map ${matchTargets.length} unmapped variable${matchTargets.length > 1 ? 's' : ''} across all source files through the staged OMOP matching pipeline. `
+                        + `${describedTargets} of them have a description (add more under "Descriptions" for better matches). `
+                        + 'Variables that already have a concept are never overwritten; a matched variable is switched to "Map variable".'
+              }
+            >
+              {matching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+              {matching
+                ? `Matching ${matchTargets.length} variables…`
+                : `Load concepts${matchTargets.length > 0 ? ` (${matchTargets.length})` : ''}`}
+            </button>
+            <button
+              onClick={() => setDictOpen(o => !o)}
+              className={clsx(
+                'flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border flex-shrink-0',
+                dictOpen
+                  ? 'border-primary bg-secondary/60 text-primary'
+                  : 'border-border text-muted-foreground hover:bg-muted',
+              )}
+              title="Upload a CSV or Excel data dictionary describing what each column holds. Descriptions are what the matcher searches on."
+            >
+              <BookOpen className="w-3.5 h-3.5" />
+              Descriptions {Object.keys(descriptions).length > 0 && `(${Object.keys(descriptions).length})`}
+            </button>
             <button
               onClick={handleDownloadSummary}
               disabled={downloadingSummary}
@@ -4385,6 +4846,224 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             </button>
           </div>
         </div>
+
+        {/* Data dictionary */}
+        {dictOpen && (
+          <div className="flex flex-col gap-3 rounded-lg border border-border bg-secondary/40 px-4 py-3">
+            <div className="flex items-start gap-2">
+              <BookOpen className="w-4 h-4 text-primary flex-shrink-0 mt-0.5" />
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold text-foreground">Column descriptions</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  A column <em>name</em> is an identifier; a description is prose the vocabulary can
+                  actually be searched with. <strong>Load concepts</strong> matches on both, and gets
+                  markedly better answers when a description is there — so upload whatever data
+                  dictionary you already have, or start from the template below.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setDictOpen(false)}
+                className="text-muted-foreground hover:text-foreground flex-shrink-0"
+                title="Close"
+              ><X className="w-4 h-4" /></button>
+            </div>
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => downloadDescriptionsTemplate(project.id)}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-card text-muted-foreground hover:bg-muted"
+                title="A CSV listing every source column, pre-filled with the descriptions already stored. Fill in the blanks and upload it back."
+              >
+                <Download className="w-3.5 h-3.5" /> Download template
+              </button>
+              <input
+                ref={dictFileRef}
+                type="file"
+                accept=".csv,.tsv,.txt,.xlsx,.xlsm,.xls"
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0]
+                  if (file) handleUploadDictionary(file)
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => dictFileRef.current?.click()}
+                disabled={uploadingDict}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-primary bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
+              >
+                {uploadingDict ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
+                {uploadingDict ? 'Reading…' : 'Upload CSV / Excel'}
+              </button>
+              <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={replaceDict}
+                  onChange={e => setReplaceDict(e.target.checked)}
+                  className="rounded accent-primary"
+                />
+                Replace instead of merge
+              </label>
+              {Object.keys(descriptions).length > 0 && (
+                <button
+                  type="button"
+                  onClick={clearDictionary}
+                  className="ml-auto text-xs text-muted-foreground hover:text-destructive"
+                >Clear all</button>
+              )}
+            </div>
+
+            <p className="text-xs text-muted-foreground">
+              The file needs a header row with a column name and a description —{' '}
+              <code className="bg-muted px-1 rounded font-mono">name</code>,{' '}
+              <code className="bg-muted px-1 rounded font-mono">column</code>,{' '}
+              <code className="bg-muted px-1 rounded font-mono">variable</code> and{' '}
+              <code className="bg-muted px-1 rounded font-mono">field</code> all work for the first,{' '}
+              <code className="bg-muted px-1 rounded font-mono">description</code>,{' '}
+              <code className="bg-muted px-1 rounded font-mono">definition</code>,{' '}
+              <code className="bg-muted px-1 rounded font-mono">label</code> and{' '}
+              <code className="bg-muted px-1 rounded font-mono">meaning</code> for the second. Delimiter
+              and encoding are detected; column names match regardless of case, spaces or underscores.
+              Any other columns in the file are ignored.
+            </p>
+
+            {dictError && (
+              <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-2.5 text-xs text-destructive">{dictError}</div>
+            )}
+
+            {dictResult && (
+              <div className="flex flex-col gap-1.5 rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-900">
+                <p>
+                  <strong>{dictResult.matched.length}</strong> description
+                  {dictResult.matched.length === 1 ? '' : 's'} applied
+                  {' '}(read from <span className="font-mono">{dictResult.headers.name}</span> /{' '}
+                  <span className="font-mono">{dictResult.headers.description}</span>).
+                  {dictResult.missing.length > 0 && (
+                    <> <strong>{dictResult.missing.length}</strong> column
+                      {dictResult.missing.length === 1 ? '' : 's'} still without one.</>
+                  )}
+                </p>
+                {dictResult.unmatched.length > 0 && (
+                  <p className="text-amber-800">
+                    <strong>{dictResult.unmatched.length}</strong> row
+                    {dictResult.unmatched.length === 1 ? '' : 's'} named a column this project doesn't
+                    have, and {dictResult.unmatched.length === 1 ? 'was' : 'were'} skipped:{' '}
+                    <span className="font-mono">{dictResult.unmatched.map(u => u.name).join(', ')}</span>
+                  </p>
+                )}
+                {dictResult.missing.length > 0 && (
+                  <p className="text-muted-foreground">
+                    No description yet: <span className="font-mono">{dictResult.missing.join(', ')}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bulk matcher: unavailability notice, errors, and the last run's outcome */}
+        {matcherHealth && !matcherHealth.available && (
+          <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
+            <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="font-semibold">Automatic concept loading is unavailable.</p>
+              <p className="mt-0.5">
+                {matcherHealth.detail || 'The concept matcher is not responding.'} Start the matching stack
+                (<code className="bg-amber-100 px-1 rounded font-mono">./load_vocab.sh</code> and{' '}
+                <code className="bg-amber-100 px-1 rounded font-mono">./setup_pipeline.sh</code> in the concept-matching
+                project, then <code className="bg-amber-100 px-1 rounded font-mono">docker compose up -d conceptmatcher</code> here)
+                to enable it. Mapping by hand works either way.
+              </p>
+            </div>
+          </div>
+        )}
+
+        {matchError && (
+          <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-3 text-sm text-destructive">{matchError}</div>
+        )}
+
+        {/* Nudge toward the dictionary while it would still change the outcome:
+            only when there's something left to match and most of it is name-only. */}
+        {!dictOpen && matcherHealth?.available && matchTargets.length > 0
+          && describedTargets < matchTargets.length / 2 && (
+          <div className="flex items-start gap-1.5 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
+            <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+            <span>
+              {describedTargets === 0
+                ? 'None of the'
+                : `Only ${describedTargets} of the`}{' '}
+              {matchTargets.length} variables waiting to be matched have a description. The matcher
+              works from column names alone, but does noticeably better with prose —{' '}
+              <button
+                type="button"
+                onClick={() => setDictOpen(true)}
+                className="font-semibold text-primary hover:underline"
+              >upload a data dictionary</button>{' '}
+              first if you have one.
+            </span>
+          </div>
+        )}
+
+        {matchSummary && (
+          <div className="flex flex-col gap-2 rounded-lg border border-indigo-200 bg-indigo-50/60 px-3 py-2.5 text-xs">
+            <div className="flex items-center gap-2">
+              <Wand2 className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
+              <span className="font-semibold text-indigo-900">
+                Matched {matchSummary.requested} variable{matchSummary.requested > 1 ? 's' : ''}
+              </span>
+              <button
+                type="button"
+                onClick={() => setMatchSummary(null)}
+                className="ml-auto text-indigo-400 hover:text-indigo-700"
+                title="Dismiss"
+              ><X className="w-3.5 h-3.5" /></button>
+            </div>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-indigo-900">
+              <span><strong>{matchSummary.accepted.length}</strong> set automatically</span>
+              <span><strong>{matchSummary.review.length}</strong> need you to pick</span>
+              {matchSummary.offDomain.length > 0 && (
+                <span><strong>{matchSummary.offDomain.length}</strong> outside the 5 ETL domains</span>
+              )}
+              <span><strong>{matchSummary.unmapped.length}</strong> left unmapped</span>
+              {matchSummary.failed.length > 0 && (
+                <span className="text-red-700"><strong>{matchSummary.failed.length}</strong> failed</span>
+              )}
+            </div>
+            {(matchSummary.review.length > 0 || matchSummary.offDomain.length > 0 || matchSummary.unmapped.length > 0) && (
+              <div className="flex flex-col gap-1 text-indigo-800">
+                {matchSummary.review.length > 0 && (
+                  <p>
+                    <span className="font-medium">Nothing was set for these</span> — the pipeline scored below its
+                    auto-accept threshold, so each one is offering its 5 best candidates for you to choose from.
+                    Open the row, or use the{' '}
+                    <button
+                      type="button"
+                      onClick={() => { setFilter('review'); setDomainFilter('all') }}
+                      className="font-semibold text-primary hover:underline"
+                    >Review</button>{' '}
+                    filter:{' '}
+                    <span className="font-mono">{matchSummary.review.join(', ')}</span>
+                  </p>
+                )}
+                {matchSummary.offDomain.length > 0 && (
+                  <p>
+                    <span className="font-medium">Domain not supported</span> — a concept was set, but its OMOP domain
+                    isn't one of the five stem-table domains, so pick the domain by hand or choose another concept:{' '}
+                    <span className="font-mono">{matchSummary.offDomain.join(', ')}</span>
+                  </p>
+                )}
+                {matchSummary.unmapped.length > 0 && (
+                  <p>
+                    <span className="font-medium">Nothing confident enough</span> — still to map by hand, or skip:{' '}
+                    <span className="font-mono">{matchSummary.unmapped.join(', ')}</span>
+                  </p>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Concept ID 0 explainer */}
         <div className="flex items-start gap-1.5 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
@@ -4651,13 +5330,23 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             className="border border-border rounded-md px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-ring bg-background text-foreground"
           />
           <div className="flex gap-1">
-            {(['all', 'mapped', 'skipped'] as const).map(f => (
-              <button
-                key={f}
-                onClick={() => { setFilter(f); if (f !== 'mapped') setDomainFilter('all') }}
-                className={clsx('px-2.5 py-1.5 rounded-md text-xs font-medium capitalize', filter === f ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80')}
-              >{f}</button>
-            ))}
+            {(['all', 'mapped', 'review', 'skipped'] as const).map(f => {
+              const count = f === 'review' ? reviewCount : 0
+              return (
+                <button
+                  key={f}
+                  onClick={() => { setFilter(f); if (f !== 'mapped') setDomainFilter('all') }}
+                  className={clsx(
+                    'px-2.5 py-1.5 rounded-md text-xs font-medium capitalize',
+                    filter === f
+                      ? 'bg-primary text-primary-foreground'
+                      : f === 'review' && count > 0
+                        ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                  )}
+                >{f}{f === 'review' && count > 0 ? ` (${count})` : ''}</button>
+              )
+            })}
           </div>
           {filter === 'mapped' && (
             <select
@@ -4724,6 +5413,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 fileColumns={cols}
                 columnInfos={columnInfos}
                 drugFieldClaims={drugFieldClaims}
+                description={descriptions[col] ?? ''}
+                onDescriptionChange={getOnDescription(col)}
               />
             ))}
             {filteredCols.length === 0 && (

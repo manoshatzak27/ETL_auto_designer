@@ -33,6 +33,7 @@ def create_tables():
 _PROJECTS_NEW_COLUMNS: list[tuple[str, str]] = [
     ("custom_vocabulary_id", "VARCHAR(64) DEFAULT 'CUSTOM' NOT NULL"),
     ("generated_scripts_usage", "TEXT DEFAULT '{}' NOT NULL"),
+    ("column_descriptions", "TEXT DEFAULT '{}' NOT NULL"),
 ]
 
 

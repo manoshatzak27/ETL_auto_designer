@@ -126,6 +126,93 @@ export const conceptSearch = (
     )
     .then(r => r.data)
 
+// ---- Column descriptions (the project's data dictionary) ----
+
+export interface DescriptionUploadResult {
+  descriptions: Record<string, string>
+  matched: string[]
+  unmatched: { name: string; description: string; table: string }[]
+  headers: { name: string; description: string; table: string | null }
+  missing: string[]
+}
+
+export const getColumnDescriptions = (projectId: string) =>
+  api
+    .get<{ descriptions: Record<string, string> }>(`/projects/${projectId}/column-descriptions`)
+    .then(r => r.data.descriptions)
+
+export const putColumnDescriptions = (projectId: string, descriptions: Record<string, string>) =>
+  api
+    .put<{ descriptions: Record<string, string> }>(
+      `/projects/${projectId}/column-descriptions`, { descriptions },
+    )
+    .then(r => r.data.descriptions)
+
+export const uploadColumnDescriptions = (projectId: string, file: File, replace = false) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return api
+    .post<DescriptionUploadResult>(
+      `/projects/${projectId}/column-descriptions/upload?replace=${replace ? 'true' : 'false'}`, fd,
+    )
+    .then(r => r.data)
+}
+
+export const downloadDescriptionsTemplate = (projectId: string) => {
+  window.open(`/api/projects/${projectId}/column-descriptions/template`, '_blank')
+}
+
+// ---- Bulk concept matching (staged OMOP matching pipeline) ----
+
+export interface ConceptMatchRequestColumn {
+  name: string
+  description?: string | null
+  table?: string | null
+}
+
+/** One of the pipeline's ranked alternatives, best first. */
+export interface ConceptMatchCandidate {
+  concept_id: number
+  concept_name: string
+  domain_id: string | null
+  vocabulary_id: string | null
+  concept_class_id: string | null
+  concept_code: string | null
+  score: number
+}
+
+export interface ConceptMatchResult {
+  column_name: string
+  source_table: string | null
+  status: 'auto_accept' | 'review' | 'unmapped' | 'manual' | 'error'
+  confidence: number
+  concept_id: number | null
+  concept_name: string | null
+  domain_id: string | null
+  vocabulary_id: string | null
+  concept_class_id: string | null
+  concept_code: string | null
+  decision_reason: string
+  ambiguous: boolean
+  error: string | null
+  candidates: ConceptMatchCandidate[]
+}
+
+export const getConceptMatcherHealth = () =>
+  api
+    .get<{ available: boolean; detail?: string | null; vocabulary_version?: string; concepts?: number; embeddings?: boolean }>(
+      '/projects/concept-matcher/health',
+    )
+    .then(r => r.data)
+
+export const matchConcepts = (projectId: string, columns: ConceptMatchRequestColumn[]) =>
+  api
+    .post<{ run_id: number; results: ConceptMatchResult[] }>(
+      `/projects/${projectId}/match-concepts`,
+      { columns },
+    )
+    .then(r => r.data)
+
 export const getApiHealth = () =>
   api.get<{ status: string; openai_configured: boolean }>('/health').then(r => r.data)
 

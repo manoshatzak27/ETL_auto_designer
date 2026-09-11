@@ -37,6 +37,14 @@ class Project(Base):
     # Concept mapping decisions made in the Concepts step (per-variable strategy + concept selections)
     concept_decisions: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Human descriptions of the source columns  {column_name: description}.
+    # Uploaded as a CSV/Excel data dictionary in the Concepts step. Keyed by
+    # column name globally, the same way concept_decisions is. These are what
+    # the bulk concept matcher actually matches on — a column *name* is an
+    # identifier ("DOC_PAT_HAIR"), a description is prose, and the matching
+    # pipeline is far more accurate given both.
+    column_descriptions: Mapped[dict] = mapped_column(JSON, default=dict)
+
     # Vocabulary ID used for user-created custom concepts (id >= 2_000_000_000).
     # Persisted on the project so the same vocabulary appears in custom_mappings.csv
     # and is inserted into vocab.concept on Finalize step load.
