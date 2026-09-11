@@ -86,6 +86,8 @@
     ["height", "tall", "stature"],
     ["weight", "mass"],
 
+    ["old", "age", "aged"],
+
     ["smoking", "tobacco", "smoker"],
     ["drinking", "alcohol"],
     ["job", "occupation", "occupational", "profession", "professional", "employment"],

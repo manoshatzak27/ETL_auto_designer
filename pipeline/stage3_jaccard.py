@@ -39,6 +39,7 @@ class IdfIndex:
         self.db = db
         self._lock = threading.Lock()
         self._idf: dict[str, float] = {}
+        self._stem: dict[str, str] = {}
         self._total: float | None = None
 
     @property
@@ -58,6 +59,38 @@ class IdfIndex:
         if missing:
             self._load(missing)
         return {t: self._idf.get(t, self._max_idf()) for t in wanted}
+
+    def prime(self, tokens: Iterable[str]) -> None:
+        """Load stems and document frequencies for these tokens in one query."""
+        missing = [t for t in {t for t in tokens if t} if t not in self._stem]
+        if missing:
+            self._load(missing)
+
+    def stem(self, token: str) -> str:
+        """The Snowball stem Postgres would produce, for the same token.
+
+        Stage 2 searches a tsvector, so Postgres has already folded
+        started/start/starting onto `start` and smoking/smoke/smoked onto
+        `smoke` before a candidate is ever returned. The Python side lemmatizes
+        instead, and the built-in rule-based lemmatizer is deliberately
+        conservative: it de-pluralizes nouns but leaves verb inflection alone.
+
+        The result was an asymmetry rather than a difference of opinion. For
+        the column "How old were you when you started smoking?" the concept
+        "At which age did you start smoking [PhenX]" reached Stage 3 precisely
+        because Postgres matched started/start — and Stage 3 then scored it as
+        though the two words were unrelated, penalizing it for a difference
+        Stage 2 had already resolved.
+
+        Stemming here rather than in the lemmatizer keeps the change where the
+        comparison happens: `token_idf` is itself keyed by these stems, so this
+        also makes the weight lookups exact instead of approximate. Falls back
+        to the token unchanged when it has not been primed.
+        """
+        if "_" not in token:
+            return self._stem.get(token, token)
+        parts = token.split("_")
+        return "_".join(self._stem.get(p, p) for p in parts)
 
     # ────────────────────────────────────────────────────────────────────
     def _max_idf(self) -> float:
@@ -84,7 +117,8 @@ class IdfIndex:
                    -- english_stem returns an empty array (not NULL) for a word
                    -- it recognizes as a stopword, and {word} for one it simply
                    -- does not know. The two must not be conflated: see below.
-                   cardinality(s.lexemes) = 0 AS is_stopword
+                   cardinality(s.lexemes) = 0 AS is_stopword,
+                   s.lexemes[1] AS stem
             FROM unnest(%s::text[]) AS w(word)
             LEFT JOIN LATERAL (
                 SELECT ts_lexize('english_stem', w.word) AS lexemes
@@ -95,9 +129,11 @@ class IdfIndex:
         )
         doc_freq = {r["word"]: float(r["doc_freq"]) for r in rows}
         stopword = {r["word"]: bool(r["is_stopword"]) for r in rows}
+        stems = {r["word"]: (r["stem"] or r["word"]) for r in rows}
 
         total = self.total_concepts
         with self._lock:
+            self._stem.update(stems)
             for token, parts in lookup.items():
                 # A stopword is absent from token_idf because it was never
                 # indexed, not because it is rare. Falling through to the
@@ -113,7 +149,13 @@ class IdfIndex:
                 df = min(freqs)
                 # Smoothed IDF: strictly decreasing in df, never zero or
                 # negative even for a token present in every concept.
-                self._idf[token] = math.log(1.0 + total / (1.0 + df))
+                value = math.log(1.0 + total / (1.0 + df))
+                self._idf[token] = value
+                # Also key it by the stemmed form: the comparison below
+                # canonicalizes to stems, and without this every canonical
+                # token would miss the cache and trigger a second query.
+                stemmed = "_".join(stems.get(p, p) for p in parts)
+                self._idf.setdefault(stemmed, value)
 
 
 class JaccardScorer:
@@ -132,17 +174,44 @@ class JaccardScorer:
         if not candidates:
             return []
 
-        fold = _canonical if self.config.equivalence_folding else (lambda t: t)
-        input_tokens = {fold(t) for t in variant.tokens}
+        # Raw tokens first, so every word can be stemmed in one round trip
+        # before any comparison happens.
+        raw_input = list(variant.tokens)
+        raw_candidates: dict[int, tuple[tuple[str, ...], list[tuple[str, ...]]]] = {}
+        raw_all: set[str] = set(raw_input)
+        for cand in candidates:
+            name_tokens = self.pre.concept_tokens(cand.concept_name)
+            synonym_tokens = [self.pre.concept_tokens(s)
+                              for s in cand.synonyms[:12]]
+            raw_candidates[cand.concept_id] = (name_tokens, synonym_tokens)
+            raw_all.update(name_tokens)
+            for tokens in synonym_tokens:
+                raw_all.update(tokens)
+
+        # Equivalence first, then the Snowball stem Stage 2 already applied:
+        # 'profession' -> 'employment' -> 'employ' on both sides.
+        if self.config.stem_tokens:
+            self.idf.prime(_equivalence_inputs(raw_all)
+                           if self.config.equivalence_folding else raw_all)
+        use_equivalents = self.config.equivalence_folding
+
+        use_stems = self.config.stem_tokens
+
+        def fold(token: str) -> str:
+            if use_equivalents:
+                token = _canonical(token)
+            return self.idf.stem(token) if use_stems else token
+
+        input_tokens = {fold(t) for t in raw_input}
 
         # Step 3.1: token sets for every candidate, name and synonyms alike.
         candidate_tokens: dict[int, tuple[tuple[str, ...], list[tuple[str, ...]]]] = {}
         vocabulary: set[str] = set(input_tokens)
         for cand in candidates:
-            name_tokens = tuple(
-                fold(t) for t in self.pre.concept_tokens(cand.concept_name))
-            synonym_tokens = [tuple(fold(t) for t in self.pre.concept_tokens(s))
-                              for s in cand.synonyms[:12]]
+            raw_name, raw_synonyms = raw_candidates[cand.concept_id]
+            name_tokens = tuple(fold(t) for t in raw_name)
+            synonym_tokens = [tuple(fold(t) for t in tokens)
+                              for tokens in raw_synonyms]
             candidate_tokens[cand.concept_id] = (name_tokens, synonym_tokens)
             vocabulary.update(name_tokens)
             for tokens in synonym_tokens:
@@ -172,6 +241,20 @@ class JaccardScorer:
 
         ranked = sorted(candidates, key=lambda c: -(c.jaccard_score or 0.0))
         return ranked[: self.config.jaccard_keep]
+
+
+def _equivalence_inputs(tokens: Iterable[str]) -> set[str]:
+    """Every token plus its equivalence representative, for one priming query.
+
+    Both forms need a stem: the raw token because a candidate may carry it
+    verbatim, and the representative because that is what the comparison
+    actually compares on.
+    """
+    folded: set[str] = set()
+    for token in tokens:
+        folded.add(token)
+        folded.add(_canonical(token))
+    return folded
 
 
 def _canonical(token: str) -> str:

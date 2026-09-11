@@ -105,6 +105,19 @@ class PipelineConfig:
     # Measured cost and benefit are in the README; set false to compare
     # token sets literally.
     equivalence_folding: bool = True
+    # Compare token sets as Snowball stems — the same folding Postgres already
+    # applied in Stage 2 — rather than as the Python lemmatizer's lemmas.
+    #
+    # Fixes a real asymmetry: the lemmatizer does not touch verb inflection, so
+    # a concept that reached Stage 3 *because* Postgres matched started/start
+    # was then scored as though the two words were unrelated. The evidence is
+    # genuinely mixed, because Snowball also strips derivational suffixes:
+    # 'calculated' and 'calculator' both become 'calcul', which is wrong.
+    # Measured on the 206 curated columns: -1 exact (PAT_HOURS, which moves to
+    # an equally valid paraphrase), -2 agreed-on-meaning (BSA_Total, PHQ9PHQ2),
+    # +1 fewer unmapped, top-5 unchanged, gold set unchanged. Set false to
+    # compare lemmas.
+    stem_tokens: bool = True
 
     # ── Stage 4: fuzzy ──────────────────────────────────────────────────
     fuzzy_keep: int = 10                   # Stage 4 scoring line
