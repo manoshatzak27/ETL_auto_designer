@@ -753,6 +753,52 @@ benchmark run per change rather than one for the batch.
 | equivalence folding off | 36 | 68 | 66 | 47 |
 | **pronoun stopwords reverted (shipped)** | **36** | **69** | **67** | **44** |
 
+**"Rank concepts with extra unrelated words lower" has now failed four times,
+measured, in four different forms.** It is the most natural-sounding idea about
+this pipeline and it does not work. Recorded in full so it is not attempted a
+fifth time:
+
+1. `specificity_floor` — Stage 2 discounts a candidate by how much of its name
+   the query never asked for. Cost 2.2pp gold literal, 4pp gold top-5.
+2. Symmetric F1 in Stage 4 — replace the recall-only token score with the
+   harmonic mean of both directions. Checked offline before implementing: it
+   orders the smoking query correctly *and* scores the **correct** gold answers
+   at F1 37-51 against a recall of 100.
+3. `verbosity_floor` — damp a candidate whose name is far longer than the
+   query, **gated on query length** so that short lab queries are exempt. Built
+   and measured at 0.75 and 0.55; worse or equal on every hard metric.
+4. Length as a Stage 2 `ORDER BY` tie-break — already present, and almost never
+   fires because `ts_rank_cd` values rarely tie exactly.
+
+The reason all four fail is one measurement. For the column "How many cigars or
+pipes do you smoke per day?" the *wrong* 27-word NHANES concept about smelling
+other people's smoke at work scores **precision 49%**; for `glucose_mgdl` the
+*correct* "Glucose [Mass/volume] in Serum or Plasma" scores **precision 23%**.
+The correct answers are less precise than the wrong ones, so no monotone
+function of length or precision can separate them.
+
+Gating on query length does not rescue it either: 11 of the 50 gold cases have
+four or more query tokens (`Gamma glutamyl transferase serum`,
+`Absolute neutrophil count`, `Oxygen saturation by pulse oximetry`, …), so the
+gate exempts far less than it appears to.
+
+| `verbosity_floor` | gold overall | gold literal | gold top-5 | user exact | user agreed | user unmapped |
+|---|---|---|---|---|---|---|
+| **1.0 (off, shipped)** | **92.0%** | **97.8%** | **96.0%** | **35** | 69 | **43** |
+| 0.75 | 90.0% | 95.6% | 96.0% | 34 | 69 | 43 |
+| 0.55 | 90.0% | 95.6% | 94.0% | 34 | 70 | 44 |
+
+The distinction is semantic, not structural: in the gold cases the extra words
+are *attributes of the measurement*; in the smoking case they introduce a
+*different subject* (`job`, `employer`, `occupation`, `smell`, `other
+peoples`). Stage 5 is the only signal that gets it right — it ranked the
+correct concept 70.1 against the wrong one's 56.6 — and it is outvoted because
+Stage 2's rung 0 and Stage 4's token score are **the same evidence counted
+twice** ("the concept contains every query term"), holding 0.35 + 0.20 of the
+weight between them. De-correlating those two signals, or using
+`concept_class_id` and `domain_id`, is where the next attempt should go — not
+another length penalty.
+
 Against a 32-column synthetic EHR schema (vitals, labs, conditions,
 encounters, one deliberate nonsense column), with embeddings on, 4 workers,
 and no manual mappings recorded yet:
