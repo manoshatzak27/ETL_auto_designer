@@ -12,6 +12,7 @@ import {
   getApiHealth,
   getConceptMatcherHealth,
   matchConcepts,
+  matchColumnValues,
   getColumnDescriptions,
   putColumnDescriptions,
   uploadColumnDescriptions,
@@ -20,7 +21,7 @@ import {
 } from '../../api/client'
 import type {
   ConceptMatchRequestColumn, ConceptMatchResult, ConceptMatchCandidate,
-  DescriptionUploadResult,
+  ConceptValueMatchColumn, DescriptionUploadResult,
 } from '../../api/client'
 import type { Project } from '../../types'
 import { getStructuralColumns, getStructuralColFileMap } from '../../utils'
@@ -115,6 +116,11 @@ interface VariableDecision {
   // survives a reload — mapping_generator only reads the keys it knows, so an
   // extra one is inert as far as the ETL is concerned.
   suggestions?: ConceptRef[]
+  // The same thing per value, left behind by the value-level pass of "Load
+  // concepts" (keyed by source value): the ranked alternatives for a value the
+  // pipeline wasn't sure enough about to commit. Picking one, or setting that
+  // value any other way, drops its entry.
+  value_suggestions?: Record<string, ConceptRef[]>
   // Whether this variable is included in mapping at all — ticked by default. Unticking
   // excludes it from the "Variables to map" totals and locks the row so it can't be mapped,
   // independent of `strategy` (which only applies once the variable is included).
@@ -196,7 +202,17 @@ const DEFAULT_DECISION: VariableDecision = { strategy: DEFAULT_STRATEGY, variabl
 // A column carrying an undecided shortlist from a "Load concepts" run: the
 // pipeline had an answer but wasn't sure enough to commit it.
 function awaitingReview(d: VariableDecision | undefined): boolean {
-  return !!d && !d.variable_concept && (d.suggestions?.length ?? 0) > 0
+  if (!d) return false
+  if (!d.variable_concept && (d.suggestions?.length ?? 0) > 0) return true
+  return pendingValueReviews(d).length > 0
+}
+
+// Values whose shortlist nobody has acted on yet — a value that has since been
+// decided is settled however its entry got there, so the concept wins over the
+// leftover shortlist.
+function pendingValueReviews(d: VariableDecision | undefined): string[] {
+  if (!d?.value_suggestions) return []
+  return Object.keys(d.value_suggestions).filter(v => !(v in d.value_concepts))
 }
 
 function decisionMatchesDomain(d: VariableDecision | undefined, domainId: number): boolean {
@@ -309,6 +325,79 @@ function conceptRefFromCandidate(
   }
 }
 
+// Fold one column's two value passes into its decision: every value the matcher
+// was sure about is committed, every value it had an opinion but not a confident
+// one about keeps a shortlist, and anything the user had already decided is left
+// exactly as it was.
+function applyValueMatch(
+  answer: ConceptValueMatchColumn, base: VariableDecision,
+): { decision: VariableDecision; stats: ValueMatchSummary } {
+  const valueConcepts = { ...base.value_concepts }
+  const suggestions: Record<string, ConceptRef[]> = { ...(base.value_suggestions ?? {}) }
+  const stats: ValueMatchSummary = {
+    column: answer.column_name,
+    domain: answer.domain,
+    domainVotes: answer.domain_votes,
+    rematched: answer.rematched,
+    requested: answer.values_requested,
+    accepted: 0, review: 0, unmapped: 0, failed: 0,
+  }
+
+  // The whole column shares one domain, so this is resolved once. When it isn't
+  // one of the five stem-table domains nothing can be committed at all — a value
+  // concept outside them produces no usable row — and the summary says as much
+  // rather than the column looking like the matcher found nothing.
+  const numericDomain = answer.domain ? DOMAIN_STRING_MAP[answer.domain.toLowerCase()] : undefined
+
+  for (const [value, r] of Object.entries(answer.results)) {
+    if (value in valueConcepts) continue        // already decided — never overwritten
+    if (r.error) { stats.failed += 1; continue }
+
+    // A shortlist is only offered for the pipeline's own "review" verdict, the
+    // same as at variable level: below that threshold its candidates are guesses
+    // it has already decided not to stand behind, and a row full of those is
+    // worse than a row left blank. `unmapped` still carries a best candidate, so
+    // the status is what's tested here, not whether a concept came back at all.
+    const shortlist = r.status === 'review'
+      ? r.candidates.map(c => conceptRefFromCandidate(c, r.decision_reason))
+      : []
+    const decided = !!r.concept_id && r.status !== 'unmapped' && r.status !== 'review'
+
+    if (decided && numericDomain !== undefined) {
+      valueConcepts[value] = {
+        concept_id: r.concept_id!,
+        concept_name: r.concept_name || `Concept ${r.concept_id}`,
+        vocabulary_id: r.vocabulary_id ?? undefined,
+        domain: r.domain_id ?? undefined,
+        domain_id: numericDomain,
+        // Kept so the value's row can show how sure the pipeline was, and why.
+        score: r.confidence / 100,
+        justification: `${r.status.replace('_', ' ')} · ${r.decision_reason}`,
+      }
+      delete suggestions[value]
+      stats.accepted += 1
+    } else if (shortlist.length > 0) {
+      suggestions[value] = shortlist
+      stats.review += 1
+    } else {
+      stats.unmapped += 1
+    }
+  }
+
+  return {
+    decision: {
+      ...base,
+      value_concepts: valueConcepts,
+      value_suggestions: Object.keys(suggestions).length > 0 ? suggestions : undefined,
+      // map_values has no row-level domain picker, so this is the only place the
+      // column's domain gets recorded — which is what the domain-specific field
+      // sections (unit, route, …) and the domain filter read.
+      domain_id: numericDomain ?? base.domain_id,
+    },
+    stats,
+  }
+}
+
 interface MatcherHealth {
   available: boolean
   detail?: string | null
@@ -328,6 +417,24 @@ interface MatchSummary {
   offDomain: string[]     // filled in, but the domain isn't one of our 5 tables
   unmapped: string[]      // nothing confident enough; left untouched
   failed: string[]        // the pipeline errored on this column
+  // The value-level half of the same run: one entry per "map values" column
+  // whose distinct values were matched, in the order they were matched.
+  valueColumns: ValueMatchSummary[]
+}
+
+// What the two value passes did to one column. `domain` is the domain the first
+// pass voted for and the second pass confined every value to — the whole reason
+// values are matched per column rather than in one big batch.
+interface ValueMatchSummary {
+  column: string
+  domain: string | null
+  domainVotes: Record<string, number>
+  rematched: number
+  requested: number
+  accepted: number        // committed outright
+  review: number          // left a shortlist on the value
+  unmapped: number        // nothing usable, even in the chosen domain
+  failed: number
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -1095,16 +1202,22 @@ function ValueConceptRow({
   column,
   concept,
   siblingConcepts,
+  suggestions,
   onSelect,
   onClear,
+  onDismissSuggestions,
 }: {
   projectId: string
   val: string
   column: string
   concept: ConceptRef | null
   siblingConcepts: Record<string, ConceptRef>
+  // Shortlist left by the value pass of "Load concepts" for this value, when it
+  // had candidates but none it was sure enough about to commit.
+  suggestions?: ConceptRef[]
   onSelect: (c: ConceptRef) => void
   onClear: () => void
+  onDismissSuggestions?: () => void
 }) {
   const [domainMode, setDomainMode] = useState<'auto' | 'manual'>('auto')
   const [lookingUpDomain, setLookingUpDomain] = useState(false)
@@ -1183,6 +1296,13 @@ function ValueConceptRow({
 
   return (
     <div className="flex flex-col gap-1.5">
+      {!concept && (suggestions?.length ?? 0) > 0 && (
+        <SuggestionList
+          suggestions={suggestions!}
+          onPick={c => onSelect(c)}
+          onDismiss={() => onDismissSuggestions?.()}
+        />
+      )}
       <ConceptPicker
         projectId={projectId}
         label={val}
@@ -1285,6 +1405,7 @@ function ValueMappingTable({
   values,
   distinctCount,
   mapped,
+  suggestions,
   onChange,
 }: {
   projectId: string
@@ -1292,10 +1413,21 @@ function ValueMappingTable({
   values: string[]
   distinctCount: number
   mapped: Record<string, ConceptRef>
-  onChange: (updated: Record<string, ConceptRef>) => void
+  // Per-value shortlists from the value pass of "Load concepts", keyed by value.
+  suggestions?: Record<string, ConceptRef[]>
+  onChange: (updated: Record<string, ConceptRef>, suggestions?: Record<string, ConceptRef[]>) => void
 }) {
   const [filter, setFilter] = useState('')
   const lazy = values.length > VALUE_LAZY_THRESHOLD
+
+  // Deciding a value — from its shortlist or any other way — answers the
+  // question the shortlist was asking, so the shortlist goes with it.
+  const withoutSuggestion = (val: string): Record<string, ConceptRef[]> | undefined => {
+    if (!suggestions || !(val in suggestions)) return suggestions
+    const next = { ...suggestions }
+    delete next[val]
+    return Object.keys(next).length > 0 ? next : undefined
+  }
 
   // Domain validation (both "not a valid stem domain" and "mismatches this column's
   // already-established domain") happens upstream in ConceptPicker/ValueConceptRow,
@@ -1304,7 +1436,7 @@ function ValueMappingTable({
   const set = (val: string, c: ConceptRef | null) => {
     const next = { ...mapped }
     if (c) next[val] = c; else delete next[val]
-    onChange(next)
+    onChange(next, withoutSuggestion(val))
   }
 
   const mixedDomains = (() => {
@@ -1377,8 +1509,10 @@ function ValueMappingTable({
                       column={column}
                       concept={mapped[val] ?? null}
                       siblingConcepts={mapped}
+                      suggestions={suggestions?.[val]}
                       onSelect={c => set(val, c)}
                       onClear={() => set(val, null)}
+                      onDismissSuggestions={() => onChange(mapped, withoutSuggestion(val))}
                     />
                   </LazyMount>
                 </td>
@@ -3490,6 +3624,22 @@ const VariableRow = memo(function VariableRow({
             </span>
           )}
 
+          {/* The same for values the value pass couldn't commit — also only
+              actionable by opening the row, so it has to show while collapsed. */}
+          {(() => {
+            const pending = pendingValueReviews(decision)
+            if (pending.length === 0) return null
+            return (
+              <span
+                className="flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 flex-shrink-0"
+                title={`${pending.length} value${pending.length === 1 ? '' : 's'} with candidates to choose from: ${pending.slice(0, 8).join(', ')}${pending.length > 8 ? ', …' : ''}`}
+              >
+                <AlertTriangle className="w-3 h-3" />
+                {pending.length} value{pending.length === 1 ? '' : 's'} to review
+              </span>
+            )
+          })()}
+
           {/* Unit indicator — shown when a unit mapping (fixed or from-column) is configured */}
           {(() => {
             const um = decision.unit_mapping
@@ -3790,7 +3940,8 @@ const VariableRow = memo(function VariableRow({
                   values={info.distinct_values}
                   distinctCount={info.distinct_count}
                   mapped={decision.value_concepts}
-                  onChange={vc => onChange({ ...decision, value_concepts: vc })}
+                  suggestions={decision.value_suggestions}
+                  onChange={(vc, vs) => onChange({ ...decision, value_concepts: vc, value_suggestions: vs })}
                 />
               )}
             </div>
@@ -4125,6 +4276,9 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [matching, setMatching] = useState(false)
   const [matchSummary, setMatchSummary] = useState<MatchSummary | null>(null)
   const [matchError, setMatchError] = useState('')
+  // How far the value pass has got, since it runs a column at a time and takes
+  // far longer than the variable pass. Null while it isn't running.
+  const [valueProgress, setValueProgress] = useState<{ done: number; total: number } | null>(null)
 
   // Data dictionary — what the matcher actually matches on
   const [descriptions, setDescriptions] = useState<Record<string, string>>({})
@@ -4455,12 +4609,20 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   // ── "Load concepts": map every variable through the staged OMOP pipeline ──
 
-  // Which columns a run would send. Every column of every source file that the
-  // user hasn't excluded and that isn't already mapped or consumed as another
-  // variable's sibling field — deliberately across all files, not just the
-  // selected one, so a multi-file project is covered by a single click.
-  const matchTargets = useMemo((): ConceptMatchRequestColumn[] => {
-    const targets: ConceptMatchRequestColumn[] = []
+  // Which columns a run would send, split by what has to be matched for them.
+  // Every column of every source file that the user hasn't excluded and that
+  // isn't already mapped or consumed as another variable's sibling field —
+  // deliberately across all files, not just the selected one, so a multi-file
+  // project is covered by a single click.
+  //
+  // `variables` are matched as one batch (the column is the term); `values` go
+  // through the value endpoint one column at a time, because every value of a
+  // column has to end up in the same domain and that domain is decided per
+  // column. A "map both" column can be in both lists: its variable concept and
+  // its per-value concepts are separate pieces of work.
+  const { variableTargets: matchTargets, valueTargets } = useMemo(() => {
+    const variableTargets: ConceptMatchRequestColumn[] = []
+    const valueTargets: ConceptMatchRequestColumn[] = []
     const seen = new Set<string>()
 
     const consider = (col: string, file: string | null, ownerFile: string | null | undefined) => {
@@ -4472,12 +4634,31 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       if (drugFieldClaims[col]) return
       const d = decisions[col]
       if (d?.enabled === false) return
-      if (d?.variable_concept) return          // already decided — never overwritten
       seen.add(col)
       // The backend fills this in from the stored dictionary when it's absent;
       // sending it too means an edit made seconds ago is used even if its save
       // hasn't landed yet.
-      targets.push({ name: col, table: file, description: descriptions[col] || null })
+      const target = { name: col, table: file, description: descriptions[col] || null }
+
+      // A column mapped by value has no variable concept to find, so it is never
+      // sent to the variable pass — doing so is what used to overwrite the user's
+      // "map values" choice with a "map variable" one.
+      if (d?.strategy !== 'map_values' && !d?.variable_concept) variableTargets.push(target)
+
+      if (d?.strategy === 'map_values' || d?.strategy === 'map_both') {
+        // A column whose every listed value is already decided has nothing left
+        // to match. Values are only known here for the selected file, though —
+        // for every other file the backend reads them — so there the test falls
+        // back to "nothing has been decided or offered for it yet", which at
+        // least keeps a column that has already been through a run from being
+        // matched again on every click.
+        const info = columnInfos[col]
+        const mapped = d.value_concepts || {}
+        const pending = info
+          ? info.distinct_values.some(v => !(v in mapped))
+          : Object.keys(mapped).length === 0 && !d.value_suggestions
+        if (pending) valueTargets.push(target)
+      }
     }
 
     const files = project.source_files || []
@@ -4490,83 +4671,119 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       const file = project.source_filename || null
       for (const col of conceptCols) consider(col, file, structuralColFileMap.get(col))
     }
-    return targets
-  }, [project.source_files, project.source_filename, conceptCols, structuralColFileMap, drugFieldClaims, decisions, descriptions])
+    return { variableTargets, valueTargets }
+  }, [project.source_files, project.source_filename, conceptCols, structuralColFileMap, drugFieldClaims, decisions, descriptions, columnInfos])
 
   // How much of what the next run would send carries a description. Worth
   // showing: name-only is the pipeline's weakest input, and the difference is
   // invisible until the results come back disappointing.
   const describedTargets = matchTargets.filter(t => t.description).length
+  const totalTargets = matchTargets.length + valueTargets.length
 
   const handleLoadConcepts = async () => {
-    if (matching || matchTargets.length === 0) return
+    if (matching || totalTargets === 0) return
     setMatching(true)
     setMatchError('')
     setMatchSummary(null)
+    setValueProgress(null)
+
+    const summary: MatchSummary = {
+      requested: matchTargets.length,
+      accepted: [], review: [], offDomain: [], unmapped: [], failed: [],
+      valueColumns: [],
+    }
+    // What this run has decided so far. Kept locally as well as applied, so the
+    // value pass builds a "map both" column's update on top of the variable
+    // pass's rather than on the state it started from.
+    const updates: Record<string, VariableDecision> = {}
+    const baseOf = (col: string) => updates[col] ?? decisions[col] ?? DEFAULT_DECISION
+
     try {
-      const { results } = await matchConcepts(project.id, matchTargets)
+      if (matchTargets.length > 0) {
+        const { results } = await matchConcepts(project.id, matchTargets)
 
-      const summary: MatchSummary = {
-        requested: matchTargets.length,
-        accepted: [], review: [], offDomain: [], unmapped: [], failed: [],
-      }
-      const updates: Record<string, VariableDecision> = {}
+        for (const r of results as ConceptMatchResult[]) {
+          const col = r.column_name
+          if (r.error) { summary.failed.push(col); continue }
+          if (!r.concept_id || r.status === 'unmapped') { summary.unmapped.push(col); continue }
 
-      for (const r of results as ConceptMatchResult[]) {
-        const col = r.column_name
-        if (r.error) { summary.failed.push(col); continue }
-        if (!r.concept_id || r.status === 'unmapped') { summary.unmapped.push(col); continue }
+          const base = baseOf(col)
+          // A column the user had put on map_both keeps its per-value work; anything
+          // else (including a legacy project's stored "skip") becomes map_variable,
+          // since a variable concept is what the pipeline just produced for it.
+          const strategy: Strategy = base.strategy === 'map_both' ? 'map_both' : 'map_variable'
 
-        const base = decisions[col] ?? DEFAULT_DECISION
-        // A column the user had put on map_both keeps its per-value work; anything
-        // else (including a legacy project's stored "skip") becomes map_variable,
-        // since a variable concept is what the pipeline just produced for it.
-        const strategy: Strategy = base.strategy === 'map_both' ? 'map_both' : 'map_variable'
+          // Below the auto-accept threshold the pipeline is explicitly saying it
+          // isn't sure — so nothing is committed. Its shortlist is offered on the
+          // row instead, top-ranked first, for a human to choose from.
+          if (r.status === 'review') {
+            updates[col] = {
+              ...base,
+              strategy,
+              suggestions: r.candidates.map(c => conceptRefFromCandidate(c, r.decision_reason)),
+            }
+            summary.review.push(col)
+            continue
+          }
 
-        // Below the auto-accept threshold the pipeline is explicitly saying it
-        // isn't sure — so nothing is committed. Its shortlist is offered on the
-        // row instead, top-ranked first, for a human to choose from.
-        if (r.status === 'review') {
+          const numericDomain = r.domain_id ? DOMAIN_STRING_MAP[r.domain_id.toLowerCase()] : undefined
           updates[col] = {
             ...base,
             strategy,
-            suggestions: r.candidates.map(c => conceptRefFromCandidate(c, r.decision_reason)),
+            suggestions: undefined,
+            variable_concept: {
+              concept_id: r.concept_id,
+              concept_name: r.concept_name || `Concept ${r.concept_id}`,
+              vocabulary_id: r.vocabulary_id ?? undefined,
+              domain: r.domain_id ?? undefined,
+              domain_id: numericDomain,
+              // Kept so the row can show how sure the pipeline was, and why.
+              score: r.confidence / 100,
+              justification: `${r.status.replace('_', ' ')} · ${r.decision_reason}`,
+            },
+            domain_id: numericDomain ?? base.domain_id,
           }
-          summary.review.push(col)
-          continue
+
+          if (numericDomain === undefined) summary.offDomain.push(col)
+          else summary.accepted.push(col)
         }
 
-        const numericDomain = r.domain_id ? DOMAIN_STRING_MAP[r.domain_id.toLowerCase()] : undefined
-        updates[col] = {
-          ...base,
-          strategy,
-          suggestions: undefined,
-          variable_concept: {
-            concept_id: r.concept_id,
-            concept_name: r.concept_name || `Concept ${r.concept_id}`,
-            vocabulary_id: r.vocabulary_id ?? undefined,
-            domain: r.domain_id ?? undefined,
-            domain_id: numericDomain,
-            // Kept so the row can show how sure the pipeline was, and why.
-            score: r.confidence / 100,
-            justification: `${r.status.replace('_', ' ')} · ${r.decision_reason}`,
-          },
-          domain_id: numericDomain ?? base.domain_id,
-        }
-
-        if (numericDomain === undefined) summary.offDomain.push(col)
-        else summary.accepted.push(col)
+        // One state update for the whole pass, so hundreds of columns don't each
+        // trigger a render pass and an autosave.
+        if (Object.keys(updates).length > 0) applyBatch({ ...updates })
       }
 
-      // One state update for the whole run, so hundreds of columns don't each
-      // trigger a render pass and an autosave.
-      if (Object.keys(updates).length > 0) applyBatch(updates)
+      // The value pass: one request per column, because the domain every value of
+      // a column is forced into is decided from that column's own values. Sent
+      // one at a time rather than in a single request so the button can report
+      // progress through what is a much longer run than the variable pass, and so
+      // a failure halfway through keeps what it already found.
+      for (let i = 0; i < valueTargets.length; i++) {
+        const target = valueTargets[i]
+        setValueProgress({ done: i, total: valueTargets.length })
+        const { columns } = await matchColumnValues(project.id, [target])
+        const answer = columns[0]
+        if (!answer) continue
+        const { decision, stats } = applyValueMatch(answer, baseOf(answer.column_name))
+        updates[answer.column_name] = decision
+        summary.valueColumns.push(stats)
+        // Applied per column: a run over many columns takes a while, and work
+        // already found should be on screen (and autosaved) before it ends.
+        applyBatch({ [answer.column_name]: decision })
+      }
+
       setMatchSummary(summary)
     } catch (e: unknown) {
       const err = e as { response?: { data?: { detail?: string } } }
       setMatchError(err?.response?.data?.detail || 'Concept matching failed.')
+      // Whatever the passes got through before the failure is already applied, so
+      // it is also worth showing — an empty summary would imply nothing happened.
+      if (summary.accepted.length + summary.review.length + summary.valueColumns.length > 0) {
+        setMatchSummary(summary)
+      }
     } finally {
       setMatching(false)
+      setValueProgress(null)
     }
   }
 
@@ -4794,24 +5011,30 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           <div className="flex items-center justify-end gap-2 flex-wrap">
             <button
               onClick={handleLoadConcepts}
-              disabled={matching || matcherHealth?.available === false || matchTargets.length === 0}
+              disabled={matching || matcherHealth?.available === false || totalTargets === 0}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:hover:bg-indigo-600 flex-shrink-0"
               title={
                 matcherHealth === null
                   ? 'Checking whether the concept matcher is running…'
                   : !matcherHealth.available
                     ? `Concept matcher unavailable — ${matcherHealth.detail || 'the service is not running'}`
-                    : matchTargets.length === 0
-                      ? 'Every included variable already has a concept.'
-                      : `Map ${matchTargets.length} unmapped variable${matchTargets.length > 1 ? 's' : ''} across all source files through the staged OMOP matching pipeline. `
-                        + `${describedTargets} of them have a description (add more under "Descriptions" for better matches). `
-                        + 'Variables that already have a concept are never overwritten; a matched variable is switched to "Map variable".'
+                    : totalTargets === 0
+                      ? 'Every included variable already has a concept, and every value of every "map values" variable is decided.'
+                      : `Map ${matchTargets.length} unmapped variable${matchTargets.length === 1 ? '' : 's'} across all source files through the staged OMOP matching pipeline `
+                        + `(${describedTargets} of them have a description — add more under "Descriptions" for better matches)`
+                        + (valueTargets.length > 0
+                          ? `, then every distinct value of ${valueTargets.length} "map values" variable${valueTargets.length === 1 ? '' : 's'}. `
+                            + 'Values are matched twice per variable: once to find which OMOP domain most of them fall in, then again with the matcher confined to that domain, so all of a variable\'s values end up in the same one. '
+                          : '. ')
+                        + 'Nothing already decided is overwritten; a matched variable is switched to "Map variable".'
               }
             >
               {matching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
               {matching
-                ? `Matching ${matchTargets.length} variables…`
-                : `Load concepts${matchTargets.length > 0 ? ` (${matchTargets.length})` : ''}`}
+                ? valueProgress
+                  ? `Matching values… (${valueProgress.done + 1}/${valueProgress.total})`
+                  : `Matching ${matchTargets.length} variables…`
+                : `Load concepts${totalTargets > 0 ? ` (${totalTargets})` : ''}`}
             </button>
             <button
               onClick={() => setDictOpen(o => !o)}
@@ -5011,7 +5234,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             <div className="flex items-center gap-2">
               <Wand2 className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
               <span className="font-semibold text-indigo-900">
-                Matched {matchSummary.requested} variable{matchSummary.requested > 1 ? 's' : ''}
+                Matched {matchSummary.requested} variable{matchSummary.requested === 1 ? '' : 's'}
+                {matchSummary.valueColumns.length > 0 && (
+                  <> and the values of {matchSummary.valueColumns.length} more</>
+                )}
               </span>
               <button
                 type="button"
@@ -5062,6 +5288,67 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                 )}
               </div>
             )}
+
+            {/* The value half of the run: totals, then the domain each variable's
+                values were confined to — the decision the second pass turned on. */}
+            {matchSummary.valueColumns.length > 0 && (() => {
+              const total = (pick: (s: ValueMatchSummary) => number) =>
+                matchSummary.valueColumns.reduce((n, s) => n + pick(s), 0)
+              const accepted = total(s => s.accepted)
+              const review = total(s => s.review)
+              const unmapped = total(s => s.unmapped)
+              const failed = total(s => s.failed)
+              const rematched = total(s => s.rematched)
+              const noDomain = matchSummary.valueColumns.filter(s => !s.domain)
+              // A column whose values all agree on a domain the stem table can't
+              // route gets nothing committed at all, which is worth saying out
+              // loud — otherwise it just looks like the matcher found nothing.
+              const offDomain = matchSummary.valueColumns.filter(
+                s => s.domain && DOMAIN_STRING_MAP[s.domain.toLowerCase()] === undefined,
+              )
+              return (
+                <div className="flex flex-col gap-1 border-t border-indigo-200 pt-2 text-indigo-900">
+                  <div className="flex flex-wrap gap-x-4 gap-y-1">
+                    <span className="font-semibold">Values:</span>
+                    <span><strong>{accepted}</strong> set automatically</span>
+                    <span><strong>{review}</strong> need you to pick</span>
+                    <span><strong>{unmapped}</strong> left unmapped</span>
+                    {failed > 0 && (
+                      <span className="text-red-700"><strong>{failed}</strong> failed</span>
+                    )}
+                    {rematched > 0 && (
+                      <span className="text-indigo-700">
+                        <strong>{rematched}</strong> searched again inside the chosen domain
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-indigo-800">
+                    <span className="font-medium">One domain per variable</span> —{' '}
+                    {matchSummary.valueColumns
+                      .filter(s => s.domain)
+                      .map(s => `${s.column} → ${s.domain}`)
+                      .join(', ') || 'none decided'}
+                  </p>
+                  {noDomain.length > 0 && (
+                    <p className="text-indigo-800">
+                      <span className="font-medium">No domain found</span> — the first pass matched nothing for
+                      these, so their values are still to map by hand:{' '}
+                      <span className="font-mono">{noDomain.map(s => s.column).join(', ')}</span>
+                    </p>
+                  )}
+                  {offDomain.length > 0 && (
+                    <p className="text-indigo-800">
+                      <span className="font-medium">Domain not supported</span> — their values agreed on an OMOP
+                      domain that isn't one of the five stem-table domains, which no stem-table row can be
+                      built from, so nothing was set for them:{' '}
+                      <span className="font-mono">
+                        {offDomain.map(s => `${s.column} → ${s.domain}`).join(', ')}
+                      </span>
+                    </p>
+                  )}
+                </div>
+              )
+            })()}
           </div>
         )}
 

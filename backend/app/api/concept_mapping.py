@@ -5,6 +5,7 @@ Endpoints:
   GET  /projects/concept-lookup              → look up domain for a concept_id in CONCEPT.csv
   GET  /projects/concept-matcher/health      → readiness of the bulk matching pipeline
   POST /projects/{id}/match-concepts         → map a list of source columns to concepts in bulk
+  POST /projects/{id}/match-values           → map a column's distinct values, one domain per column
   GET  /projects/{id}/column-descriptions    → the project's data dictionary
   PUT  /projects/{id}/column-descriptions    → replace it (also used for single-column edits)
   POST /projects/{id}/column-descriptions/upload   → merge in an uploaded CSV/Excel dictionary
@@ -21,6 +22,7 @@ import io
 import shutil
 import tempfile
 import zipfile
+from collections import Counter
 from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -265,6 +267,55 @@ class MatchConceptsPayload(BaseModel):
     # the project id so one project's overrides never leak into another's.
     source_system: str | None = None
     candidates: int = 5
+    # Restricts this run's candidates to these OMOP domains. None leaves the
+    # matcher on whatever it was configured with; [] lifts the restriction.
+    domains: list[str] | None = None
+
+
+async def _post_match(
+    columns: list[dict[str, Any]],
+    source_system: str,
+    note: str,
+    candidates: int,
+    domains: list[str] | None = None,
+) -> dict[str, Any]:
+    """One POST to the matcher's /match, with its errors translated to ours.
+
+    Shared by both matching endpoints so the domain-restricted value passes
+    below reach the pipeline exactly the way a plain column run does.
+    """
+    import httpx
+
+    body: dict[str, Any] = {
+        "columns": columns,
+        "source_system": source_system,
+        "note": note,
+        "candidates": candidates,
+    }
+    # Absent and empty mean different things to the matcher, so the key is only
+    # sent when the caller actually asked for a restriction.
+    if domains is not None:
+        body["domains"] = domains
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.concept_matcher_timeout) as client:
+            resp = await client.post(
+                f"{settings.concept_matcher_url.rstrip('/')}/match", json=body,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as exc:
+        # The matcher answers 400 for a malformed column list or an unknown
+        # domain name, and 503 when the vocabulary database is down — pass its
+        # own reason through rather than flattening both into a generic failure.
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("detail", detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=exc.response.status_code, detail=detail)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Concept matcher unavailable: {exc}")
 
 
 @router.get("/concept-matcher/health")
@@ -323,8 +374,6 @@ async def match_concepts(
     if not payload.columns:
         return {"run_id": 0, "results": []}
 
-    import httpx
-
     described = project.column_descriptions or {}
     columns = []
     for column in payload.columns:
@@ -333,32 +382,159 @@ async def match_concepts(
             entry["description"] = described.get(entry["name"]) or None
         columns.append(entry)
 
-    body = {
-        "columns": columns,
-        "source_system": payload.source_system or project_id,
-        "note": f"ETL Auto-Designer project {project_id}",
-        "candidates": payload.candidates,
-    }
+    return await _post_match(
+        columns,
+        payload.source_system or project_id,
+        f"ETL Auto-Designer project {project_id}",
+        payload.candidates,
+        payload.domains,
+    )
 
-    try:
-        async with httpx.AsyncClient(timeout=settings.concept_matcher_timeout) as client:
-            resp = await client.post(
-                f"{settings.concept_matcher_url.rstrip('/')}/match", json=body,
+
+# ── Bulk value matching (the same pipeline, one domain per column) ───────────
+
+# A value concept is only ever routed through the stem table, which knows these
+# five domains — so the domain a column's values are forced into has to be one
+# of them for the result to be usable downstream (see ValueConceptRow in the
+# Concepts step, which rejects anything else when a value is mapped by hand).
+STEM_DOMAINS = ("Measurement", "Observation", "Drug", "Procedure", "Condition")
+
+# Values of one column per matcher request. The matcher caps a request at 2000
+# columns, and a narrower batch also keeps its corpus-adaptive stopwords (which
+# are computed over the whole batch) from being derived from an unwieldy one.
+VALUE_CHUNK = 500
+
+
+def _value_domain(result: dict[str, Any]) -> str | None:
+    """The OMOP domain a value's selected concept sits in, if one was selected."""
+    if result.get("error") or not result.get("concept_id"):
+        return None
+    return result.get("domain_id") or None
+
+
+class MatchValuesPayload(BaseModel):
+    # The columns whose distinct values should be matched. The values themselves
+    # are read from the source files here rather than posted, so the caller
+    # doesn't have to have loaded every file's values to run this.
+    columns: list[MatchColumn]
+    source_system: str | None = None
+    candidates: int = 5
+    # Values per column, in source order. A column with more distinct values
+    # than this is a poor "map values" candidate anyway, and matching thousands
+    # of them would dominate the run.
+    max_values: int = 500
+
+
+@router.post("/{project_id}/match-values")
+async def match_values(
+    project_id: str,
+    payload: MatchValuesPayload,
+    db: Session = Depends(get_db),
+):
+    """Map each listed column's distinct values onto concepts, one domain per column.
+
+    Two passes per column, which is what a column mapped by value needs and what
+    a single /match-concepts run cannot express: every value of one variable has
+    to land in the same OMOP domain (they all become rows of the same stem-table
+    domain), but which domain that is only becomes apparent once the values have
+    been looked up. So pass 1 matches every value unrestricted and counts the
+    domains that come back; the most frequent one — among the five stem domains
+    if any of them appear at all — wins. Pass 2 then discards every concept
+    outside that domain and searches those values again with the matcher
+    restricted to it, so a value whose best overall match was off-domain still
+    gets the best in-domain one instead of being dropped.
+
+    Per column the response carries the chosen domain, the vote it came from, and
+    one result per value in the matcher's own shape, keyed by the source value.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not settings.concept_matcher_url:
+        raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+    if not payload.columns:
+        return {"columns": []}
+
+    described = project.column_descriptions or {}
+    all_values = _all_distinct_values(project, max_values=payload.max_values)
+    source_system = payload.source_system or project_id
+    note = f"ETL Auto-Designer project {project_id} (values)"
+
+    async def match_values_of(
+        column: MatchColumn, values: list[str], domains: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """One pass over `values`, in order, chunked. The value is the term to
+        match; the column's description (or its name) rides along as the context
+        that tells the pipeline what kind of value it is looking at."""
+        context = (column.description or "").strip() or described.get(column.name) or column.name
+        results: list[dict[str, Any]] = []
+        for start in range(0, len(values), VALUE_CHUNK):
+            chunk = values[start:start + VALUE_CHUNK]
+            answer = await _post_match(
+                [{"name": v, "description": context, "table": column.table} for v in chunk],
+                source_system, note, payload.candidates, domains,
             )
-            resp.raise_for_status()
-            return resp.json()
-    except httpx.HTTPStatusError as exc:
-        # The matcher answers 400 for a malformed column list and 503 when the
-        # vocabulary database is down — pass its own reason through rather than
-        # flattening both into a generic failure.
-        detail = exc.response.text
-        try:
-            detail = exc.response.json().get("detail", detail)
-        except Exception:
-            pass
-        raise HTTPException(status_code=exc.response.status_code, detail=detail)
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Concept matcher unavailable: {exc}")
+            # Results come back in request order, so they are paired positionally
+            # rather than by name — the matcher strips and normalizes what it is
+            # given, and a value is not guaranteed to survive that unchanged.
+            answered = answer.get("results") or []
+            if len(answered) != len(chunk):
+                # One result per term is the contract pairing relies on, so a
+                # mismatch is reported rather than silently misaligning values.
+                raise HTTPException(
+                    status_code=502,
+                    detail=(f"Matcher returned {len(answered)} results for {len(chunk)} "
+                            f"values of {column.name}"),
+                )
+            results.extend(answered)
+        return results
+
+    columns_out: list[dict[str, Any]] = []
+
+    for column in payload.columns:
+        values = all_values.get(column.name) or []
+        entry: dict[str, Any] = {
+            "column_name": column.name,
+            "source_table": column.table,
+            "values_requested": len(values),
+            "domain": None,
+            "domain_votes": {},
+            "rematched": 0,
+            "results": {},
+        }
+        if not values:
+            columns_out.append(entry)
+            continue
+
+        first = await match_values_of(column, values, None)
+        votes = Counter(d for d in (_value_domain(r) for r in first) if d)
+        entry["domain_votes"] = dict(votes)
+        stem_votes = Counter({d: n for d, n in votes.items() if d in STEM_DOMAINS})
+        # most_common is insertion-ordered on ties, and insertion order here is
+        # the order the values appear in the source — so a tie goes to whichever
+        # domain the column's first values pointed at.
+        winner = (stem_votes or votes).most_common(1)[0][0] if votes else None
+        entry["domain"] = winner
+
+        results = dict(zip(values, first))
+        if winner:
+            # Pass 2: everything that didn't land in the winning domain is thrown
+            # away and searched again with the matcher confined to that domain.
+            stale = [v for v, r in results.items() if _value_domain(r) != winner]
+            if stale:
+                results.update(zip(stale, await match_values_of(column, stale, [winner])))
+                entry["rematched"] = len(stale)
+            # A candidate outside the chosen domain is not an option for this
+            # column, so it is dropped from the shortlists the caller offers.
+            for result in results.values():
+                result["candidates"] = [
+                    c for c in (result.get("candidates") or []) if c.get("domain_id") == winner
+                ]
+
+        entry["results"] = results
+        columns_out.append(entry)
+
+    return {"columns": columns_out}
 
 
 # ── Column unique values ────────────────────────────────────────────────────
@@ -519,15 +695,38 @@ def download_mapping_files(project_id: str, db: Session = Depends(get_db)):
 
 # ── Download mapping summary as Excel ───────────────────────────────────────
 
+# Last answer from _all_distinct_values, as (key, values). One entry is enough:
+# the callers that repeat (the Concepts step matches one column's values per
+# request, so a run makes one call per column) all ask about the same project
+# back to back, and re-reading every source CSV per column would dominate the run.
+_distinct_values_cache: "tuple[tuple, dict[str, list[str]]] | None" = None
+
+
 def _all_distinct_values(project: Project, max_values: int = 1000) -> dict[str, list[str]]:
     """Distinct source values for every column across every uploaded source file
     (unlike get_column_values above, which only reads the one currently-selected
     file). Lets the mapping summary list every value a column actually has, not
     just the ones the user happened to assign a concept to."""
+    global _distinct_values_cache
+
     file_entries = project.source_files or (
         [{"path": project.source_path, "delimiter": project.source_delimiter, "encoding": project.source_encoding}]
         if project.source_path else []
     )
+
+    # Keyed on what the answer actually depends on, mtime and size included, so a
+    # re-uploaded source is never served from a stale entry.
+    def stat_key(path: str | None) -> tuple:
+        try:
+            st = Path(path).stat() if path else None
+        except OSError:
+            return (path, None, None)
+        return (path, st.st_mtime_ns, st.st_size) if st else (path, None, None)
+
+    key = (project.id, max_values, tuple(stat_key(e.get("path")) for e in file_entries))
+    if _distinct_values_cache and _distinct_values_cache[0] == key:
+        return _distinct_values_cache[1]
+
     result: dict[str, list[str]] = {}
     for entry in file_entries:
         path = entry.get("path")
@@ -544,6 +743,8 @@ def _all_distinct_values(project: Project, max_values: int = 1000) -> dict[str, 
             if col in result:
                 continue
             result[col] = [str(v) for v in df[col].dropna().unique().tolist()[:max_values]]
+
+    _distinct_values_cache = (key, result)
     return result
 
 

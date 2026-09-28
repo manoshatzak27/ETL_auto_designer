@@ -213,6 +213,32 @@ export const matchConcepts = (projectId: string, columns: ConceptMatchRequestCol
     )
     .then(r => r.data)
 
+/** One column's value-level run: every distinct value matched, all of them
+ *  forced into the single domain the first pass voted for. */
+export interface ConceptValueMatchColumn {
+  column_name: string
+  source_table: string | null
+  values_requested: number
+  /** The OMOP domain every result below is restricted to, or null when the first
+   *  pass found no concept at all. */
+  domain: string | null
+  /** How many values voted for each domain in the first pass. */
+  domain_votes: Record<string, number>
+  /** How many values were searched again because the first pass put them outside
+   *  the chosen domain. */
+  rematched: number
+  /** Keyed by the source value. */
+  results: Record<string, ConceptMatchResult>
+}
+
+export const matchColumnValues = (projectId: string, columns: ConceptMatchRequestColumn[]) =>
+  api
+    .post<{ columns: ConceptValueMatchColumn[] }>(
+      `/projects/${projectId}/match-values`,
+      { columns },
+    )
+    .then(r => r.data)
+
 export const getApiHealth = () =>
   api.get<{ status: string; openai_configured: boolean }>('/health').then(r => r.data)
 
