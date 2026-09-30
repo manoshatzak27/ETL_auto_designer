@@ -1786,7 +1786,6 @@ def _person_parse_file_cfg(fc: dict) -> dict:
 
     auto_increment = pid_cfg.get("auto_increment", False)
     pid_col = pid_cfg.get("source_col", "")
-    pid_transform = pid_cfg.get("transform", "int_float")
 
     gender_col = gender_cfg.get("source_col", "")
     gender_map = gender_cfg.get("value_map") or {}
@@ -1826,7 +1825,7 @@ def _person_parse_file_cfg(fc: dict) -> dict:
         eth_col, eth_map, eth_constant = "", {}, 0
 
     return dict(
-        auto_increment=auto_increment, pid_col=pid_col, pid_transform=pid_transform,
+        auto_increment=auto_increment, pid_col=pid_col,
         gender_col=gender_col, gender_map=gender_map, gender_default=gender_default,
         dob_col=dob_col, date_format=date_format,
         birth_time_col=birth_time_col, birth_time_format=birth_time_format,
@@ -2443,7 +2442,6 @@ def _generate_person_script(project) -> str:
     pid_cfg = mappings.get("person_id") or {}
     auto_increment = pid_cfg.get("auto_increment", False)
     pid_col = pid_cfg.get("source_col", "")
-    pid_transform = pid_cfg.get("transform", "int_float")
 
     gender_cfg = mappings.get("gender_concept_id") or {}
     gender_col = gender_cfg.get("source_col", "")
@@ -2809,7 +2807,6 @@ def _generate_visit_occurrence_script(project) -> str:
     pid_cfg = _person_pid_cfg(person_cfg)
     auto_increment = pid_cfg.get("auto_increment", False)
     pid_col = pid_cfg.get("source_col", "")
-    pid_transform = pid_cfg.get("transform", "int_float")
 
     # person_source_value in visit_occurrence must match what person.csv stores —
     # which is always str(_pid_raw) with no type casting.

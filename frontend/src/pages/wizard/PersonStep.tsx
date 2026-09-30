@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig, getColumnValues, detectColumnType, getConceptMatcherHealth, suggestValueConcepts, type ValueConceptSuggestion } from '../../api/client'
+import { updateTableConfig, getTableConfig, getColumnValues, getConceptMatcherHealth, suggestValueConcepts, type ValueConceptSuggestion } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, PersonConfig, PersonFileConfig, RaceEthnicityMapping, SourceFile, LocationConfig } from '../../types'
 import WizardLayout from './WizardLayout'
@@ -12,7 +12,6 @@ import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Select } from '@/components/ui/select'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { FileText, Info, Loader2, Sparkles } from 'lucide-react'
@@ -26,7 +25,7 @@ interface Props {
 
 const DEFAULT_FILE_CFG: PersonFileConfig = {
   mappings: {
-    person_id: { source_col: '', transform: 'int_float', auto_increment: false },
+    person_id: { source_col: '', auto_increment: false },
     gender_concept_id: { source_col: '', value_map: {}, default: 0 },
     year_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_year' },
     month_of_birth: { source_col: '', date_format: '%Y-%m-%d', transform: 'date_month' },
@@ -79,7 +78,6 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const [genderMode, setGenderMode] = useState<'column' | 'default'>('column')
   const [raceMode, setRaceMode] = useState<'column' | 'default'>('column')
   const [ethnicityMode, setEthnicityMode] = useState<'column' | 'default'>('column')
-  const [detectedTransform, setDetectedTransform] = useState<string | null>(null)
 
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
@@ -118,22 +116,6 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const locPidCol = !locAutoIncrement ? (locCfg.file_configs?.[activeFilename]?.person_id_col ?? '') : ''
   const pidLockedFromLocation = locAutoIncrement || !!locPidCol
 
-  // ── Auto-detect person_id transform ──────────────────────────────────
-  const pidCol = activeCfg.mappings.person_id.source_col
-  useEffect(() => {
-    if (!pidCol || activeCfg.mappings.person_id.auto_increment) {
-      setDetectedTransform(null)
-      return
-    }
-    detectColumnType(project.id, pidCol, activeFilename || undefined).then(res => {
-      setDetectedTransform(res.transform)
-      setActiveCfg(prev => ({
-        ...prev,
-        mappings: { ...prev.mappings, person_id: { ...prev.mappings.person_id, transform: res.transform } },
-      }))
-    }).catch(() => setDetectedTransform(null))
-  }, [pidCol, project.id, activeCfg.mappings.person_id.auto_increment, activeFilename])
-
   // ── Apply a PersonFileConfig into the UI state ────────────────────────
   const applyFileConfig = (fc: PersonFileConfig, infos: Record<string, ColumnInfo>) => {
     const m = fc.mappings
@@ -143,7 +125,6 @@ export default function PersonStep({ project, onUpdate }: Props) {
     }
 
     setActiveCfg(deepCopy(fc))
-    setDetectedTransform(null)
     setSuggestions(NO_SUGGESTIONS)
     setAutoFillSummary(null)
 
@@ -474,8 +455,8 @@ export default function PersonStep({ project, onUpdate }: Props) {
         const filePidCol = locAutoIncSave ? '' : (locCfgSave.file_configs?.[fn]?.person_id_col ?? '')
         if (locAutoIncSave || filePidCol) {
           const injected = locAutoIncSave
-            ? { source_col: '', transform: 'int_float' as const, auto_increment: true }
-            : { source_col: filePidCol, transform: cfg.mappings.person_id.transform ?? 'int_float' as const, auto_increment: false }
+            ? { source_col: '', auto_increment: true }
+            : { source_col: filePidCol, auto_increment: false }
           return [fn, { ...cfg, mappings: { ...cfg.mappings, person_id: injected } }]
         }
         return [fn, cfg]
@@ -716,34 +697,14 @@ export default function PersonStep({ project, onUpdate }: Props) {
                   </label>
 
                   {!activeCfg.mappings.person_id.auto_increment && (
-                    <>
-                      <FieldMapper
-                        label="Patient ID column"
-                        sourceColumns={availCols(activeCfg.mappings.person_id.source_col)}
-                        value={activeCfg.mappings.person_id.source_col}
-                        onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
-                        required
-                        hint="Will be cast using the transform selected below. Used as person_id."
-                      />
-
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <Label>Patient ID transform</Label>
-                          {detectedTransform && (
-                            <span className="text-xs text-green-600 dark:text-green-400 font-medium">(auto-detected)</span>
-                          )}
-                        </div>
-                        <Select
-                          value={activeCfg.mappings.person_id.transform}
-                          onChange={e => { setDetectedTransform(null); setField(['mappings', 'person_id', 'transform'], e.target.value) }}
-                          className="mt-1"
-                        >
-                          <option value="int_float">int(float(x)) — for "1.0", "2.0" style IDs</option>
-                          <option value="int">int(x) — for "1", "2" style IDs</option>
-                          <option value="str">str(x) — keep as string</option>
-                        </Select>
-                      </div>
-                    </>
+                    <FieldMapper
+                      label="Patient ID column"
+                      sourceColumns={availCols(activeCfg.mappings.person_id.source_col)}
+                      value={activeCfg.mappings.person_id.source_col}
+                      onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
+                      required
+                      hint="Kept exactly as it appears in the source, as person_source_value. The OMOP person_id is assigned sequentially."
+                    />
                   )}
                 </>
               )}

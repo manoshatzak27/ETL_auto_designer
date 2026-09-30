@@ -92,9 +92,6 @@ export const getOutputPreview = (projectId: string, filename: string, rows = 20)
     .get<OutputPreview>(`/projects/${projectId}/output-preview?filename=${encodeURIComponent(filename)}&rows=${rows}`)
     .then(r => r.data)
 
-export const detectColumnType = (projectId: string, column: string, filename?: string) =>
-  api.get(`/projects/${projectId}/detect-column-type`, { params: { column, ...(filename ? { filename } : {}) } }).then(r => r.data as { column: string; transform: string })
-
 // ---- ETL Config ----
 export const updateTableConfig = (projectId: string, table: string, config: unknown) =>
   api.patch(`/projects/${projectId}/config`, { table, config }).then(r => r.data)
