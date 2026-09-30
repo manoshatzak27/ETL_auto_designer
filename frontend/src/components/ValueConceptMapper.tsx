@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react'
 import { Label } from '@/components/ui/label'
-import { lookupConceptDomain } from '../api/client'
-import { Loader2, AlertTriangle, CheckCircle, X } from 'lucide-react'
+import { lookupConceptDomain, type ValueConceptSuggestion } from '../api/client'
+import DomainConceptSearch from './DomainConceptSearch'
+import { Loader2, AlertTriangle, CheckCircle, X, Search } from 'lucide-react'
 
 interface Props {
   label: string
@@ -11,20 +12,33 @@ interface Props {
   hint?: string
   /** If set, concept IDs outside this domain are rejected instead of accepted. */
   expectedDomain?: string
+  /** With expectedDomain, enables a concept search beside every value. */
+  projectId?: string
+  /** Suggestions not confident enough to fill in on their own, keyed by source
+   *  value — offered for one-click acceptance on unmapped rows. */
+  suggestions?: Record<string, ValueConceptSuggestion>
 }
 
 function ConceptCell({
   conceptId,
   onChange,
   expectedDomain,
+  projectId,
+  sourceValue,
+  suggestion,
 }: {
   conceptId: number | undefined
   onChange: (v: number | undefined) => void
   expectedDomain?: string
+  projectId?: string
+  sourceValue: string
+  suggestion?: ValueConceptSuggestion
 }) {
+  const [searching, setSearching] = useState(false)
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [domain, setDomain] = useState<string | null>(null)
+  const [conceptName, setConceptName] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
@@ -34,6 +48,7 @@ function ConceptCell({
     if (conceptId === undefined || conceptId < 0) {
       setDomain(null)
       setStandardConcept(null)
+      setConceptName(null)
       setFailed(false)
       setNotFound(false)
       return
@@ -42,6 +57,7 @@ function ConceptCell({
       // 0 is the OMOP "no matching concept" sentinel, not a real vocabulary entry.
       setDomain(null)
       setStandardConcept(null)
+      setConceptName(null)
       setFailed(false)
       setNotFound(false)
       return
@@ -49,11 +65,12 @@ function ConceptCell({
     setLookingUp(true)
     setDomain(null)
     setStandardConcept(null)
+    setConceptName(null)
     setFailed(false)
     setNotFound(false)
     lookupConceptDomain(conceptId)
       .then(res => {
-        if (res.found && res.domain_id) { setDomain(res.domain_id); setStandardConcept(res.standard_concept) }
+        if (res.found && res.domain_id) { setDomain(res.domain_id); setStandardConcept(res.standard_concept); setConceptName(res.concept_name) }
         else { setDomain(null); setNotFound(true) }
       })
       .catch(() => setFailed(true))
@@ -92,6 +109,27 @@ function ConceptCell({
     }
   }
 
+  const canSearch = !!projectId && !!expectedDomain
+  const searchToggle = canSearch && (
+    <button
+      type="button"
+      onClick={() => setSearching(s => !s)}
+      className={`flex-shrink-0 ${searching ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}
+      title={`Search ${expectedDomain} concepts`}
+    >
+      <Search className="w-3.5 h-3.5" />
+    </button>
+  )
+  const searchPanel = projectId && expectedDomain && searching && (
+    <DomainConceptSearch
+      projectId={projectId}
+      domain={expectedDomain}
+      initialQuery={sourceValue}
+      onSelect={c => { onChange(c.concept_id); setPending(''); setCommitError(null); setSearching(false) }}
+      onClose={() => setSearching(false)}
+    />
+  )
+
   if (conceptId !== undefined && conceptId >= 0) {
     const invalid = mismatch || notFound || nonStandard
     const isZero = conceptId === 0
@@ -106,6 +144,7 @@ function ConceptCell({
           <div className={`flex items-center gap-1.5 px-2 py-1 rounded-lg border text-xs flex-1 min-w-0 ${boxClasses}`}>
             {invalid ? <AlertTriangle className="w-3 h-3 flex-shrink-0" /> : <CheckCircle className="w-3 h-3 flex-shrink-0" />}
             <span className="font-semibold font-mono">{conceptId}</span>
+            {conceptName && <span className="truncate" title={conceptName}>({conceptName})</span>}
             {lookingUp ? (
               <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 ml-1 text-green-600" />
             ) : isZero ? (
@@ -124,6 +163,7 @@ function ConceptCell({
           >
             <X className="w-3.5 h-3.5" />
           </button>
+          {searchToggle}
         </div>
         {!lookingUp && mismatch && (
           <p className="text-[11px] text-amber-700">Expected "{expectedDomain}", got "{domain}"</p>
@@ -134,6 +174,7 @@ function ConceptCell({
         {!lookingUp && !mismatch && !notFound && nonStandard && (
           <p className="text-[11px] text-amber-700">Not a standard concept</p>
         )}
+        {searchPanel}
       </div>
     )
   }
@@ -157,13 +198,30 @@ function ConceptCell({
         >
           {lookingUp ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Set'}
         </button>
+        {searchToggle}
       </div>
       {commitError && <p className="text-[11px] text-destructive">{commitError}</p>}
+      {suggestion?.concept_id != null && !searching && (
+        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span className="truncate">
+            Suggested: <span className="text-foreground">{suggestion.concept_name}</span>{' '}
+            <span className="font-mono">({suggestion.concept_id})</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => onChange(suggestion.concept_id as number)}
+            className="text-primary hover:underline flex-shrink-0"
+          >
+            Use
+          </button>
+        </div>
+      )}
+      {searchPanel}
     </div>
   )
 }
 
-export default function ValueConceptMapper({ label, sourceValues, mapping, onChange, hint, expectedDomain }: Props) {
+export default function ValueConceptMapper({ label, sourceValues, mapping, onChange, hint, expectedDomain, projectId, suggestions }: Props) {
   const handleChange = (val: string, conceptId: number | undefined) => {
     const next = { ...mapping }
     if (conceptId !== undefined && conceptId >= 0) {
@@ -197,6 +255,9 @@ export default function ValueConceptMapper({ label, sourceValues, mapping, onCha
                     conceptId={mapping[val]}
                     onChange={id => handleChange(val, id)}
                     expectedDomain={expectedDomain}
+                    projectId={projectId}
+                    sourceValue={val}
+                    suggestion={suggestions?.[val]}
                   />
                 </td>
               </tr>

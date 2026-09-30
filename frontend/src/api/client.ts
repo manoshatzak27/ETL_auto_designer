@@ -239,6 +239,47 @@ export const matchColumnValues = (projectId: string, columns: ConceptMatchReques
     )
     .then(r => r.data)
 
+/** A concept suggested for one source value within a known domain. `source` is
+ *  "rule" when the backend's normalizer resolved it without the matcher. */
+export interface ValueConceptSuggestion {
+  value: string
+  /** What was actually matched, after normalization ("greece" → "Greek"). */
+  term: string
+  source: 'rule' | 'matcher'
+  status: ConceptMatchResult['status']
+  confidence: number
+  concept_id: number | null
+  concept_name: string | null
+  /** Race only: the narrower concept matched before rolling up to its
+   *  top-level category (e.g. Black 38003598 → 8516). */
+  detailed?: { concept_id: number; concept_name: string | null }
+  candidates: ConceptMatchCandidate[]
+}
+
+export const suggestValueConcepts = (projectId: string, domain: string, values: string[]) =>
+  api
+    .post<{ domain: string; results: Record<string, ValueConceptSuggestion> }>(
+      `/projects/${projectId}/suggest-value-concepts`,
+      { domain, values },
+    )
+    .then(r => r.data.results)
+
+/** A search result, in display order: each parent (`is_parent`) is followed by
+ *  the results it covers (`parent_id`); results with no parent come last. */
+export interface DomainSearchResult extends Omit<ConceptMatchCandidate, 'score'> {
+  score: number | null
+  is_parent?: boolean
+  parent_id?: number
+}
+
+export const searchDomainConcepts = (projectId: string, query: string, domain: string, limit = 15) =>
+  api
+    .get<{ term: string; results: DomainSearchResult[] }>(
+      `/projects/${projectId}/search-concepts`,
+      { params: { query, domain, limit } },
+    )
+    .then(r => r.data)
+
 export const getApiHealth = () =>
   api.get<{ status: string; openai_configured: boolean }>('/health').then(r => r.data)
 

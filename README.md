@@ -428,6 +428,73 @@ never leaks into another's.
 
 ---
 
+## Concept IDs in the table steps (Person: auto-fill + search)
+
+The table steps ask for standard concept ids per source value — gender, race,
+ethnicity on the Person step. Rather than looking each one up on Athena, the
+same matcher fills them in and searches them, with one difference from the
+Concepts step: the **domain is known up front** (a gender value can only be a
+Gender concept), so every request is confined to it.
+
+- **Auto-fill concept IDs** (top of the Person step) sends every *unmapped*
+  value of the Gender / Race / Ethnicity columns through
+  `POST /projects/{id}/suggest-value-concepts`. Confident matches are filled in;
+  weaker ones appear under the value as *Suggested: … Use*; the rest stay empty.
+  Values already mapped are never touched, so re-running it is safe.
+- **Search** (🔍 beside every value, and beside the *Set default* inputs) calls
+  `GET /projects/{id}/search-concepts`, restricted to the field's domain. Results
+  are grouped under their **direct parents** (from `concept_ancestor`), so
+  searching *american* shows *American Indian* under *American Indian or Alaska
+  Native* and *African American* under *Black or African American*, then the
+  parentless matches.
+- A set id shows its name in brackets — `8516 (Black or African American)`.
+
+### Why values are rewritten before matching
+
+Raw demographic values are poor input for a text matcher: `M`, `man`, `greece`
+and `PRT` come back unmapped, and `non-hispanic` scores closest to *Hispanic or
+Latino* — the opposite concept. So
+[`concept_normalizer.py`](backend/app/services/concept_normalizer.py) rewrites
+each value for its domain first:
+
+| domain | rule | example |
+|---|---|---|
+| Gender | resolved outright from a word list (English, Spanish, French, German, Greek) — only two standard concepts exist | `M`, `man`, `Άρρεν` → 8507; `f`, `Woman` → 8532 |
+| Race | synonyms; country name / ISO alpha-3 → nationality | `caucasian` → White; `China` → Chinese |
+| Ethnicity | negations; country name / ISO alpha-2 / alpha-3 → nationality | `non-hispanic` → Not Hispanic or Latino; `greece`, `GR`, `PRT` → Greek, Portuguese |
+
+The rewritten term (never an id) is then matched within the domain, so the
+vocabulary decides the concept. The country table lists ~170 countries, and
+every nationality in it was checked to be a standard Race or Ethnicity concept
+name. Deliberate gaps:
+
+- **Numeric gender codes** (`1`/`2`) are not guessed — datasets disagree on which is which.
+- **Two-letter country codes are ethnicity-only**; race columns use short codes that collide (`AI`).
+- **Unknown countries** pass through unchanged and usually stay unmapped — add a row to `_COUNTRIES`.
+- The mapping assumes the column means nationality. A country-of-birth column is mapped just as confidently, and wrongly.
+
+### Race: rolled up to the five OHDSI categories
+
+The OHDSI convention for `person.race_concept_id` is one of 8527 White, 8516
+Black or African American, 8515 Asian, 8657 American Indian or Alaska Native,
+8557 Native Hawaiian or Other Pacific Islander (the original value goes in
+`race_source_value`). A text match on *Black* lands on the narrower 38003598, so
+auto-fill rolls every race match up to its top-level ancestor
+(Black → 8516, Chinese → 8515, European → 8527). Only ~45 race concepts sit under
+those five; a match outside them (*Black African*, *White Roma*) is offered as a
+suggestion, never filled on its own. Search is not rolled up — a detailed concept
+can still be picked deliberately.
+
+Ancestry and the bracketed names are read from the backend's `vocab` schema
+(Finalize → Card 1). Without it loaded, search and auto-fill still work, but
+nothing is rolled up or grouped, and ids show without names.
+
+The other table steps (location, care site, provider, visit, observation period,
+death) use the same `ValueConceptMapper` / `SingleConceptInput` components;
+passing `projectId` there enables the search, and the endpoints take any domain.
+
+---
+
 ## Wizard walkthrough
 
 Steps 2–4 and Death are optional (toggled from the Source step's table picker). All others are required.
@@ -438,7 +505,7 @@ Steps 2–4 and Death are optional (toggled from the Source step's table picker)
 | `location` *      | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings.         |
 | `care-site` *     | Care Site                  | Configure care_site name + place_of_service. Warns if Location has no `cs_*` columns mapped.                                    |
 | `provider` *      | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence.                  |
-| `person`          | Person                     | Person ID, gender, DOB strategy (full date vs year-only), race/ethnicity. Shows the FK columns inherited from earlier steps.     |
+| `person`          | Person                     | Person ID, gender, DOB strategy (full date vs year-only), race/ethnicity. Shows the FK columns inherited from earlier steps. **Auto-fill concept IDs** and per-value domain search replace Athena lookups (see above). |
 | `visit`           | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`.   |
 | `obs-period`      | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
 | `death` *         | Death                      | Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                            |
@@ -574,6 +641,8 @@ Per-project `cdm_<id>` schemas are unaffected.
 | GET    | `/api/projects/concept-matcher/health`            | Is the bulk concept matcher up, and what has it loaded    |
 | POST   | `/api/projects/{id}/match-concepts`               | Map a column list onto standard OMOP concepts in one pass |
 | POST   | `/api/projects/{id}/match-values`                 | Map a column's distinct values, two passes, one domain per column |
+| POST   | `/api/projects/{id}/suggest-value-concepts`       | Suggest a concept per value within a given domain (`{domain, values}`); race rolled up to the five top-level categories |
+| GET    | `/api/projects/{id}/search-concepts`              | Free-text search within one domain (`?query=&domain=`), grouped under direct parents |
 | GET/PUT| `/api/projects/{id}/column-descriptions`          | Read / replace the project's data dictionary              |
 | POST   | `/api/projects/{id}/column-descriptions/upload`   | Merge in a CSV/Excel dictionary (`?replace=true` to overwrite) |
 | GET    | `/api/projects/{id}/column-descriptions/template` | Pre-filled `name,table,description` CSV to fill in        |

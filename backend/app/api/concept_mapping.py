@@ -6,6 +6,8 @@ Endpoints:
   GET  /projects/concept-matcher/health      → readiness of the bulk matching pipeline
   POST /projects/{id}/match-concepts         → map a list of source columns to concepts in bulk
   POST /projects/{id}/match-values           → map a column's distinct values, one domain per column
+  POST /projects/{id}/suggest-value-concepts → suggest a concept per value within a known domain
+  GET  /projects/{id}/search-concepts        → free-text concept search within one domain
   GET  /projects/{id}/column-descriptions    → the project's data dictionary
   PUT  /projects/{id}/column-descriptions    → replace it (also used for single-column edits)
   POST /projects/{id}/column-descriptions/upload   → merge in an uploaded CSV/Excel dictionary
@@ -535,6 +537,272 @@ async def match_values(
         columns_out.append(entry)
 
     return {"columns": columns_out}
+
+
+# ── Domain-bound value suggestions and search (table steps) ─────────────────
+
+# The table steps (person's gender/race/ethnicity, and later the others) map a
+# column's values into one domain that is known up front, unlike /match-values
+# which has to discover it. These two endpoints are that case: the value is
+# normalized for its domain (concept_normalizer), then matched with the matcher
+# confined to the domain. No description is sent — for short demographic terms
+# the column's description only drags the score down ("Greek" alone is an exact
+# match; "Greek" described as "ethnicity" is not).
+
+
+# OHDSI convention for person.race_concept_id: one of these five top-level
+# categories, with the original value kept in race_source_value. The Race
+# domain has ~1400 standard concepts, and a text match on "Black" lands on the
+# narrower 38003598 rather than 8516 — valid, but a `race_concept_id = 8516`
+# filter would miss it. So auto-fill rolls matches up to these five.
+TOP_LEVEL_RACES = {
+    8527: "White",
+    8516: "Black or African American",
+    8515: "Asian",
+    8657: "American Indian or Alaska Native",
+    8557: "Native Hawaiian or Other Pacific Islander",
+}
+
+
+@lru_cache(maxsize=1)
+def _race_rollup() -> dict[int, int]:
+    """Descendant concept_id → its top-level race, from vocab.concept_ancestor.
+
+    Only ~45 concepts sit under the five categories; the rest of the Race
+    domain (e.g. "Black African", "White Roma") has no top-level ancestor at
+    all. Raises when the vocabulary isn't loaded, so the failure isn't cached.
+    """
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = settings.omop_vocab_schema or "vocab"
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT descendant_concept_id, ancestor_concept_id FROM {schema}.concept_ancestor "
+                    "WHERE ancestor_concept_id = ANY(%s) AND descendant_concept_id <> ancestor_concept_id"
+                ).format(schema=pgsql.Identifier(schema)),
+                (list(TOP_LEVEL_RACES),),
+            )
+            return {int(d): int(a) for d, a in cur.fetchall()}
+
+
+def _roll_up_race(entry: dict[str, Any]) -> None:
+    """Move a race suggestion onto its top-level category, in place.
+
+    A concept with no top-level ancestor (or when the ancestry can't be read)
+    is demoted to a suggestion: still offered, never filled in on its own.
+    """
+    concept_id = entry.get("concept_id")
+    if not concept_id or concept_id in TOP_LEVEL_RACES:
+        return
+    try:
+        top = _race_rollup().get(concept_id)
+    except Exception as exc:
+        print(f"[suggest-value-concepts] concept_ancestor query failed: {exc}")
+        top = None
+    if top:
+        entry["detailed"] = {"concept_id": concept_id, "concept_name": entry.get("concept_name")}
+        entry["concept_id"] = top
+        entry["concept_name"] = TOP_LEVEL_RACES[top]
+    elif entry.get("status") == "auto_accept":
+        entry["status"] = "review"
+
+
+def _direct_parents(concept_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """concept_id → its direct parents (one level up in concept_ancestor) that
+    are valid standard concepts in the same domain, as search candidates."""
+    if not concept_ids:
+        return {}
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = pgsql.Identifier(settings.omop_vocab_schema or "vocab")
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT a.descendant_concept_id, p.concept_id, p.concept_name, p.domain_id, "
+                    "p.vocabulary_id, p.concept_class_id, p.concept_code "
+                    "FROM {s}.concept_ancestor a "
+                    "JOIN {s}.concept c ON c.concept_id = a.descendant_concept_id "
+                    "JOIN {s}.concept p ON p.concept_id = a.ancestor_concept_id "
+                    "WHERE a.descendant_concept_id = ANY(%s) AND a.min_levels_of_separation = 1 "
+                    "AND p.standard_concept = 'S' AND p.invalid_reason IS NULL AND p.domain_id = c.domain_id "
+                    "ORDER BY a.descendant_concept_id, p.concept_id"
+                ).format(s=schema),
+                ([int(c) for c in concept_ids],),
+            )
+            out: dict[int, list[dict[str, Any]]] = {}
+            for child, *parent in cur.fetchall():
+                out.setdefault(int(child), []).append(dict(zip(
+                    ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code"),
+                    parent,
+                )))
+            return out
+
+
+def _parents_first(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Group search results under their broader concepts.
+
+    Flat list, in display order: each direct parent of a result (added if the
+    text search didn't find it) marked `is_parent`, immediately followed by the
+    results it covers, marked `parent_id`. Results with no parent come last,
+    without `parent_id`. A result with several parents is listed under each.
+    Parents appear in the order of the first result they cover. Unchanged when
+    the ancestry can't be read.
+    """
+    try:
+        parents = _direct_parents([c["concept_id"] for c in candidates if c.get("concept_id")])
+    except Exception as exc:
+        print(f"[search-concepts] concept_ancestor query failed: {exc}")
+        return candidates
+
+    by_id = {c["concept_id"]: c for c in candidates}
+    groups: dict[int, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    for child in candidates:
+        for parent in parents.get(child["concept_id"], []):
+            pid = parent["concept_id"]
+            if pid not in groups:
+                head = dict(by_id.get(pid) or {**parent, "score": None})
+                head["is_parent"] = True
+                groups[pid] = (head, [])
+            groups[pid][1].append({**child, "parent_id": pid})
+
+    out: list[dict[str, Any]] = []
+    for head, children in groups.values():
+        out.append(head)
+        out.extend(children)
+    grouped = set(groups) | {c["concept_id"] for _, cs in groups.values() for c in cs}
+    out.extend(c for c in candidates if c["concept_id"] not in grouped)
+    return out
+
+
+def _suggestion(value: str, term: str, result: dict[str, Any] | None) -> dict[str, Any]:
+    """One value's answer, in the shape both endpoints below return."""
+    result = result or {}
+    return {
+        "value": value,
+        "term": term,
+        "source": "matcher",
+        "status": result.get("status") or "unmapped",
+        "confidence": result.get("confidence") or 0,
+        "concept_id": result.get("concept_id"),
+        "concept_name": result.get("concept_name"),
+        "candidates": result.get("candidates") or [],
+    }
+
+
+class SuggestValueConceptsPayload(BaseModel):
+    domain: str
+    values: list[str]
+    candidates: int = 5
+
+
+@router.post("/{project_id}/suggest-value-concepts")
+async def suggest_value_concepts(
+    project_id: str,
+    payload: SuggestValueConceptsPayload,
+    db: Session = Depends(get_db),
+):
+    """Suggest a standard concept in `domain` for each source value.
+
+    `status` is the matcher's own verdict ("auto_accept" / "review" /
+    "unmapped"), or "auto_accept" with `source: "rule"` for a value the
+    normalizer resolved without it (gender). The caller decides what to fill in;
+    the intended use is auto_accept filled, review offered, unmapped left alone.
+
+    Race matches are rolled up to the five top-level OHDSI categories
+    (`detailed` then keeps the concept actually matched); a race concept
+    outside that hierarchy comes back as "review" at best.
+    """
+    from app.services.concept_normalizer import GENDER_FEMALE, GENDER_MALE, gender_concept, normalize_term
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    values = list(dict.fromkeys(v for v in payload.values if str(v).strip()))
+    out: dict[str, dict[str, Any]] = {}
+    pending: dict[str, list[str]] = {}   # term → the source values it came from
+
+    for value in values:
+        if payload.domain.lower() == "gender":
+            concept_id = gender_concept(value)
+            if concept_id:
+                entry = _suggestion(value, value, None)
+                entry.update(
+                    source="rule", status="auto_accept", confidence=100.0, concept_id=concept_id,
+                    concept_name="MALE" if concept_id == GENDER_MALE else "FEMALE",
+                )
+                out[value] = entry
+                continue
+        pending.setdefault(normalize_term(value, payload.domain), []).append(value)
+
+    if pending:
+        if not settings.concept_matcher_url:
+            raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+        terms = list(pending)
+        for start in range(0, len(terms), VALUE_CHUNK):
+            chunk = terms[start:start + VALUE_CHUNK]
+            answer = await _post_match(
+                [{"name": t} for t in chunk], project_id,
+                f"ETL Auto-Designer project {project_id} ({payload.domain} values)",
+                payload.candidates, [payload.domain],
+            )
+            answered = answer.get("results") or []
+            if len(answered) != len(chunk):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Matcher returned {len(answered)} results for {len(chunk)} terms",
+                )
+            for term, result in zip(chunk, answered):
+                for value in pending[term]:
+                    out[value] = _suggestion(value, term, result)
+                    if payload.domain.lower() == "race":
+                        _roll_up_race(out[value])
+
+    return {"domain": payload.domain, "results": {v: out[v] for v in values}}
+
+
+@router.get("/{project_id}/search-concepts")
+async def search_concepts(
+    project_id: str,
+    query: str,
+    domain: str,
+    limit: int = 15,
+    db: Session = Depends(get_db),
+):
+    """Ranked standard concepts in `domain` for a free-text query — the search
+    box beside every concept field, so the user never has to go to Athena.
+    Direct parents of the matches are listed first (see _parents_first)."""
+    from app.services.concept_normalizer import normalize_term
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not settings.concept_matcher_url:
+        raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+    if not query.strip():
+        return {"term": "", "results": []}
+
+    term = normalize_term(query, domain)
+    answer = await _post_match(
+        [{"name": term}], project_id, f"ETL Auto-Designer project {project_id} (search)",
+        max(1, min(limit, 25)), [domain],
+    )
+    result = (answer.get("results") or [{}])[0]
+    candidates = list(result.get("candidates") or [])
+    # The selected concept normally heads the candidate list; keep it first
+    # even if the matcher trimmed it out.
+    if result.get("concept_id") and all(c.get("concept_id") != result["concept_id"] for c in candidates):
+        candidates.insert(0, {
+            k: result.get(k) for k in (
+                "concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code",
+            )
+        } | {"score": result.get("confidence")})
+    return {"term": term, "results": _parents_first(candidates)}
 
 
 # ── Column unique values ────────────────────────────────────────────────────

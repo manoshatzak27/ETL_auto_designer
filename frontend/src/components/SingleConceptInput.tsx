@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { lookupConceptDomain } from '../api/client'
-import { Loader2, AlertTriangle, CheckCircle, X } from 'lucide-react'
+import DomainConceptSearch from './DomainConceptSearch'
+import { Loader2, AlertTriangle, CheckCircle, X, Search } from 'lucide-react'
 
 interface Props {
   value: number | null | undefined
@@ -10,12 +11,16 @@ interface Props {
   className?: string
   /** If set, concept IDs outside this domain are rejected instead of accepted. */
   expectedDomain?: string
+  /** With expectedDomain, enables a concept search beside the input. */
+  projectId?: string
 }
 
-export default function SingleConceptInput({ value, onChange, onConceptName, placeholder = 'Concept ID', className, expectedDomain }: Props) {
+export default function SingleConceptInput({ value, onChange, onConceptName, placeholder = 'Concept ID', className, expectedDomain, projectId }: Props) {
+  const [searching, setSearching] = useState(false)
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
   const [domain, setDomain] = useState<string | null>(null)
+  const [conceptName, setConceptName] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
@@ -27,6 +32,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
     if (!hasValue) {
       setDomain(null)
       setStandardConcept(null)
+      setConceptName(null)
       setFailed(false)
       setNotFound(false)
       return
@@ -34,12 +40,14 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
     setLookingUp(true)
     setDomain(null)
     setStandardConcept(null)
+    setConceptName(null)
     setFailed(false)
     setNotFound(false)
     lookupConceptDomain(value as number)
       .then(res => {
         if (res.found && res.domain_id) {
           setDomain(res.domain_id)
+          setConceptName(res.concept_name ?? null)
           setStandardConcept(res.standard_concept)
           onConceptName?.(res.concept_name ?? null)
         } else {
@@ -85,6 +93,33 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
     }
   }
 
+  const searchToggle = projectId && expectedDomain && (
+    <button
+      type="button"
+      onClick={() => setSearching(s => !s)}
+      className={`flex-shrink-0 ${searching ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}
+      title={`Search ${expectedDomain} concepts`}
+    >
+      <Search className="w-4 h-4" />
+    </button>
+  )
+  const searchPanel = projectId && expectedDomain && searching && (
+    <div className="max-w-md">
+      <DomainConceptSearch
+        projectId={projectId}
+        domain={expectedDomain}
+        onSelect={c => {
+          onChange(c.concept_id)
+          onConceptName?.(c.concept_name)
+          setPending('')
+          setCommitError(null)
+          setSearching(false)
+        }}
+        onClose={() => setSearching(false)}
+      />
+    </div>
+  )
+
   if (hasValue) {
     const invalid = mismatch || notFound || nonStandard
     return (
@@ -93,6 +128,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
           <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs ${invalid ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
             {invalid ? <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> : <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />}
             <span className="font-semibold font-mono">{value}</span>
+            {conceptName && <span className="truncate" title={conceptName}>({conceptName})</span>}
             {lookingUp ? (
               <>
                 <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 ml-1" />
@@ -115,6 +151,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
               <X className="w-3 h-3" />
             </button>
           </div>
+          {searchToggle}
         </div>
         {!lookingUp && mismatch && (
           <p className="text-xs text-amber-700">
@@ -129,6 +166,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
             Concept {value} is not a standard concept. Clear it and set a valid concept.
           </p>
         )}
+        {searchPanel}
       </div>
     )
   }
@@ -152,8 +190,10 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
         >
           {lookingUp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
         </button>
+        {searchToggle}
       </div>
       {commitError && <p className="text-xs text-destructive">{commitError}</p>}
+      {searchPanel}
     </div>
   )
 }
