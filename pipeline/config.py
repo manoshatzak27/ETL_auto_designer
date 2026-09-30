@@ -88,6 +88,19 @@ class PipelineConfig:
     # applied to the whole shortlist only costs headroom (see scoring.py).
     restrict_domains: tuple[str, ...] = ()
 
+    # ── Shortlist behind a Stage 1 hit (caller-supplied) ────────────────
+    # A Stage 1 hit exits at 100 with that one concept as the whole shortlist,
+    # which is the right *answer* but an empty list of *alternatives*: a caller
+    # showing the user a pick-list (the ETL Auto-Designer's concept search) got
+    # "Native Hawaiian" alone and never "Native Hawaiian or Other Pacific
+    # Islander". When True, Stages 2-6 still run after the hit, only to fill
+    # `candidates` behind it. The decision — selected concept, status 100 /
+    # auto_accept, decided_at_stage — is exactly what it is with this off, so
+    # no benchmark answer can change; the cost is the Stage 2-6 latency on
+    # columns that would otherwise exit early. Off by default; `"shortlist":
+    # true` in a /match body turns it on for one request.
+    exact_hit_shortlist: bool = False
+
     # ── Stage 2: full-text search ───────────────────────────────────────
     # Step 2.1. Device/Specimen/etc. are deliberately absent: they stay
     # reachable through the Stage 6.4 no-domain-filter retry.

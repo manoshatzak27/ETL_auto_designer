@@ -474,6 +474,16 @@ class TestDomainRestriction(unittest.TestCase):
         with self.assertRaises(ValueError):
             parse_domains({"domains": 5})
 
+    def test_service_shortlist_flag_is_a_strict_boolean(self):
+        from pipeline.service import parse_shortlist
+
+        self.assertIsNone(parse_shortlist({"columns": []}))
+        self.assertIs(parse_shortlist({"shortlist": True}), True)
+        self.assertIs(parse_shortlist({"shortlist": False}), False)
+        # A string "false" would be truthy; refuse it instead of guessing.
+        with self.assertRaises(ValueError):
+            parse_shortlist({"shortlist": "false"})
+
 
 # ── integration ─────────────────────────────────────────────────────────
 
@@ -650,6 +660,33 @@ class TestDomainRestrictionIntegration(unittest.TestCase):
         result = self.match("systolic blood pressure")
         self.assertEqual(result.status, "unmapped")
         self.assertIn("Currency", result.decision_reason)
+
+    def test_shortlist_after_exact_hit_leaves_the_decision_alone(self):
+        """`exact_hit_shortlist` adds alternatives behind a Stage 1 hit only.
+
+        "Native Hawaiian" is an exact Race concept name; without the flag it is
+        the whole shortlist, and the broader "Native Hawaiian or Other Pacific
+        Islander" (8557) is never considered.
+        """
+        self.restrict("Race")
+        plain = self.match("Native Hawaiian")
+        self.assertEqual(plain.decided_at_stage, "stage1")
+        self.assertEqual([c.concept_id for c in plain.candidates],
+                         [plain.selected.concept_id])
+
+        self.matcher.config.exact_hit_shortlist = True
+        self.addCleanup(setattr, self.matcher.config, "exact_hit_shortlist", False)
+        full = self.match("Native Hawaiian")
+        # Same decision, field for field.
+        self.assertEqual(
+            (full.selected.concept_id, full.status, full.confidence, full.decided_at_stage),
+            (plain.selected.concept_id, plain.status, plain.confidence, plain.decided_at_stage))
+        # The hit stays first, appears once, and the restriction still holds.
+        ids = [c.concept_id for c in full.candidates]
+        self.assertEqual(ids[0], plain.selected.concept_id)
+        self.assertEqual(len(ids), len(set(ids)))
+        self.assertIn(8557, ids)
+        self.assertEqual({c.domain_id for c in full.candidates}, {"Race"})
 
     def test_domain_names_are_resolved_against_the_vocabulary(self):
         db = self.matcher.db

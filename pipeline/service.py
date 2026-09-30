@@ -9,6 +9,7 @@ Three endpoints, all JSON:
     GET  /         alias for /health, so a container healthcheck can hit `/`
     POST /match    {"columns": [{"name", "description"?, "table"?}, ...],
                     "domains"?: ["Measurement", ...], "candidates"?: 5,
+                    "shortlist"?: true,
                     "source_system"?, "note"?}
 
 ``domains`` restricts that request to those OMOP domains and nothing else; an
@@ -118,12 +119,17 @@ class MatchService:
         note: str | None = None,
         candidate_limit: int = DEFAULT_CANDIDATES,
         domains: list[str] | None = None,
+        shortlist: bool | None = None,
     ) -> dict[str, Any]:
         """Map every column. ``domains`` restricts this request's candidates.
 
         ``None`` keeps the process-wide restriction; a list (including an empty
         one) replaces it for the duration of this request. Raises ValueError on
         a domain name the vocabulary does not define.
+
+        ``shortlist`` likewise overrides ``config.exact_hit_shortlist`` for this
+        request only: True keeps building the candidate list behind a Stage 1
+        hit, for callers that show alternatives.
         """
         batch = self.batcher()
         # Resolved before the lock is taken, so a bad domain name costs the
@@ -138,12 +144,16 @@ class MatchService:
         # restored afterwards so one request's filter cannot leak into the next.
         with self._run_lock:
             default = self.config.restrict_domains
+            default_shortlist = self.config.exact_hit_shortlist
             if restriction is not None:
                 self.config.restrict_domains = restriction
+            if shortlist is not None:
+                self.config.exact_hit_shortlist = shortlist
             try:
                 run_id, results = batch.run(columns, source_system, note)
             finally:
                 self.config.restrict_domains = default
+                self.config.exact_hit_shortlist = default_shortlist
         return {
             "run_id": run_id,
             # Echoed so a caller can see which filter the run actually used,
@@ -250,6 +260,18 @@ def parse_domains(payload: Any) -> list[str] | None:
     return [v.strip() for v in value if v.strip()]
 
 
+def parse_shortlist(payload: Any) -> bool | None:
+    """The request's ``shortlist`` flag, or None when absent (keep the
+    process's ``exact_hit_shortlist``). Only a real JSON boolean counts, so a
+    stray ``"false"`` string cannot switch it on."""
+    if not isinstance(payload, dict) or "shortlist" not in payload:
+        return None
+    value = payload["shortlist"]
+    if not isinstance(value, bool):
+        raise ValueError("'shortlist' must be true or false")
+    return value
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "omop-concept-matcher/1.0"
     protocol_version = "HTTP/1.1"
@@ -314,6 +336,7 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._read_body()
             columns = parse_columns(payload)
             domains = parse_domains(payload)
+            shortlist = parse_shortlist(payload)
         except ValueError as exc:
             self._send(400, {"detail": str(exc)})
             return
@@ -333,6 +356,7 @@ class Handler(BaseHTTPRequestHandler):
                 note=options.get("note") or None,
                 candidate_limit=candidate_limit,
                 domains=domains,
+                shortlist=shortlist,
             )
         except ValueError as exc:
             # An unresolvable domain name is the caller's mistake, not a

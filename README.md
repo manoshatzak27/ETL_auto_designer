@@ -360,7 +360,7 @@ out per column:
 | endpoint | |
 |---|---|
 | `GET /health` | readiness, vocabulary version, concept count, whether Stage 5 is available, the domains it will accept |
-| `POST /match` | `{"columns": [{"name", "description"?, "table"?}, ...], "domains"?, "source_system"?, "note"?, "candidates"?}` |
+| `POST /match` | `{"columns": [{"name", "description"?, "table"?}, ...], "domains"?, "shortlist"?, "source_system"?, "note"?, "candidates"?}` |
 
 `/match` is Stage 8 — the same path `pipeline.cli batch` takes, logging to the
 same tables — and answers with one object per column, in request order:
@@ -379,6 +379,17 @@ curl -s localhost:8000/match -H 'Content-Type: application/json' \
 `domains` is scoped to the request that carries it and is restored afterwards,
 so a restricted call cannot leak its filter into the next caller's. An unknown
 domain name is a 400 listing the valid ones, never a run that matches nothing.
+
+`"shortlist": true` (config `exact_hit_shortlist`, off by default) is for
+callers that show alternatives. A Stage 1 hit normally *is* the shortlist —
+"Native Hawaiian" comes back alone, without "Native Hawaiian or Other Pacific
+Islander". With the flag, Stages 2-6 still run after the hit, only to fill
+`candidates` behind it: the selected concept, status, confidence and
+`decided_at_stage` are exactly what they are without it, so both benchmarks
+are unchanged (measured: gold set 92.0 / 97.8 / 96.0, user mappings 35 exact /
+69 agreed / 68 top-5 / 43 unmapped, identical to the run without the change).
+It costs the Stage 2-6 time on columns that would have exited at Stage 1.
+Scoped to the request like `domains`; anything but a JSON boolean is a 400.
 
 The listen address comes from `SERVICE_HOST` / `SERVICE_PORT` (default
 `0.0.0.0:8000`); the database comes from the same `POSTGRES_*` variables as

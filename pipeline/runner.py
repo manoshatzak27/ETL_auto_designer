@@ -4,6 +4,9 @@ The funnel, and what survives each narrowing:
 
     Stage 0   preprocess               -> 1..N interpretations of the input
     Stage 1   exact / code             -> a hit exits at 100, or nothing
+                                          (config.exact_hit_shortlist: the hit
+                                          still decides, Stages 2-6 fill the
+                                          shortlist behind it)
     Stage 2   full-text search         -> <= 30 candidates per interpretation
     Stage 3   IDF-weighted Jaccard     -> <= 15
     Stage 4   fuzzy                    -> <= 10
@@ -128,6 +131,14 @@ class ConceptMatcher:
 
         if exact is not None:
             result.candidates = [exact]
+            if self.config.exact_hit_shortlist:
+                # Alternatives only: the hit stays first and stays the
+                # decision; Stages 2-6 contribute the rest of the list and
+                # nothing else (see config.exact_hit_shortlist).
+                ranked = self._score_all(ctx, result, ctx.eligible_domains,
+                                         pass_label="_shortlist")
+                result.candidates += [c for c in ranked
+                                      if c.concept_id != exact.concept_id]
             result.selected = exact
             result.confidence = 100.0
             result.status = "manual" if exact.source_stage == "stage1_manual" else "auto_accept"
