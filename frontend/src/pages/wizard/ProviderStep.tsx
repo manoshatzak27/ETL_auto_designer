@@ -10,6 +10,8 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -88,9 +90,12 @@ export default function ProviderStep({ project, onUpdate }: Props) {
 
   const distinctVals = (col: string): string[] => columnInfos[col]?.distinct_values ?? []
 
+  const autoFill = useConceptAutoFill(project.id)
+
   // ── Apply a ProviderFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: ProviderFileConfig) => {
     setActiveCfg(deepCopy(fc))
+    autoFill.clear()
     if (fc.specialty_mode) setSpecialtyMode(fc.specialty_mode)
     else if (fc.specialty_source_value_col) setSpecialtyMode('column')
     else if (fc.prefix_specialty) setSpecialtyMode('prefix')
@@ -241,6 +246,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
     setActiveCfg(prev => ({ ...prev, [field]: v }))
 
   const switchGenderMode = (mode: 'column' | 'default') => {
+    autoFill.clear('gender')
     setGenderMode(mode)
     if (mode === 'default') {
       setActiveCfg(prev => ({ ...prev, gender_source_value_col: '', gender_concept_value_map: {} }))
@@ -250,6 +256,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
   }
 
   const switchSpecialtyMode = (mode: 'column' | 'prefix') => {
+    autoFill.clear('specialty')
     setSpecialtyMode(mode)
     if (mode === 'prefix') {
       setActiveCfg(prev => ({ ...prev, specialty_source_value_col: '', specialty_concept_value_map: {} }))
@@ -306,6 +313,29 @@ export default function ProviderStep({ project, onUpdate }: Props) {
 
   const showMappings = !!activeFilename
 
+  // ── Concept auto-fill ────────────────────────────────────────────────
+  const autoFillTargets: AutoFillTarget[] = []
+  if (specialtyMode === 'column' && activeCfg.specialty_source_value_col) {
+    autoFillTargets.push({
+      key: 'specialty', label: 'Specialty', domain: 'Provider',
+      values: distinctVals(activeCfg.specialty_source_value_col),
+      mapped: activeCfg.specialty_concept_value_map ?? {},
+      apply: filled => setActiveCfg(prev => ({
+        ...prev, specialty_concept_value_map: { ...filled, ...(prev.specialty_concept_value_map ?? {}) },
+      })),
+    })
+  }
+  if (genderMode === 'column' && activeCfg.gender_source_value_col) {
+    autoFillTargets.push({
+      key: 'gender', label: 'Gender', domain: 'Gender',
+      values: distinctVals(activeCfg.gender_source_value_col),
+      mapped: activeCfg.gender_concept_value_map ?? {},
+      apply: filled => setActiveCfg(prev => ({
+        ...prev, gender_concept_value_map: { ...filled, ...(prev.gender_concept_value_map ?? {}) },
+      })),
+    })
+  }
+
   return (
     <WizardLayout
       project={project}
@@ -317,14 +347,21 @@ export default function ProviderStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
-        <div>
-          <h2 className="text-xl font-bold text-primary">Provider Mapping</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Map source columns to the OMOP PROVIDER table. Providers are uniquely identified
-            healthcare individuals (physicians, nurses, etc.). If the source only gives specialty
-            without individual identifiers, generic pooled provider records are acceptable.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-bold text-primary">Provider Mapping</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Map source columns to the OMOP PROVIDER table. Providers are uniquely identified
+              healthcare individuals (physicians, nurses, etc.). If the source only gives specialty
+              without individual identifiers, generic pooled provider records are acceptable.
+            </p>
+          </div>
+          {showMappings && (
+            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets.filter(t => t.values.length > 0)} fields="specialty and gender" />
+          )}
         </div>
+
+        <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
           <div className="rounded-lg border border-border bg-secondary/40 px-4 py-3 text-sm text-muted-foreground space-y-1">
@@ -574,11 +611,11 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                     label="Specialty column"
                     sourceColumns={availCols(activeCfg.specialty_source_value_col)}
                     value={activeCfg.specialty_source_value_col}
-                    onChange={v => setActiveCfg(prev => ({
+                    onChange={v => { autoFill.clear('specialty'); setActiveCfg(prev => ({
                       ...prev,
                       specialty_source_value_col: v,
                       specialty_concept_value_map: v !== prev.specialty_source_value_col ? {} : prev.specialty_concept_value_map,
-                    }))}
+                    })) }}
                     hint="Values will populate specialty_source_value and be mapped to specialty_concept_id below."
                   />
                   {activeCfg.specialty_source_value_col && (
@@ -589,6 +626,8 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                       onChange={m => setActiveCfg(prev => ({ ...prev, specialty_concept_value_map: m }))}
                       hint="Assign an OMOP Provider-domain concept ID to each specialty value."
                       expectedDomain="Provider"
+                      projectId={project.id}
+                      suggestions={autoFill.suggestions['specialty']}
                     />
                   )}
                 </div>
@@ -610,6 +649,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                       onChange={v => setActiveCfg(prev => ({ ...prev, prefix_specialty_concept_id: v }))}
                       placeholder="e.g. 38004477"
                       expectedDomain="Provider"
+                      projectId={project.id}
                     />
                     <p className="text-xs text-muted-foreground">OMOP Provider-domain concept ID for the prefix specialty.</p>
                   </div>
@@ -641,16 +681,16 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                     label="Gender column"
                     sourceColumns={availCols(activeCfg.gender_source_value_col)}
                     value={activeCfg.gender_source_value_col}
-                    onChange={v => setActiveCfg(prev => ({
+                    onChange={v => { autoFill.clear('gender'); setActiveCfg(prev => ({
                       ...prev,
                       gender_source_value_col: v,
                       gender_concept_value_map: v !== prev.gender_source_value_col ? {} : prev.gender_concept_value_map,
-                    }))}
+                    })) }}
                     hint="Provider gender as it appears in the source. Values will populate gender_source_value and be mapped to gender_concept_id below."
                   />
                   {activeCfg.gender_source_value_col && (
                     <div className="flex flex-col gap-2">
-                      <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown</p>
+                      <p className="text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female (0 = unknown).</p>
                       <ValueConceptMapper
                         label="Gender value → gender_concept_id"
                         sourceValues={distinctVals(activeCfg.gender_source_value_col)}
@@ -658,6 +698,8 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                         onChange={m => setActiveCfg(prev => ({ ...prev, gender_concept_value_map: m }))}
                         hint="Assign an OMOP Gender-domain concept ID to each gender value."
                         expectedDomain="Gender"
+                        projectId={project.id}
+                        suggestions={autoFill.suggestions['gender']}
                       />
                     </div>
                   )}
@@ -670,8 +712,9 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                     onChange={v => setActiveCfg(prev => ({ ...prev, gender_concept_id_default: v ?? 0 }))}
                     placeholder="e.g. 8507"
                     expectedDomain="Gender"
+                    projectId={project.id}
                   />
-                  <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female (0 = unknown).</p>
                 </div>
               )}
             </Card>

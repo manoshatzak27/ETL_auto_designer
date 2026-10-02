@@ -21,21 +21,28 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Only the latest search may update the list: the one run on open for the
+  // source value can finish after a search the user typed, and would
+  // otherwise replace its results.
+  const latest = useRef(0)
 
   const search = async (q: string) => {
     if (!q.trim()) return
+    const id = ++latest.current
     setLoading(true)
     setError(null)
     try {
       const res = await searchDomainConcepts(projectId, q, domain)
+      if (id !== latest.current) return
       setResults(res.results)
       setTerm(res.term)
     } catch (e) {
+      if (id !== latest.current) return
       const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(detail || 'Concept search is unavailable — is the concept matcher running?')
       setResults(null)
     } finally {
-      setLoading(false)
+      if (id === latest.current) setLoading(false)
     }
   }
 
@@ -95,8 +102,10 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
                 // parentless ones), so a header is needed only where the
                 // parentless tail starts after at least one group.
                 const otherHeader = !c.is_parent && c.parent_id == null && !!prev && (prev.is_parent || prev.parent_id != null)
+                // A concept with two unrelated parents appears under each.
+                const key = `${c.parent_id ?? 'root'}-${c.concept_id}-${i}`
                 return (
-                  <div key={`${c.parent_id ?? 'root'}-${c.concept_id}`}>
+                  <div key={key}>
                     {otherHeader && (
                       <div className="px-2.5 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground bg-muted border-b border-border">
                         Other matches
@@ -106,14 +115,15 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
                       type="button"
                       onClick={() => onSelect(c)}
                       className={`w-full text-left py-1.5 pr-2.5 hover:bg-accent border-b border-border flex items-center justify-between gap-2 ${
-                        c.is_parent ? 'bg-primary/5 pl-2.5' : c.parent_id != null ? 'pl-7' : 'pl-2.5'
+                        c.is_parent ? 'bg-primary/5' : ''
                       }`}
+                      style={{ paddingLeft: `${10 + (c.depth ?? 0) * 18}px` }}
                     >
                       <span className="flex items-center gap-1.5 min-w-0">
+                        {c.parent_id != null && <span className="text-muted-foreground text-xs flex-shrink-0">└</span>}
                         {c.is_parent && (
                           <span className="text-[10px] px-1 rounded bg-primary/15 text-primary font-medium flex-shrink-0">Parent</span>
                         )}
-                        {c.parent_id != null && <span className="text-muted-foreground text-xs flex-shrink-0">└</span>}
                         <span className={`text-xs text-foreground truncate ${c.is_parent ? 'font-medium' : ''}`}>{c.concept_name}</span>
                       </span>
                       <span className="text-[10px] text-muted-foreground font-mono flex-shrink-0">

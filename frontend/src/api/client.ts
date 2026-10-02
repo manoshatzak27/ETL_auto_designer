@@ -253,18 +253,27 @@ export interface ValueConceptSuggestion {
   candidates: ConceptMatchCandidate[]
 }
 
-export const suggestValueConcepts = (projectId: string, domain: string, values: string[]) =>
+/** Narrows a domain to the vocabularies / concept classes a field wants, e.g.
+ *  visit_concept_id → Visit, place of service → CMS Place of Service. */
+export interface ConceptPreference {
+  vocabularies?: string[]
+  concept_classes?: string[]
+}
+
+export const suggestValueConcepts = (projectId: string, domain: string, values: string[], prefer?: ConceptPreference) =>
   api
     .post<{ domain: string; results: Record<string, ValueConceptSuggestion> }>(
       `/projects/${projectId}/suggest-value-concepts`,
-      { domain, values },
+      { domain, values, ...(prefer ? { prefer } : {}) },
     )
     .then(r => r.data.results)
 
-/** A search result, in display order: each parent (`is_parent`) is followed by
- *  the results it covers (`parent_id`); results with no parent come last. */
+/** A search result, in display order: trees of broader → narrower concepts
+ *  (`depth` 0 at the top, `parent_id` the row it sits under, `is_parent` when
+ *  rows sit under it), then the results with no relatives among them. */
 export interface DomainSearchResult extends Omit<ConceptMatchCandidate, 'score'> {
   score: number | null
+  depth?: number
   is_parent?: boolean
   parent_id?: number
 }

@@ -20,6 +20,7 @@ Endpoints:
   GET  /projects/{id}/download-mapping-summary → download a human-readable Excel summary of all decisions
 """
 import csv
+import re
 import io
 import shutil
 import tempfile
@@ -644,14 +645,18 @@ def _direct_parents(concept_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
 
 
 def _parents_first(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Group search results under their broader concepts.
+    """Arrange search results as a tree of broader → narrower concepts.
 
-    Flat list, in display order: each direct parent of a result (added if the
-    text search didn't find it) marked `is_parent`, immediately followed by the
-    results it covers, marked `parent_id`. Results with no parent come last,
-    without `parent_id`. A result with several parents is listed under each.
-    Parents appear in the order of the first result they cover. Unchanged when
-    the ancestry can't be read.
+    Flat list, in display order. Every direct parent of a result joins the
+    tree (added if the search didn't find it), and chains nest as deep as they
+    go — Ambulance Visit › Ambulance › Ambulance - Land — so each concept sits
+    once under the concept it belongs to. Each row carries `depth` (0 = top),
+    `parent_id` (the row it is listed under, absent at the top) and
+    `is_parent` (it has rows under it). Trees come first, in the order of the
+    first result they contain, then the results with no parent or child among
+    them. A concept with two unrelated parents is listed under each; of two
+    parents where one is above the other, only the more specific is used.
+    Unchanged when the ancestry can't be read.
     """
     try:
         parents = _direct_parents([c["concept_id"] for c in candidates if c.get("concept_id")])
@@ -659,23 +664,65 @@ def _parents_first(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         print(f"[search-concepts] concept_ancestor query failed: {exc}")
         return candidates
 
-    by_id = {c["concept_id"]: c for c in candidates}
-    groups: dict[int, tuple[dict[str, Any], list[dict[str, Any]]]] = {}
+    def ancestors(cid: int) -> set[int]:
+        found: set[int] = set()
+        stack = [p["concept_id"] for p in parents.get(cid, [])]
+        while stack:
+            up = stack.pop()
+            if up not in found:
+                found.add(up)
+                stack.extend(p["concept_id"] for p in parents.get(up, []))
+        return found
+
+    # A parent that is itself an ancestor of another of the same child's
+    # parents adds nothing: Air Ambulance sits under both Ambulance and
+    # Ambulance - Air or Water, which is under Ambulance — list it once, under
+    # the more specific one.
+    for cid, ups in list(parents.items()):
+        ids = {p["concept_id"] for p in ups}
+        redundant = {a for u in ids for a in ancestors(u)} & ids
+        if redundant:
+            parents[cid] = [p for p in ups if p["concept_id"] not in redundant]
+
+    nodes: dict[int, dict[str, Any]] = {c["concept_id"]: c for c in candidates}
+    children: dict[int, list[int]] = {}
+    has_parent: set[int] = set()
     for child in candidates:
         for parent in parents.get(child["concept_id"], []):
-            pid = parent["concept_id"]
-            if pid not in groups:
-                head = dict(by_id.get(pid) or {**parent, "score": None})
-                head["is_parent"] = True
-                groups[pid] = (head, [])
-            groups[pid][1].append({**child, "parent_id": pid})
+            nodes.setdefault(parent["concept_id"], {**parent, "score": None})
+            children.setdefault(parent["concept_id"], []).append(child["concept_id"])
+            has_parent.add(child["concept_id"])
+
+    def root_of(cid: int, seen: frozenset = frozenset()) -> int:
+        ups = parents.get(cid) or []
+        if not ups or cid in seen:
+            return cid
+        return root_of(ups[0]["concept_id"], seen | {cid})
 
     out: list[dict[str, Any]] = []
-    for head, children in groups.values():
-        out.append(head)
-        out.extend(children)
-    grouped = set(groups) | {c["concept_id"] for _, cs in groups.values() for c in cs}
-    out.extend(c for c in candidates if c["concept_id"] not in grouped)
+
+    def emit(cid: int, depth: int, under: int | None, path: frozenset) -> None:
+        row = dict(nodes[cid], depth=depth, is_parent=bool(children.get(cid)))
+        if under is not None:
+            row["parent_id"] = under
+        out.append(row)
+        for kid in children.get(cid, []):
+            if kid not in path:      # a cycle in the ancestry would never end
+                emit(kid, depth + 1, cid, path | {kid})
+
+    emitted_roots: set[int] = set()
+    lone: list[int] = []
+    for c in candidates:
+        root = root_of(c["concept_id"])
+        if root in emitted_roots:
+            continue
+        emitted_roots.add(root)
+        if children.get(root):
+            emit(root, 0, None, frozenset({root}))
+        elif root not in has_parent:
+            lone.append(root)
+    for cid in lone:
+        emit(cid, 0, None, frozenset({cid}))
     return out
 
 
@@ -694,10 +741,105 @@ def _suggestion(value: str, term: str, result: dict[str, Any] | None) -> dict[st
     }
 
 
+class ConceptPreference(BaseModel):
+    """Which concepts in the domain the field wants, when the domain alone is
+    too broad — e.g. visit_concept_id wants the Visit vocabulary (9201
+    Inpatient Visit), place of service wants CMS Place of Service (8717
+    Inpatient Hospital), and both are Visit-domain concepts that score within a
+    few points of each other for the same text."""
+    vocabularies: list[str] | None = None
+    concept_classes: list[str] | None = None
+
+
 class SuggestValueConceptsPayload(BaseModel):
     domain: str
     values: list[str]
     candidates: int = 5
+    prefer: ConceptPreference | None = None
+
+
+# The matcher's own auto-accept threshold, applied to a preferred candidate
+# that replaces its pick.
+AUTO_ACCEPT_SCORE = 90.0
+
+
+def _exact_preferred(term: str, domain: str, prefer: ConceptPreference) -> dict[str, Any] | None:
+    """The single valid standard concept in `domain` named exactly `term`
+    (case-insensitively) that satisfies `prefer`, from the vocab schema.
+
+    The fallback for exact-name ties the matcher collapses to one arbitrary
+    concept: "Canada" comes back as the OSM place "Canadá", and the country
+    concept 41915371 Canada never reaches the shortlist. Returns None when
+    there is no such concept, or more than one.
+    """
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    conditions = [pgsql.SQL("lower(concept_name) = lower(%s) AND domain_id = %s "
+                            "AND standard_concept = 'S' AND invalid_reason IS NULL")]
+    params: list[Any] = [term, domain]
+    if prefer.vocabularies:
+        conditions.append(pgsql.SQL("vocabulary_id = ANY(%s)"))
+        params.append(list(prefer.vocabularies))
+    if prefer.concept_classes:
+        conditions.append(pgsql.SQL("concept_class_id = ANY(%s)"))
+        params.append(list(prefer.concept_classes))
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code "
+                    "FROM {s}.concept WHERE {where} LIMIT 2"
+                ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab"),
+                         where=pgsql.SQL(" AND ").join(conditions)),
+                params,
+            )
+            rows = cur.fetchall()
+    if len(rows) != 1:
+        return None
+    keys = ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code")
+    return {**dict(zip(keys, rows[0])), "score": 100.0}
+
+
+def _apply_preference(entry: dict[str, Any], prefer: ConceptPreference | None, domain: str) -> None:
+    """Swap a suggestion onto the best-scoring preferred candidate, in place.
+
+    With none of the candidates preferred, the matcher's pick stands but is
+    only offered, never filled in on its own.
+    """
+    if prefer is None or not entry.get("term"):
+        return
+    vocabularies = set(prefer.vocabularies or [])
+    classes = set(prefer.concept_classes or [])
+
+    def wanted(c: dict[str, Any]) -> bool:
+        return ((not vocabularies or c.get("vocabulary_id") in vocabularies)
+                and (not classes or c.get("concept_class_id") in classes))
+
+    preferred = [c for c in entry.get("candidates") or [] if wanted(c)]
+    if not preferred:
+        try:
+            exact = _exact_preferred(entry["term"], domain, prefer)
+        except Exception as exc:
+            print(f"[suggest-value-concepts] exact-name lookup failed: {exc}")
+            exact = None
+        if exact is None:
+            if entry.get("status") == "auto_accept":
+                entry["status"] = "review"
+            return
+        entry["candidates"] = [exact] + list(entry.get("candidates") or [])
+        preferred = [exact]
+    best = max(preferred, key=lambda c: c.get("score") or 0)
+    # The status is re-decided even when the matcher's pick is the preferred
+    # one: its "review" is often ambiguity between vocabularies (8717 Inpatient
+    # Hospital vs 9201 Inpatient Visit), which the preference has just settled.
+    entry.update(
+        concept_id=best["concept_id"], concept_name=best.get("concept_name"),
+        confidence=best.get("score") or 0,
+        status="auto_accept" if (best.get("score") or 0) >= AUTO_ACCEPT_SCORE else "review",
+    )
+    # Keep the chosen concept first, as the matcher's pick was.
+    entry["candidates"] = [best] + [c for c in entry["candidates"] if c is not best]
 
 
 @router.post("/{project_id}/suggest-value-concepts")
@@ -715,7 +857,9 @@ async def suggest_value_concepts(
 
     Race matches are rolled up to the five top-level OHDSI categories
     (`detailed` then keeps the concept actually matched); a race concept
-    outside that hierarchy comes back as "review" at best.
+    outside that hierarchy comes back as "review" at best. `prefer` narrows the
+    domain to the vocabularies / concept classes the field wants (see
+    ConceptPreference).
     """
     from app.services.concept_normalizer import GENDER_FEMALE, GENDER_MALE, gender_concept, normalize_term
 
@@ -749,7 +893,9 @@ async def suggest_value_concepts(
             answer = await _post_match(
                 [{"name": t} for t in chunk], project_id,
                 f"ETL Auto-Designer project {project_id} ({payload.domain} values)",
-                payload.candidates, [payload.domain],
+                # A preference picks from the shortlist, so it needs a longer one.
+                max(payload.candidates, 10) if payload.prefer else payload.candidates,
+                [payload.domain],
             )
             answered = answer.get("results") or []
             if len(answered) != len(chunk):
@@ -760,10 +906,47 @@ async def suggest_value_concepts(
             for term, result in zip(chunk, answered):
                 for value in pending[term]:
                     out[value] = _suggestion(value, term, result)
+                    _apply_preference(out[value], payload.prefer, payload.domain)
                     if payload.domain.lower() == "race":
                         _roll_up_race(out[value])
 
     return {"domain": payload.domain, "results": {v: out[v] for v in values}}
+
+
+def _name_search(term: str, domain: str, limit: int) -> list[dict[str, Any]]:
+    """Valid standard concepts in `domain` whose name contains every word of
+    `term`, from the vocab schema — exact name first, then earliest match, then
+    shortest name.
+
+    Tops up the matcher's shortlist, which is deliberately short: an exact
+    concept name ends its search at Stage 1 with that one concept, so searching
+    "ambulance" returned NUCC "Ambulance" and never "Ambulance - Land" (8668),
+    the CMS Place of Service concept a place-of-service field actually wants.
+    A partial word ("hisp") gets nothing from the matcher at all.
+    """
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    words = [w for w in re.split(r"\s+", term.strip()) if w]
+    if not words:
+        return []
+    # LIKE wildcards in the user's text are dropped rather than escaped.
+    like = ["%" + re.sub(r"[%_\\]", "", w) + "%" for w in words]
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code "
+                    "FROM {s}.concept WHERE domain_id = %s AND standard_concept = 'S' "
+                    "AND invalid_reason IS NULL AND concept_name ILIKE ALL(%s) "
+                    "ORDER BY lower(concept_name) = lower(%s) DESC, "
+                    "strpos(lower(concept_name), lower(%s)) = 0, strpos(lower(concept_name), lower(%s)), "
+                    "length(concept_name), concept_id LIMIT %s"
+                ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab")),
+                (domain, like, term, words[0], words[0], limit),
+            )
+            keys = ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code")
+            return [{**dict(zip(keys, row)), "score": None} for row in cur.fetchall()]
 
 
 @router.get("/{project_id}/search-concepts")
@@ -776,7 +959,14 @@ async def search_concepts(
 ):
     """Ranked standard concepts in `domain` for a free-text query — the search
     box beside every concept field, so the user never has to go to Athena.
-    Direct parents of the matches are listed first (see _parents_first)."""
+
+    The matcher's ranked shortlist comes first, topped up to `limit` with a
+    plain name search over the vocabulary (see _name_search); both are grouped
+    under their direct parents (see _parents_first). The name search runs
+    alongside the matcher call, and if the vocab schema isn't loaded the
+    matcher's results are returned on their own.
+    """
+    import asyncio
     from app.services.concept_normalizer import normalize_term
 
     project = db.query(Project).filter(Project.id == project_id).first()
@@ -788,9 +978,21 @@ async def search_concepts(
         return {"term": "", "results": []}
 
     term = normalize_term(query, domain)
-    answer = await _post_match(
-        [{"name": term}], project_id, f"ETL Auto-Designer project {project_id} (search)",
-        max(1, min(limit, 25)), [domain],
+    limit = max(1, min(limit, 25))
+
+    async def by_name() -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(_name_search, term, domain, limit)
+        except Exception as exc:
+            print(f"[search-concepts] vocabulary name search failed: {exc}")
+            return []
+
+    answer, named = await asyncio.gather(
+        _post_match(
+            [{"name": term}], project_id, f"ETL Auto-Designer project {project_id} (search)",
+            limit, [domain],
+        ),
+        by_name(),
     )
     result = (answer.get("results") or [{}])[0]
     candidates = list(result.get("candidates") or [])
@@ -802,6 +1004,8 @@ async def search_concepts(
                 "concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code",
             )
         } | {"score": result.get("confidence")})
+    seen = {c.get("concept_id") for c in candidates}
+    candidates += [c for c in named if c["concept_id"] not in seen][:max(0, limit - len(candidates))]
     return {"term": term, "results": _parents_first(candidates)}
 
 

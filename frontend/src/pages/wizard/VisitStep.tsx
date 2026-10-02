@@ -9,6 +9,13 @@ import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import {
+  PLACE_OF_SERVICE_CONCEPTS,
+  VISIT_CONCEPTS as VISIT_VOCABULARY,
+  useConceptAutoFill,
+  type AutoFillTarget,
+} from '../../hooks/useConceptAutoFill'
 import { Plus, Trash2, ExternalLink, FileText } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -49,37 +56,43 @@ const VISIT_CONCEPTS = [
   { id: 262,      label: '262 — Emergency Room and Inpatient Visit' },
   { id: 42898160, label: '42898160 — Non-hospital Institution Visit' },
   { id: 581476,   label: '581476 — Home Visit' },
-  { id: 5083,     label: '5083 — Telehealth Visit' },
+  { id: 722455,   label: '722455 — Telehealth' },
   { id: 581458,   label: '581458 — Pharmacy Visit' },
   { id: 32036,    label: '32036 — Laboratory Visit' },
   { id: 581478,   label: '581478 — Ambulance Visit' },
-  { id: 38004193, label: '38004193 — Case Management Visit' },
+  { id: 38004193, label: '38004193 — Case Management Agency' },
 ]
 
 const TYPE_CONCEPTS = [
   { id: 32879,    label: '32879 — Registry' },
   { id: 32817,    label: '32817 — EHR' },
-  { id: 44818518, label: '44818518 — Visit derived by algorithm' },
-  { id: 32220,    label: '32220 — Still patient (ongoing inpatient)' },
+  { id: 32827,    label: '32827 — EHR encounter record' },
+  { id: 32880,    label: '32880 — Standard algorithm' },
 ]
 
+// Every id below is a valid standard Visit-domain concept, checked against the
+// Athena vocabulary — earlier versions carried a Unit (8765), deprecated ids
+// (8892, 8536) and labels that did not match their concept (8863, 8920).
 const ADMITTED_FROM_CONCEPTS = [
   { id: 0,        label: '0 — Home / self-referred' },
-  { id: 8765,     label: '8765 — Home' },
-  { id: 8892,     label: '8892 — Emergency Room' },
+  { id: 8870,     label: '8870 — Emergency Room - Hospital' },
   { id: 8717,     label: '8717 — Inpatient Hospital' },
-  { id: 8863,     label: '8863 — Long-term Care Facility' },
-  { id: 8920,     label: '8920 — Other' },
+  { id: 8863,     label: '8863 — Skilled Nursing Facility' },
+  { id: 8676,     label: '8676 — Nursing Facility' },
+  { id: 38004277, label: '38004277 — Long Term Care Hospital' },
+  { id: 8920,     label: '8920 — Comprehensive Inpatient Rehabilitation Facility' },
 ]
 
 const DISCHARGED_TO_CONCEPTS = [
   { id: 0,        label: '0 — Home' },
-  { id: 8536,     label: '8536 — Home Health Care' },
-  { id: 8863,     label: '8863 — Long-term Care Facility' },
+  { id: 38004519, label: '38004519 — Home Health Agency' },
+  { id: 8863,     label: '8863 — Skilled Nursing Facility' },
+  { id: 8676,     label: '8676 — Nursing Facility' },
+  { id: 38004277, label: '38004277 — Long Term Care Hospital' },
   { id: 8717,     label: '8717 — Inpatient Hospital (transfer)' },
-  { id: 8892,     label: '8892 — Emergency Room (transfer)' },
-  { id: 4216643,  label: '4216643 — Patient died' },
-  { id: 8920,     label: '8920 — Other' },
+  { id: 8870,     label: '8870 — Emergency Room - Hospital (transfer)' },
+  { id: 8546,     label: '8546 — Hospice' },
+  { id: 8920,     label: '8920 — Comprehensive Inpatient Rehabilitation Facility' },
 ]
 
 const ATHENA = {
@@ -141,7 +154,10 @@ export default function VisitStep({ project, onUpdate }: Props) {
     })
 
   // ── Apply a saved per-file config to UI state ─────────────────────────────
+  const autoFill = useConceptAutoFill(project.id)
+
   const applyFileConfig = (fc: PerFileVisitConfig | undefined) => {
+    autoFill.clear()
     const vds = fc?.visit_definitions ?? DEFAULTS.visit_definitions
     setCfg(prev => ({
       ...prev,
@@ -265,22 +281,61 @@ export default function VisitStep({ project, onUpdate }: Props) {
   }
 
   const removeVisit = (i: number) => {
+    // Suggestions are keyed by visit index, which shifts on removal.
+    autoFill.clear()
     setCfg(prev => ({ ...prev, visit_definitions: prev.visit_definitions.filter((_, j) => j !== i) }))
     setConceptModes(prev => prev.filter((_, j) => j !== i))
     setTypeModes(prev => prev.filter((_, j) => j !== i))
   }
 
   const switchConceptMode = (i: number, mode: 'column' | 'default') => {
+    autoFill.clear(`${i}:visit_concept`)
     setMode(setConceptModes, i, mode)
     if (mode === 'default') updateVisitFields(i, { visit_concept_mode: mode, visit_concept_source_col: undefined, visit_concept_value_map: undefined })
     else updateVisit(i, 'visit_concept_mode', mode)
   }
 
   const switchTypeMode = (i: number, mode: 'column' | 'default') => {
+    autoFill.clear(`${i}:visit_type`)
     setMode(setTypeModes, i, mode)
     if (mode === 'default') updateVisitFields(i, { visit_type_mode: mode, visit_type_source_col: undefined, visit_type_value_map: undefined })
     else updateVisit(i, 'visit_type_mode', mode)
   }
+
+  // ── Concept auto-fill ─────────────────────────────────────────────────────
+  type ValueMapField = 'visit_concept_value_map' | 'visit_type_value_map' | 'admitted_from_value_map' | 'discharged_to_value_map'
+  const VISIT_MAP_FIELDS: {
+    key: string; label: string; domain: string; prefer?: typeof VISIT_VOCABULARY
+    col: (vd: VisitDefinition, i: number) => string | undefined; map: ValueMapField
+  }[] = [
+    { key: 'visit_concept', label: 'visit concept', domain: 'Visit', prefer: VISIT_VOCABULARY,
+      col: (vd, i) => getMode(conceptModes, i) === 'column' ? vd.visit_concept_source_col : undefined, map: 'visit_concept_value_map' },
+    { key: 'visit_type', label: 'visit type', domain: 'Type Concept',
+      col: (vd, i) => getMode(typeModes, i) === 'column' ? vd.visit_type_source_col : undefined, map: 'visit_type_value_map' },
+    // The two below are only on screen for inpatient-type visits.
+    { key: 'admitted_from', label: 'admitted from', domain: 'Visit', prefer: PLACE_OF_SERVICE_CONCEPTS,
+      col: vd => INPATIENT_CONCEPT_IDS.has(vd.visit_concept_id) ? vd.admitted_from_source_col : undefined, map: 'admitted_from_value_map' },
+    { key: 'discharged_to', label: 'discharged to', domain: 'Visit', prefer: PLACE_OF_SERVICE_CONCEPTS,
+      col: vd => INPATIENT_CONCEPT_IDS.has(vd.visit_concept_id) ? vd.discharged_to_source_col : undefined, map: 'discharged_to_value_map' },
+  ]
+  const autoFillTargets: AutoFillTarget[] = cfg.visit_definitions.flatMap((vd, i) =>
+    VISIT_MAP_FIELDS.flatMap(f => {
+      const col = f.col(vd, i)
+      const values = col ? distinctVals(col) : []
+      if (values.length === 0) return []
+      return [{
+        key: `${i}:${f.key}`,
+        label: `${vd.label || `Visit ${i + 1}`} — ${f.label}`,
+        domain: f.domain, prefer: f.prefer, values,
+        mapped: vd[f.map] ?? {},
+        apply: filled => setCfg(prev => {
+          const defs = [...prev.visit_definitions]
+          defs[i] = { ...defs[i], [f.map]: { ...filled, ...(defs[i][f.map] ?? {}) } }
+          return { ...prev, visit_definitions: defs }
+        }),
+      }]
+    }),
+  )
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const saveConfig = async () => {
@@ -403,13 +458,18 @@ export default function VisitStep({ project, onUpdate }: Props) {
           </div>
         )}
 
-        <div>
-          <h2 className="text-xl font-bold text-primary">Visit Occurrence Mapping</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Define the clinical visits. Each visit definition creates one row in <code className="bg-muted px-1 rounded">visit_occurrence</code> per patient.
-            Map each CDM field to a source column and assign OMOP concept IDs to the values.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-bold text-primary">Visit Occurrence Mapping</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Define the clinical visits. Each visit definition creates one row in <code className="bg-muted px-1 rounded">visit_occurrence</code> per patient.
+              Map each CDM field to a source column and assign OMOP concept IDs to the values.
+            </p>
+          </div>
+          <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="visit concept, type, admitted-from and discharged-to" />
         </div>
+
+        <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiRow && (
           <Card className="flex flex-col gap-3 p-4 border-primary/40 bg-primary/5">
@@ -620,7 +680,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="visit_concept_id column"
                         sourceColumns={availCols(vd.visit_concept_source_col ?? '')}
                         value={vd.visit_concept_source_col ?? ''}
-                        onChange={v => updateVisit(i, 'visit_concept_source_col', v || undefined)}
+                        onChange={v => { autoFill.clear(`${i}:visit_concept`); updateVisit(i, 'visit_concept_source_col', v || undefined) }}
                         hint="Values will be mapped to OMOP Visit concept IDs using the table below. The raw value is also stored verbatim in visit_source_value."
                       />
                       {!vd.visit_concept_source_col && (
@@ -638,6 +698,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           onChange={m => updateVisit(i, 'visit_concept_value_map', m)}
                           hint="Assign an OMOP Visit concept ID to each source value."
                           expectedDomain="Visit"
+                          projectId={project.id}
+                          suggestions={autoFill.suggestions[`${i}:visit_concept`]}
                         />
                       )}
                     </div>
@@ -669,7 +731,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="visit_type_concept_id column"
                         sourceColumns={availCols(vd.visit_type_source_col ?? '')}
                         value={vd.visit_type_source_col ?? ''}
-                        onChange={v => updateVisit(i, 'visit_type_source_col', v || undefined)}
+                        onChange={v => { autoFill.clear(`${i}:visit_type`); updateVisit(i, 'visit_type_source_col', v || undefined) }}
                         hint="Values will be mapped to OMOP Type concept IDs using the table below."
                       />
                       {!vd.visit_type_source_col && (
@@ -687,6 +749,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           onChange={m => updateVisit(i, 'visit_type_value_map', m)}
                           hint="Assign an OMOP Type concept ID to each source value."
                           expectedDomain="Type Concept"
+                          projectId={project.id}
+                          suggestions={autoFill.suggestions[`${i}:visit_type`]}
                         />
                       )}
                     </div>
@@ -714,7 +778,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="Map from source column (optional)"
                         sourceColumns={availCols(vd.admitted_from_source_col ?? '')}
                         value={vd.admitted_from_source_col ?? ''}
-                        onChange={v => updateVisit(i, 'admitted_from_source_col', v || undefined)}
+                        onChange={v => { autoFill.clear(`${i}:admitted_from`); updateVisit(i, 'admitted_from_source_col', v || undefined) }}
                         hint="Column whose values will be mapped to admitted_from_concept_id and admitted_from_source_value."
                       />
                       {vd.admitted_from_source_col && (
@@ -725,6 +789,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           onChange={m => updateVisit(i, 'admitted_from_value_map', m)}
                           hint="Assign an OMOP Visit concept ID. Use 0 for home / self-referred."
                           expectedDomain="Visit"
+                          projectId={project.id}
+                          suggestions={autoFill.suggestions[`${i}:admitted_from`]}
                         />
                       )}
                       <div className="grid grid-cols-2 gap-4">
@@ -760,7 +826,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="Map from source column (optional)"
                         sourceColumns={availCols(vd.discharged_to_source_col ?? '')}
                         value={vd.discharged_to_source_col ?? ''}
-                        onChange={v => updateVisit(i, 'discharged_to_source_col', v || undefined)}
+                        onChange={v => { autoFill.clear(`${i}:discharged_to`); updateVisit(i, 'discharged_to_source_col', v || undefined) }}
                         hint="Column whose values will be mapped to discharged_to_concept_id and discharged_to_source_value."
                       />
                       {vd.discharged_to_source_col && (
@@ -771,6 +837,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                           onChange={m => updateVisit(i, 'discharged_to_value_map', m)}
                           hint="Assign an OMOP Visit concept ID. Use 0 for home."
                           expectedDomain="Visit"
+                          projectId={project.id}
+                          suggestions={autoFill.suggestions[`${i}:discharged_to`]}
                         />
                       )}
                       <div className="grid grid-cols-2 gap-4">

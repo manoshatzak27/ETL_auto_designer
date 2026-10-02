@@ -9,8 +9,12 @@ has nothing to go on for the shapes demographic columns usually arrive in:
   ethnicity  "greece", "PRT", "GR"         — the country, not the nationality
              "non-hispanic"                — a negation a text matcher inverts
 
+  geography  "GR", "USA"                   — country codes ("USA" alone is a village)
+  visit      "ER", "ICU", "IP"             — abbreviations
+  provider   "GP", "cardiologist"          — shorthand, the person for the field
+
 So each value is normalized first, per domain. Gender has only two standard
-concepts and is resolved here outright; for race and ethnicity the rewritten
+concepts and is resolved here outright; for every other domain the rewritten
 term is what gets sent to the matcher, restricted to the target domain, so the
 vocabulary — not this table — decides whether e.g. "Chinese" is a Race or an
 Ethnicity concept.
@@ -103,14 +107,15 @@ _COUNTRIES: list[tuple[str, tuple[str, ...], str, str]] = [
     ("Cambodian", ("cambodia",), "kh", "khm"),
     ("Cameroonian", ("cameroon",), "cm", "cmr"),
     ("Canadian", ("canada",), "ca", "can"),
-    ("Cape Verdean", ("cape verde", "cabo verde"), "cv", "cpv"),
+    ("Cape Verdean", ("cabo verde", "cape verde"), "cv", "cpv"),
     ("Central African Republic", ("central african republic",), "cf", "caf"),
     ("Chadian", ("chad",), "td", "tcd"),
     ("Chilean", ("chile",), "cl", "chl"),
     ("Chinese", ("china",), "cn", "chn"),
     ("Colombian", ("colombia",), "co", "col"),
     ("Comoran", ("comoros",), "km", "com"),
-    ("Congolese", ("congo", "democratic republic of the congo"), "cg", "cog"),
+    ("Congolese", ("republic of the congo", "congo", "congo brazzaville"), "cg", "cog"),
+    ("Congolese", ("democratic republic of the congo", "dr congo", "drc", "congo kinshasa"), "cd", "cod"),
     ("Costa Rican", ("costa rica",), "cr", "cri"),
     ("Croatian", ("croatia",), "hr", "hrv"),
     ("Cuban", ("cuba",), "cu", "cub"),
@@ -159,7 +164,7 @@ _COUNTRIES: list[tuple[str, tuple[str, ...], str, str]] = [
     ("Japanese", ("japan",), "jp", "jpn"),
     ("Jordanian", ("jordan",), "jo", "jor"),
     ("Kenyan", ("kenya",), "ke", "ken"),
-    ("Korean", ("korea", "south korea", "republic of korea"), "kr", "kor"),
+    ("Korean", ("south korea", "korea", "republic of korea"), "kr", "kor"),
     ("Kuwaiti", ("kuwait",), "kw", "kwt"),
     ("Laotian", ("laos",), "la", "lao"),
     ("Latvian", ("latvia",), "lv", "lva"),
@@ -204,7 +209,7 @@ _COUNTRIES: list[tuple[str, tuple[str, ...], str, str]] = [
     ("Qatari", ("qatar",), "qa", "qat"),
     ("Reunionese", ("reunion", "réunion"), "re", "reu"),
     ("Romanian", ("romania",), "ro", "rou"),
-    ("Russian", ("russia", "russian federation"), "ru", "rus"),
+    ("Russian", ("russian federation", "russia"), "ru", "rus"),
     ("Rwandan", ("rwanda",), "rw", "rwa"),
     ("Salvadoran", ("el salvador",), "sv", "slv"),
     ("Samoan", ("samoa",), "ws", "wsm"),
@@ -235,7 +240,7 @@ _COUNTRIES: list[tuple[str, tuple[str, ...], str, str]] = [
     ("Thai", ("thailand",), "th", "tha"),
     ("Togolese", ("togo",), "tg", "tgo"),
     ("Tongan", ("tonga",), "to", "ton"),
-    ("Trinidadian", ("trinidad", "trinidad and tobago"), "tt", "tto"),
+    ("Trinidadian", ("trinidad and tobago", "trinidad"), "tt", "tto"),
     ("Tunisian", ("tunisia",), "tn", "tun"),
     ("Ukrainian", ("ukraine",), "ua", "ukr"),
     ("Western Sahrawi", ("western sahara",), "eh", "esh"),
@@ -267,6 +272,66 @@ _RACE_COUNTRIES = _country_lookup(include_alpha2=False)
 _ETHNICITY_COUNTRIES = _country_lookup(include_alpha2=True)
 
 
+def _title(name: str) -> str:
+    small = {"and", "of", "the"}
+    return " ".join(w if w in small and i else w.capitalize() for i, w in enumerate(name.split()))
+
+
+# Geography (the Location step's country columns): any name or ISO code of a
+# country → the country's first-listed name, which is what both SNOMED
+# ("Greece", "Russian Federation") and OSM ("Germany") call it — so the first
+# name in _COUNTRIES is the vocabulary's spelling where the two differ. Matched raw, "USA" lands on the OSM village
+# "Usa" and "PRT" on "Proyart".
+_GEOGRAPHY_COUNTRIES: dict[str, str] = {}
+for _nationality, _names, _alpha2, _alpha3 in _COUNTRIES:
+    for _code in (*(_key(n) for n in _names), _alpha2, _alpha3):
+        if _code:
+            _GEOGRAPHY_COUNTRIES[_code] = _title(_names[0])
+del _nationality, _names, _alpha2, _alpha3, _code
+
+# Visit (visit concepts, place of service, admitted from / discharged to):
+# abbreviations expanded to the words the concept names use. The vocabulary
+# the concept should come from (Visit vs CMS Place of Service) is the caller's
+# `prefer`, not decided here.
+_VISIT_SYNONYMS: dict[str, str] = {
+    **{t: "emergency room" for t in (
+        "er", "ed", "a&e", "a e", "ae", "emergency", "emergency department", "emergency room",
+        "emergency dept", "casualty",
+    )},
+    **{t: "inpatient" for t in (
+        "ip", "inpatient", "in patient", "hospitalization", "hospitalisation", "admission",
+        "admitted", "hospitalized", "hospitalised", "ward",
+    )},
+    **{t: "outpatient" for t in (
+        "op", "outpatient", "out patient", "ambulatory", "clinic", "outpatient clinic", "opd",
+    )},
+    **{t: "intensive care" for t in ("icu", "itu", "intensive care unit", "micu", "sicu")},
+    **{t: "telehealth" for t in (
+        "telemedicine", "teleconsultation", "tele consultation", "video consultation",
+        "phone", "telephone", "virtual",
+    )},
+    **{t: "home" for t in ("home", "home visit", "house call")},
+}
+
+# Provider specialties: common shorthand, and people named for their field
+# ("cardiologist") rather than the field itself, which is how the specialty
+# vocabularies name them ("Cardiology").
+_PROVIDER_SYNONYMS: dict[str, str] = {
+    "gp": "General Practice",
+    "general practitioner": "General Practice",
+    "pcp": "Family Practice",
+    "family doctor": "Family Practice",
+    "family physician": "Family Practice",
+    "pediatrician": "Pediatric Medicine",
+    "paediatrician": "Pediatric Medicine",
+    "paediatrics": "Pediatric Medicine",
+    "pediatrics": "Pediatric Medicine",
+    "internist": "Internal Medicine",
+    "surgeon": "General Surgery",
+    "psychiatrist": "Psychiatry",
+}
+
+
 def gender_concept(value: str) -> int | None:
     """The standard gender concept a raw value unambiguously names, if any."""
     return _GENDER_TERMS.get(_key(value))
@@ -284,4 +349,13 @@ def normalize_term(value: str, domain: str) -> str:
         return _RACE_SYNONYMS.get(key) or _RACE_COUNTRIES.get(key) or value.strip()
     if d == "ethnicity":
         return _ETHNICITY_SYNONYMS.get(key) or _ETHNICITY_COUNTRIES.get(key) or value.strip()
+    if d == "geography":
+        return _GEOGRAPHY_COUNTRIES.get(key) or value.strip()
+    if d == "visit":
+        return _VISIT_SYNONYMS.get(key) or value.strip()
+    if d == "provider":
+        if key in _PROVIDER_SYNONYMS:
+            return _PROVIDER_SYNONYMS[key]
+        # "cardiologist" → "cardiology", "oncologists" → "oncology"
+        return re.sub(r"ologists?$", "ology", value.strip(), flags=re.I)
     return value.strip()

@@ -10,6 +10,8 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { COUNTRY_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -130,9 +132,12 @@ export default function LocationStep({ project, onUpdate }: Props) {
   const availCols = (currentValue: string) =>
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
 
+  const autoFill = useConceptAutoFill(project.id)
+
   // ── Apply a LocationFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: LocationFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
+    autoFill.clear()
 
     const cm = fc.country_mode ?? (fc.country_col ? 'column' : 'default')
     setCountryMode(cm)
@@ -313,16 +318,19 @@ export default function LocationStep({ project, onUpdate }: Props) {
     setActiveCfg(prev => ({ ...prev, [field]: v }))
 
   const handleCountryColChange = (col: string) => {
+    autoFill.clear('country')
     setActiveCfg(prev => ({ ...prev, country_col: col, country_concept_id_map: {} }))
     setCountryValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
   const handleCsCountryColChange = (col: string) => {
+    autoFill.clear('cs_country')
     setActiveCfg(prev => ({ ...prev, cs_country_col: col, cs_country_concept_id_map: {} }))
     setCsCountryValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
   const switchCountryMode = (mode: 'column' | 'default') => {
+    autoFill.clear('country')
     setCountryMode(mode)
     if (mode === 'default') {
       setActiveCfg(prev => ({ ...prev, country_col: '', country_concept_id_map: {} }))
@@ -333,6 +341,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
   }
 
   const switchCsCountryMode = (mode: 'column' | 'default') => {
+    autoFill.clear('cs_country')
     setCsCountryMode(mode)
     if (mode === 'default') {
       setActiveCfg(prev => ({ ...prev, cs_country_col: '', cs_country_concept_id_map: {} }))
@@ -341,6 +350,25 @@ export default function LocationStep({ project, onUpdate }: Props) {
       setActiveCfg(prev => ({ ...prev, cs_country_concept_id_default: 0, cs_country_source_value: '' }))
     }
   }
+
+  // ── Concept auto-fill ────────────────────────────────────────────────
+  const countryValuesFor = (col: string, values: string[], map: Record<string, number>) =>
+    col ? (values.length > 0 ? values : Object.keys(map)) : []
+  const countryTargets: AutoFillTarget[] = [
+    {
+      key: 'country', label: 'Person country', domain: 'Geography', prefer: COUNTRY_CONCEPTS,
+      values: countryMode === 'column' ? countryValuesFor(activeCfg.country_col, countryValues, activeCfg.country_concept_id_map) : [],
+      mapped: activeCfg.country_concept_id_map,
+      apply: filled => setActiveCfg(prev => ({ ...prev, country_concept_id_map: { ...filled, ...prev.country_concept_id_map } })),
+    },
+    {
+      key: 'cs_country', label: 'Care site country', domain: 'Geography', prefer: COUNTRY_CONCEPTS,
+      values: csCountryMode === 'column' ? countryValuesFor(activeCfg.cs_country_col, csCountryValues, activeCfg.cs_country_concept_id_map) : [],
+      mapped: activeCfg.cs_country_concept_id_map,
+      apply: filled => setActiveCfg(prev => ({ ...prev, cs_country_concept_id_map: { ...filled, ...prev.cs_country_concept_id_map } })),
+    },
+  ]
+  const autoFillTargets = countryTargets.filter(t => t.values.length > 0)
 
   const addCountryValue = () => {
     const val = prompt('Enter a source country value (e.g. US, GR, United States):')
@@ -398,7 +426,8 @@ export default function LocationStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
-        <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
           <h2 className="text-xl font-bold text-primary">Location Mapping</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Map source columns to the OMOP LOCATION table. Locations are shared between Persons and
@@ -406,6 +435,12 @@ export default function LocationStep({ project, onUpdate }: Props) {
             are combined and deduplicated into a single <code className="bg-muted px-1 rounded">location.csv</code>.
           </p>
         </div>
+          {activeFilename && (
+            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="country" />
+          )}
+        </div>
+
+        <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
           <div className="rounded-lg border border-border bg-secondary/40 px-4 py-3 text-sm text-muted-foreground space-y-1">
@@ -622,7 +657,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                         <div className="flex items-center justify-between">
                           <div>
                             <Label>Country value → OMOP concept ID mapping</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4330430 = Greece</p>
                           </div>
                           <button onClick={addCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
                         </div>
@@ -632,6 +667,8 @@ export default function LocationStep({ project, onUpdate }: Props) {
                           mapping={activeCfg.country_concept_id_map}
                           onChange={m => setActiveCfg(prev => ({ ...prev, country_concept_id_map: m }))}
                           expectedDomain="Geography"
+                          projectId={project.id}
+                          suggestions={autoFill.suggestions['country']}
                         />
                       </div>
                     )}
@@ -646,6 +683,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                         onConceptName={name => { if (name) setActiveCfg(prev => ({ ...prev, country_source_value: name })) }}
                         placeholder="e.g. 4330442"
                         expectedDomain="Geography"
+                        projectId={project.id}
                       />
                       <p className="text-xs text-muted-foreground mt-1">Applied to all person rows (0 = unknown).</p>
                     </div>
@@ -773,7 +811,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                         <div className="flex items-center justify-between">
                           <div>
                             <Label>Country value → OMOP concept ID mapping</Label>
-                            <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4079432 = Greece</p>
+                            <p className="text-xs text-muted-foreground mt-0.5">e.g. 4330442 = United States, 4330430 = Greece</p>
                           </div>
                           <button onClick={addCsCountryValue} className="text-xs text-primary hover:underline">+ Add value</button>
                         </div>
@@ -783,6 +821,8 @@ export default function LocationStep({ project, onUpdate }: Props) {
                           mapping={activeCfg.cs_country_concept_id_map}
                           onChange={m => setActiveCfg(prev => ({ ...prev, cs_country_concept_id_map: m }))}
                           expectedDomain="Geography"
+                          projectId={project.id}
+                          suggestions={autoFill.suggestions['cs_country']}
                         />
                       </div>
                     )}
@@ -797,6 +837,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                         onConceptName={name => { if (name) setActiveCfg(prev => ({ ...prev, cs_country_source_value: name })) }}
                         placeholder="e.g. 4330442"
                         expectedDomain="Geography"
+                        projectId={project.id}
                       />
                       <p className="text-xs text-muted-foreground mt-1">Applied to all care site rows (0 = unknown).</p>
                     </div>

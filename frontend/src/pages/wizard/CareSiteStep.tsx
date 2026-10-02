@@ -9,6 +9,8 @@ import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { PLACE_OF_SERVICE_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { FileText, Info } from 'lucide-react'
 
@@ -69,9 +71,12 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   const locPidCol = !locAutoIncrement ? (locCfg.file_configs?.[activeFilename]?.person_id_col ?? '') : ''
   const pidLockedFromLocation = locAutoIncrement || !!locPidCol
 
+  const autoFill = useConceptAutoFill(project.id)
+
   // ── Apply a CareSiteFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: CareSiteFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
+    autoFill.clear()
     if (fc.place_of_service_col) {
       const fresh = infos[fc.place_of_service_col]?.distinct_values ?? []
       setPosValues(fresh.length > 0 ? fresh : Object.keys(fc.place_of_service_value_map ?? {}))
@@ -211,6 +216,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
     setActiveCfg(prev => ({ ...prev, [field]: v }))
 
   const handlePosColChange = (col: string) => {
+    autoFill.clear('place_of_service')
     setActiveCfg(prev => ({ ...prev, place_of_service_col: col, place_of_service_value_map: {} }))
     setPosValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
@@ -257,6 +263,16 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
 
   const showMappings = !!activeFilename
 
+  const autoFillTargets: AutoFillTarget[] = activeCfg.place_of_service_col && posValues.length > 0
+    ? [{
+        key: 'place_of_service', label: 'Place of service', domain: 'Visit', prefer: PLACE_OF_SERVICE_CONCEPTS,
+        values: posValues, mapped: activeCfg.place_of_service_value_map ?? {},
+        apply: filled => setActiveCfg(prev => ({
+          ...prev, place_of_service_value_map: { ...filled, ...(prev.place_of_service_value_map ?? {}) },
+        })),
+      }]
+    : []
+
   return (
     <WizardLayout
       project={project}
@@ -268,17 +284,24 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
-        <div>
-          <h2 className="text-xl font-bold text-primary">Care Site Mapping</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Map source columns to the OMOP CARE_SITE table. A Care Site is a unique combination
-            of a <strong>location</strong> and the <strong>nature of the site</strong> — such as its place of service,
-            name, or another characteristic. It represents institutional (physical or organizational) units
-            where healthcare is delivered: offices, wards, hospitals, clinics, etc. Individual provider
-            information belongs in the PROVIDER table, not here. If the source only provides generic
-            information (e.g. Place of Service), pooled Care Site records are acceptable.
-          </p>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex-1 min-w-0">
+            <h2 className="text-xl font-bold text-primary">Care Site Mapping</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Map source columns to the OMOP CARE_SITE table. A Care Site is a unique combination
+              of a <strong>location</strong> and the <strong>nature of the site</strong> — such as its place of service,
+              name, or another characteristic. It represents institutional (physical or organizational) units
+              where healthcare is delivered: offices, wards, hospitals, clinics, etc. Individual provider
+              information belongs in the PROVIDER table, not here. If the source only provides generic
+              information (e.g. Place of Service), pooled Care Site records are acceptable.
+            </p>
+          </div>
+          {showMappings && (
+            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="place of service" />
+          )}
         </div>
+
+        <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
           <div className="rounded-lg border border-border bg-secondary/40 px-4 py-3 text-sm text-muted-foreground space-y-1">
@@ -502,6 +525,8 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
                   onChange={map => setActiveCfg(prev => ({ ...prev, place_of_service_value_map: map }))}
                   hint="Assign an OMOP concept ID to each distinct place-of-service value."
                   expectedDomain="Visit"
+                  projectId={project.id}
+                  suggestions={autoFill.suggestions['place_of_service']}
                 />
               )}
             </Card>

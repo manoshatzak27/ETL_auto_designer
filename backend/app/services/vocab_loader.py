@@ -6,6 +6,8 @@ Athena exports come as a directory of tab-delimited CSVs:
   VOCABULARY.csv, DOMAIN.csv, CONCEPT_CLASS.csv, RELATIONSHIP.csv, DRUG_STRENGTH.csv
 
 The loader is idempotent: it TRUNCATEs the vocab tables (CASCADE) and re-loads.
+After loading it (re)builds the few indexes the wizard's concept search relies
+on — see _SEARCH_INDEXES.
 """
 from __future__ import annotations
 
@@ -33,6 +35,17 @@ _VOCAB_FILES: list[tuple[str, str]] = [
     ("CONCEPT_ANCESTOR.csv", "concept_ancestor"),
     ("DRUG_STRENGTH.csv", "drug_strength"),
 ]
+
+
+# Indexes the table steps' concept search needs, per table, with the names the
+# OHDSI indices file gives them (omop_ddl/OMOPCDM_postgresql_5.4_indices.sql) so
+# a later full OHDSI index run finds them already there. Without them every
+# search reads all of CONCEPT (~10M rows) and CONCEPT_ANCESTOR (~85M rows),
+# ~1.4 s each, however few concepts the searched domain has.
+_SEARCH_INDEXES: dict[str, list[tuple[str, str]]] = {
+    "concept": [("idx_concept_domain", "domain_id")],
+    "concept_ancestor": [("idx_concept_ancestor_dec", "descendant_concept_id")],
+}
 
 
 class VocabFileStatus(BaseModel):
@@ -133,6 +146,15 @@ def load_vocabulary(bundle_path: str, schema: str) -> None:
                 t0 = time.monotonic()
                 try:
                     with conn.cursor() as cur:
+                        # Dropped for the bulk load and rebuilt after it: one
+                        # build is far cheaper than maintaining the index for
+                        # each of tens of millions of COPYed rows.
+                        for index, _column in _SEARCH_INDEXES.get(entry.table, []):
+                            cur.execute(
+                                sql.SQL("DROP INDEX IF EXISTS {schema}.{index}").format(
+                                    schema=sql.Identifier(schema), index=sql.Identifier(index),
+                                )
+                            )
                         cur.execute(
                             sql.SQL("TRUNCATE TABLE {schema}.{table} CASCADE").format(
                                 schema=sql.Identifier(schema),
@@ -167,6 +189,28 @@ def load_vocabulary(bundle_path: str, schema: str) -> None:
                 finally:
                     entry.elapsed = round(time.monotonic() - t0, 2)
                     _set_status(_vocab_status.copy(update={"files": file_statuses}))
+
+            # Search indexes, for every table that was (re)loaded. A table whose
+            # load failed was rolled back, index included, so it is left alone.
+            for entry in file_statuses:
+                if entry.status != "success":
+                    continue
+                for index, column in _SEARCH_INDEXES.get(entry.table, []):
+                    t0 = time.monotonic()
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute("SET LOCAL maintenance_work_mem = '1GB'")
+                            cur.execute(
+                                sql.SQL("CREATE INDEX IF NOT EXISTS {index} ON {schema}.{table} ({column})").format(
+                                    index=sql.Identifier(index), schema=sql.Identifier(schema),
+                                    table=sql.Identifier(entry.table), column=sql.Identifier(column),
+                                )
+                            )
+                        conn.commit()
+                        _append_log(f"[{entry.table}] index {index} built in {time.monotonic() - t0:.1f}s")
+                    except Exception as exc:  # noqa: BLE001
+                        conn.rollback()
+                        _append_log(f"[{entry.table}] index {index} failed: {exc}")
 
             # ANALYZE for query planner
             try:

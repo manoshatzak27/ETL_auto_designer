@@ -428,26 +428,49 @@ never leaks into another's.
 
 ---
 
-## Concept IDs in the table steps (Person: auto-fill + search)
+## Concept IDs in the table steps (auto-fill + search)
 
 The table steps ask for standard concept ids per source value — gender, race,
-ethnicity on the Person step. Rather than looking each one up on Athena, the
+ethnicity, country, place of service, specialty, visit concept and type, and so
+on. Rather than looking each one up on Athena, the
 same matcher fills them in and searches them, with one difference from the
 Concepts step: the **domain is known up front** (a gender value can only be a
 Gender concept), so every request is confined to it.
 
-- **Auto-fill concept IDs** (top of the Person step) sends every *unmapped*
-  value of the Gender / Race / Ethnicity columns through
-  `POST /projects/{id}/suggest-value-concepts`. Confident matches are filled in;
+- **Auto-fill concept IDs** (top of the Location, Care Site, Provider, Person
+  and Visit steps) sends every *unmapped* value of the step's concept columns
+  through `POST /projects/{id}/suggest-value-concepts`. Confident matches are filled in;
   weaker ones appear under the value as *Suggested: … Use*; the rest stay empty.
   Values already mapped are never touched, so re-running it is safe.
-- **Search** (🔍 beside every value, and beside the *Set default* inputs) calls
-  `GET /projects/{id}/search-concepts`, restricted to the field's domain. Results
-  are grouped under their **direct parents** (from `concept_ancestor`), so
-  searching *american* shows *American Indian* under *American Indian or Alaska
-  Native* and *African American* under *Black or African American*, then the
-  parentless matches.
+- **Search** (🔍 beside every value, and beside the *Set default* inputs, in all
+  seven table steps — Observation period and Death too) calls
+  `GET /projects/{id}/search-concepts`, restricted to the field's domain. The
+  matcher's ranked shortlist is topped up with a plain name search over the
+  vocabulary (every word must appear in the name): an exact concept name ends the
+  matcher's search with that one concept, so *ambulance* alone would miss
+  *Ambulance - Land* (8668), and partial words (*hisp*) find nothing there.
+  Results are arranged as a **tree of broader → narrower concepts** (from
+  `concept_ancestor`, nesting as deep as it goes — *Ambulance Visit › Ambulance ›
+  Ambulance - Air or Water › Air Ambulance*), then the matches with no relatives
+  among them.
 - A set id shows its name in brackets — `8516 (Black or African American)`.
+
+| step | field | domain | auto-fill picks from |
+|---|---|---|---|
+| Location | person / care site country | Geography | country-level concepts only (SNOMED *Location*, OSM *2nd level*) |
+| Care Site | place of service | Visit | CMS Place of Service |
+| Provider | specialty, gender | Provider, Gender | — |
+| Person | gender, race, ethnicity | Gender, Race, Ethnicity | race rolled up (below) |
+| Visit | visit concept | Visit | the Visit vocabulary (9201 Inpatient Visit, not 8717 Inpatient Hospital) |
+| Visit | visit type | Type Concept | — |
+| Visit | admitted from, discharged to | Visit | CMS Place of Service |
+| Obs. period, Death | period type, cause of death | Type Concept, Condition | search only (single fields, no value table) |
+
+Where a field wants one vocabulary of its domain, the request carries a `prefer`
+(vocabularies and/or concept classes): the best-scoring preferred candidate wins,
+and with none in the shortlist the match is only offered, never filled. An exact
+name tie the matcher collapses (*Canada* returned as the OSM place *Canadá*) is
+resolved by an exact-name lookup restricted to the preference.
 
 ### Why values are rewritten before matching
 
@@ -462,6 +485,9 @@ each value for its domain first:
 | Gender | resolved outright from a word list (English, Spanish, French, German, Greek) — only two standard concepts exist | `M`, `man`, `Άρρεν` → 8507; `f`, `Woman` → 8532 |
 | Race | synonyms; country name / ISO alpha-3 → nationality | `caucasian` → White; `China` → Chinese |
 | Ethnicity | negations; country name / ISO alpha-2 / alpha-3 → nationality | `non-hispanic` → Not Hispanic or Latino; `greece`, `GR`, `PRT` → Greek, Portuguese |
+| Geography | country name / ISO alpha-2 / alpha-3 → the country's name | `GR` → Greece; `USA` → United States (raw, it matches the village *Usa*) |
+| Visit | abbreviations | `ER`, `ED` → emergency room; `IP`, `OP`, `ICU`, telemedicine → telehealth |
+| Provider | shorthand; *-ologist* → *-ology* | `GP` → General Practice; `Cardiologist` → Cardiology |
 
 The rewritten term (never an id) is then matched within the domain, so the
 vocabulary decides the concept. The country table lists ~170 countries, and
@@ -471,6 +497,8 @@ name. Deliberate gaps:
 - **Numeric gender codes** (`1`/`2`) are not guessed — datasets disagree on which is which.
 - **Two-letter country codes are ethnicity-only**; race columns use short codes that collide (`AI`).
 - **Unknown countries** pass through unchanged and usually stay unmapped — add a row to `_COUNTRIES`.
+  Of its ~170 countries, all but Bermuda, Palestine, Réunion and Western Sahara have a
+  country-level Geography concept; those four are only ever suggested.
 - The mapping assumes the column means nationality. A country-of-birth column is mapped just as confidently, and wrongly.
 
 ### Race: rolled up to the five OHDSI categories
@@ -489,9 +517,23 @@ Ancestry and the bracketed names are read from the backend's `vocab` schema
 (Finalize → Card 1). Without it loaded, search and auto-fill still work, but
 nothing is rolled up or grouped, and ids show without names.
 
-The other table steps (location, care site, provider, visit, observation period,
-death) use the same `ValueConceptMapper` / `SingleConceptInput` components;
-passing `projectId` there enables the search, and the endpoints take any domain.
+That schema needs two indexes, which the vocabulary loader builds after every
+load (OHDSI's own names, from `omop_ddl/OMOPCDM_postgresql_5.4_indices.sql`):
+`idx_concept_domain` on `concept(domain_id)` (~70 MB) and
+`idx_concept_ancestor_dec` on `concept_ancestor(descendant_concept_id)`
+(~650 MB). Without them each search reads all of `concept` (~10M rows) and
+`concept_ancestor` (~85M rows) — ~3 s per search even in a two-concept domain
+like Gender; with them, 50–350 ms. A vocabulary loaded before the loader did
+this can get them by re-running the load, or directly:
+
+```bash
+docker compose exec postgres psql -U omop -d omop -c "CREATE INDEX IF NOT EXISTS idx_concept_domain ON vocab.concept (domain_id)" -c "CREATE INDEX IF NOT EXISTS idx_concept_ancestor_dec ON vocab.concept_ancestor (descendant_concept_id)"
+```
+
+Each step wires this through `useConceptAutoFill` (one target per concept
+field: domain, preference, values, and how to merge the filled ids) and the
+`ValueConceptMapper` / `SingleConceptInput` components, which show search
+whenever they get a `projectId` and a domain.
 
 ---
 
@@ -502,11 +544,11 @@ Steps 2–4 and Death are optional (toggled from the Source step's table picker)
 | Step (slug)       | Page                       | Purpose                                                                                                                          |
 |-------------------|----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
 | `source`          | Source upload              | Drop in your flat CSV — delimiter, encoding and columns are auto-detected. Toggle optional OMOP tables here.                     |
-| `location` *      | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings.         |
-| `care-site` *     | Care Site                  | Configure care_site name + place_of_service. Warns if Location has no `cs_*` columns mapped.                                    |
-| `provider` *      | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence.                  |
+| `location` *      | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings. Auto-fill + search for country concepts. |
+| `care-site` *     | Care Site                  | Configure care_site name + place_of_service. Warns if Location has no `cs_*` columns mapped. Auto-fill + search for place of service. |
+| `provider` *      | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence. Auto-fill + search for specialty and gender. |
 | `person`          | Person                     | Person ID, gender, DOB strategy (full date vs year-only), race/ethnicity. Shows the FK columns inherited from earlier steps. **Auto-fill concept IDs** and per-value domain search replace Athena lookups (see above). |
-| `visit`           | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`.   |
+| `visit`           | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`. Auto-fill + search for visit concept, type, admitted from / discharged to. |
 | `obs-period`      | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
 | `death` *         | Death                      | Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                            |
 | `concepts`        | Concept mapping            | Per-column decision, defaulting to **Map variable**. Upload a data dictionary under **Descriptions**, then **Load concepts** maps every variable at once through the staged matcher — and every distinct value of the **Map values** variables, two passes so all of a variable's values share one domain (see above); AI Search and manual entry handle the rest. Gate-on-progress before next. |

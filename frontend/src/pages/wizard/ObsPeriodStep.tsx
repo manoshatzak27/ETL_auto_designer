@@ -313,6 +313,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
               onChange={v => setCfg(prev => ({ ...prev, period_type_concept_id: v ?? 0 }))}
               placeholder="e.g. 32879"
               expectedDomain="Type Concept"
+              projectId={project.id}
             />
             <a
               href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="

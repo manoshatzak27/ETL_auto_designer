@@ -11,11 +11,14 @@ interface Props {
   className?: string
   /** If set, concept IDs outside this domain are rejected instead of accepted. */
   expectedDomain?: string
-  /** With expectedDomain, enables a concept search beside the input. */
+  /** With expectedDomain (or searchDomain), enables a concept search beside the input. */
   projectId?: string
+  /** The domain to search when the field accepts any domain (no expectedDomain),
+   *  e.g. cause of death → Condition. Does not restrict what can be set. */
+  searchDomain?: string
 }
 
-export default function SingleConceptInput({ value, onChange, onConceptName, placeholder = 'Concept ID', className, expectedDomain, projectId }: Props) {
+export default function SingleConceptInput({ value, onChange, onConceptName, placeholder = 'Concept ID', className, expectedDomain, projectId, searchDomain }: Props) {
   const [searching, setSearching] = useState(false)
   const [pending, setPending] = useState('')
   const [lookingUp, setLookingUp] = useState(false)
@@ -93,21 +96,22 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
     }
   }
 
-  const searchToggle = projectId && expectedDomain && (
+  const searchIn = expectedDomain ?? searchDomain
+  const searchToggle = projectId && searchIn && (
     <button
       type="button"
       onClick={() => setSearching(s => !s)}
       className={`flex-shrink-0 ${searching ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}
-      title={`Search ${expectedDomain} concepts`}
+      title={`Search ${searchIn} concepts`}
     >
       <Search className="w-4 h-4" />
     </button>
   )
-  const searchPanel = projectId && expectedDomain && searching && (
+  const searchPanel = projectId && searchIn && searching && (
     <div className="max-w-md">
       <DomainConceptSearch
         projectId={projectId}
-        domain={expectedDomain}
+        domain={searchIn}
         onSelect={c => {
           onChange(c.concept_id)
           onConceptName?.(c.concept_name)

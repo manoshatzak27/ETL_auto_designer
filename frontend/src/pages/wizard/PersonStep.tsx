@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { updateTableConfig, getTableConfig, getColumnValues, getConceptMatcherHealth, suggestValueConcepts, type ValueConceptSuggestion } from '../../api/client'
+import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
 import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, PersonConfig, PersonFileConfig, RaceEthnicityMapping, SourceFile, LocationConfig } from '../../types'
 import WizardLayout from './WizardLayout'
@@ -13,8 +13,9 @@ import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
-import { Button } from '@/components/ui/button'
-import { FileText, Info, Loader2, Sparkles } from 'lucide-react'
+import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
+import { FileText, Info } from 'lucide-react'
 
 interface ColumnInfo { distinct_values: string[] }
 
@@ -49,9 +50,6 @@ const CONCEPT_FIELDS: { key: ConceptField; label: string; domain: string; mappin
   { key: 'ethnicity', label: 'Ethnicity', domain: 'Ethnicity', mapping: 'ethnicity_concept_id' },
 ]
 
-type Suggestions = Record<ConceptField, Record<string, ValueConceptSuggestion>>
-const NO_SUGGESTIONS: Suggestions = { gender: {}, race: {}, ethnicity: {} }
-
 function deepCopy<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
@@ -84,19 +82,8 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const [initialized, setInitialized] = useState(false)
   const [pidMissingFiles, setPidMissingFiles] = useState<string[]>([])
 
-  // Concept auto-fill (the concept matcher behind /suggest-value-concepts)
-  const [matcherHealth, setMatcherHealth] = useState<{ available: boolean; detail?: string | null } | null>(null)
-  const [autoFilling, setAutoFilling] = useState(false)
-  const [autoFillSummary, setAutoFillSummary] = useState<string[] | null>(null)
-  const [autoFillError, setAutoFillError] = useState<string | null>(null)
-  // Matches too uncertain to fill in on their own, offered per value instead.
-  const [suggestions, setSuggestions] = useState<Suggestions>(NO_SUGGESTIONS)
-
-  useEffect(() => {
-    getConceptMatcherHealth()
-      .then(setMatcherHealth)
-      .catch(() => setMatcherHealth({ available: false, detail: 'Concept matcher unreachable' }))
-  }, [])
+  const autoFill = useConceptAutoFill(project.id)
+  const { suggestions } = autoFill
 
   // Ref so async callbacks can check the current active filename
   const activeFilenameRef = useRef<string>('')
@@ -125,8 +112,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
     }
 
     setActiveCfg(deepCopy(fc))
-    setSuggestions(NO_SUGGESTIONS)
-    setAutoFillSummary(null)
+    autoFill.clear()
 
     const gm = fc.gender_mode ?? (m.gender_concept_id?.source_col ? 'column' : 'default')
     setGenderMode(gm)
@@ -323,7 +309,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
     setValues(col ? (columnInfos[col]?.distinct_values ?? []) : [])
   }
 
-  const clearSuggestions = (field: ConceptField) => setSuggestions(prev => ({ ...prev, [field]: {} }))
+  const clearSuggestions = (field: ConceptField) => autoFill.clear(field)
 
   const switchGenderMode = (mode: 'column' | 'default') => {
     clearSuggestions('gender')
@@ -384,63 +370,21 @@ export default function PersonStep({ project, onUpdate }: Props) {
   }
 
   /** The fields auto-fill can act on: mapped from a column, with values to map. */
-  const autoFillTargets = CONCEPT_FIELDS.flatMap(f => {
+  const autoFillTargets: AutoFillTarget[] = CONCEPT_FIELDS.flatMap(f => {
     const m = activeCfg.mappings[f.mapping] as RaceEthnicityMapping | undefined
     if (fieldState[f.key].mode !== 'column' || !m?.source_col) return []
     const values = fieldState[f.key].values.length > 0 ? fieldState[f.key].values : Object.keys(m.value_map ?? {})
-    return values.length > 0 ? [{ ...f, values, mapped: m.value_map ?? {} }] : []
+    if (values.length === 0) return []
+    return [{
+      key: f.key, label: f.label, domain: f.domain, values, mapped: m.value_map ?? {},
+      apply: filled => setActiveCfg(prev => {
+        const next = deepCopy(prev)
+        const nm = next.mappings[f.mapping] as RaceEthnicityMapping
+        nm.value_map = { ...filled, ...(nm.value_map ?? {}) }
+        return next
+      }),
+    }]
   })
-
-  /** Fill every unmapped value the matcher is confident about; offer the rest
-   *  as suggestions. Values the user already mapped are never touched. */
-  const autoFillConcepts = async () => {
-    setAutoFilling(true)
-    setAutoFillError(null)
-    setAutoFillSummary(null)
-    const summary: string[] = []
-    try {
-      const answers = await Promise.all(autoFillTargets.map(async t => {
-        const todo = t.values.filter(v => t.mapped[v] === undefined)
-        return { target: t, results: todo.length > 0 ? await suggestValueConcepts(project.id, t.domain, todo) : {} }
-      }))
-
-      const nextSuggestions: Suggestions = { ...suggestions }
-      for (const { target, results } of answers) {
-        const filled: Record<string, number> = {}
-        const offered: Record<string, ValueConceptSuggestion> = {}
-        for (const [value, r] of Object.entries(results)) {
-          if (r.concept_id == null) continue
-          if (r.status === 'auto_accept') filled[value] = r.concept_id
-          else offered[value] = r
-        }
-        nextSuggestions[target.key] = offered
-        setActiveCfg(prev => {
-          const next = deepCopy(prev)
-          const m = next.mappings[target.mapping] as RaceEthnicityMapping
-          m.value_map = { ...filled, ...(m.value_map ?? {}) }
-          return next
-        })
-
-        const total = Object.keys(results).length
-        const missing = total - Object.keys(filled).length - Object.keys(offered).length
-        const parts = total === 0
-          ? ['all values already mapped']
-          : [
-              `${Object.keys(filled).length} of ${total} filled`,
-              ...(Object.keys(offered).length ? [`${Object.keys(offered).length} to review`] : []),
-              ...(missing ? [`${missing} not found`] : []),
-            ]
-        summary.push(`${target.label}: ${parts.join(', ')}`)
-      }
-      setSuggestions(nextSuggestions)
-      setAutoFillSummary(summary)
-    } catch (e) {
-      const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
-      setAutoFillError(detail || 'Auto-fill failed — is the concept matcher running?')
-    } finally {
-      setAutoFilling(false)
-    }
-  }
 
   // ── Save ──────────────────────────────────────────────────────────────
   const saveConfig = async () => {
@@ -534,38 +478,11 @@ export default function PersonStep({ project, onUpdate }: Props) {
             </p>
           </div>
           {showMappings && (
-            <Button
-              onClick={autoFillConcepts}
-              disabled={autoFilling || autoFillTargets.length === 0 || matcherHealth?.available === false}
-              title={
-                matcherHealth?.available === false
-                  ? `Concept matcher unavailable — ${matcherHealth.detail || 'the service is not running'}`
-                  : autoFillTargets.length === 0
-                    ? 'Map a Gender, Race or Ethnicity column first'
-                    : 'Fill in standard concept IDs for the gender, race and ethnicity values'
-              }
-            >
-              {autoFilling ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-              Auto-fill concept IDs
-            </Button>
+            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="gender, race and ethnicity" />
           )}
         </div>
 
-        {(autoFillSummary || autoFillError) && (
-          <div className={`rounded-lg border px-4 py-3 text-sm ${autoFillError ? 'border-destructive/50 bg-destructive/10 text-destructive' : 'border-primary/30 bg-primary/5 text-foreground'}`}>
-            {autoFillError ?? (
-              <>
-                <ul className="space-y-0.5">
-                  {autoFillSummary!.map(line => <li key={line}>{line}</li>)}
-                </ul>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Values already mapped were left as they were. Check the filled IDs below; use the
-                  search icon beside any value to pick a different concept.
-                </p>
-              </>
-            )}
-          </div>
-        )}
+        <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
           <div className="rounded-lg border border-border bg-secondary/40 px-4 py-3 text-sm text-muted-foreground space-y-1">
@@ -746,7 +663,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                         onChange={m => setField(['mappings', 'gender_concept_id', 'value_map'], m)}
                         expectedDomain="Gender"
                         projectId={project.id}
-                        suggestions={suggestions.gender}
+                        suggestions={suggestions['gender']}
                       />
                     </div>
                   )}
@@ -761,7 +678,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     expectedDomain="Gender"
                     projectId={project.id}
                   />
-                  <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female, 8551 = Unknown (0 = unknown).</p>
+                  <p className="mt-1 text-xs text-muted-foreground">Common: 8507 = Male, 8532 = Female (0 = unknown).</p>
                 </div>
               )}
             </Card>
@@ -856,7 +773,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                         onChange={m => setField(['mappings', 'race_concept_id', 'value_map'], m)}
                         expectedDomain="Race"
                         projectId={project.id}
-                        suggestions={suggestions.race}
+                        suggestions={suggestions['race']}
                       />
                     </div>
                   )}
@@ -909,7 +826,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                         onChange={m => setField(['mappings', 'ethnicity_concept_id', 'value_map'], m)}
                         expectedDomain="Ethnicity"
                         projectId={project.id}
-                        suggestions={suggestions.ethnicity}
+                        suggestions={suggestions['ethnicity']}
                       />
                     </div>
                   )}

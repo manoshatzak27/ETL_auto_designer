@@ -35,8 +35,9 @@ const DEFAULTS: DeathConfig = {
 const DEATH_TYPE_OPTIONS = [
   { value: 32879, label: '32879 — Registry' },
   { value: 32817, label: '32817 — EHR' },
-  { value: 32810, label: '32810 — Death Certificate' },
-  { value: 32823, label: '32823 — Primary Death Certificate' },
+  { value: 32815, label: '32815 — Death Certificate' },
+  { value: 32823, label: '32823 — EHR discharge record' },
+  { value: 32810, label: '32810 — Claim' },
 ]
 
 export default function DeathStep({ project, onUpdate }: Props) {
@@ -194,9 +195,12 @@ export default function DeathStep({ project, onUpdate }: Props) {
               value={cfg.cause_concept_id}
               onChange={v => setCfg(prev => ({ ...prev, cause_concept_id: v }))}
               placeholder="e.g. 433753"
+              projectId={project.id}
+              searchDomain="Condition"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              No domain restriction — choose the Standard concept that best represents the cause of death. Use 0 if unknown.
+              No domain restriction — choose the Standard concept that best represents the cause of death (search looks in
+              Condition, where causes of death usually are). Use 0 if unknown.
             </p>
           </div>
 
