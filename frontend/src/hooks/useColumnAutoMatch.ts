@@ -75,9 +75,9 @@ export function useColumnAutoMatch(projectId: string, table: string) {
     filenames: string[]
     targets: ColumnTarget[]
     exclude: Iterable<string>
-  }) => {
+  }): Promise<ColumnAutoMatchSummary | null> => {
     const todo = targets.filter(t => !t.current)
-    if (todo.length === 0) return
+    if (todo.length === 0) return null
     targetsRef.current = Object.fromEntries(todo.map(t => [t.key, t]))
     setRunning(true)
     setError(null)
@@ -109,18 +109,21 @@ export function useColumnAutoMatch(projectId: string, table: string) {
         for (const t of todo) delete next[t.key]
         return { ...next, ...offered }
       })
-      setSummary({
+      const result: ColumnAutoMatchSummary = {
         filled,
         suggested: Object.keys(offered).length,
         missing,
         aiUsed: res.llm_used,
         aiError: res.llm_error,
-      })
+      }
+      setSummary(result)
       // A failed AI call changes what the badge should say.
       if (res.llm_error) checkLlm()
+      return result
     } catch (e) {
       const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(detail || 'Auto-match failed')
+      throw new Error(detail || 'Auto-match failed', { cause: e })
     } finally {
       setRunning(false)
     }

@@ -15,6 +15,7 @@ import { Select } from '@/components/ui/select'
 import { useSourceFile } from '../../hooks/useSourceFile'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary, ColumnSuggestion } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import { Plus, X } from 'lucide-react'
 
 interface Props {
@@ -47,6 +48,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [loaded, setLoaded] = useState(false)
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period', ['visit_occurrence']), [project.etl_config])
   const autoMatch = useColumnAutoMatch(project.id, 'observation_period')
 
@@ -56,7 +58,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(migrateConfig(ex))
       }
-    })
+    }).finally(() => setLoaded(true))
   }, [project.id])
 
   // Columns for a specific file. In multi-file mode, returns [] when no file is selected.
@@ -164,6 +166,13 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
 
   const startDateCols = availCols(cfg.start_date_file, cfg.start_date_col)
   const endDateCols = availCols(cfg.end_date_file, cfg.end_date_col)
+
+  // ── Auto-map all steps (started from the Source step) ───────────────────
+  useAutoRunStep({
+    slug: 'obs-period', label: 'Obs. Period', ready: loaded, files: [], activeFile: '',
+    autoMatch, match: { filenames: isMultiFile ? allFilenames : allFilenames.slice(0, 1), targets: autoMatchTargets, exclude: [...crossUsed, cfg.start_date_col, cfg.end_date_col] },
+    save: saveConfig,
+  })
 
   return (
     <WizardLayout

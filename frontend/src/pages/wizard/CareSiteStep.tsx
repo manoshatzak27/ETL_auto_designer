@@ -12,6 +12,7 @@ import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import { PLACE_OF_SERVICE_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { FileText, Info } from 'lucide-react'
@@ -55,6 +56,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [initialized, setInitialized] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
   const activeFilenameRef = useRef<string>('')
   activeFilenameRef.current = activeFilename
@@ -146,7 +148,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
       }
     }
 
-    bootstrap()
+    bootstrap().finally(() => setLoaded(true))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id])
 
@@ -284,6 +286,16 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
     { key: 'care_site_name_col', label: 'Care site name', current: activeCfg.care_site_name_col, apply: set('care_site_name_col') },
     { key: 'place_of_service_col', label: 'Place of service', current: activeCfg.place_of_service_col, apply: handlePosColChange },
   ]
+
+  // ── Auto-map all steps (started from the Source step) ────────────────
+  useAutoRunStep({
+    slug: 'care-site', label: 'Care Site',
+    ready: loaded && (!activeFilename || columnInfosCache[activeFilename] !== undefined),
+    files: selectedFiles, activeFile: activeFilename, switchFile: switchActiveFile,
+    autoMatch, match: { filenames: [activeFilename], targets: autoMatchTargets, exclude: [...crossUsed, ...stepUsed] },
+    autoFill, fillTargets: autoFillTargets,
+    save: saveConfig,
+  })
 
   return (
     <WizardLayout

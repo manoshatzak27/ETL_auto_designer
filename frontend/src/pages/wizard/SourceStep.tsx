@@ -9,6 +9,7 @@ import { Card } from '@/components/ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import VocabLoaderCard from '../../components/VocabLoaderCard'
 import SourceFileGridEditor from '../../components/SourceFileGridEditor'
+import AutoMapAllCard from '../../components/AutoMapAllCard'
 import clsx from 'clsx'
 
 const WARN_ROW_THRESHOLD = 20
@@ -363,6 +364,8 @@ export default function SourceStep({ project, onUpdate }: Props) {
             </label>
           </div>
         </Card>
+
+        <AutoMapAllCard project={project} disabled={!hasSource} />
 
         {/* OMOP vocabulary */}
         <div className="flex flex-col gap-2">

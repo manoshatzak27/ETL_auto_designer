@@ -54,7 +54,7 @@ export function useConceptAutoFill(projectId: string) {
       .catch(() => setHealth({ available: false, detail: 'Concept matcher unreachable' }))
   }, [])
 
-  const run = async (targets: AutoFillTarget[]) => {
+  const run = async (targets: AutoFillTarget[]): Promise<string[]> => {
     setRunning(true)
     setError(null)
     setSummary(null)
@@ -95,9 +95,11 @@ export function useConceptAutoFill(projectId: string) {
       }
       setSuggestions(prev => ({ ...prev, ...offeredByKey }))
       setSummary(lines)
+      return lines
     } catch (e) {
       const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
       setError(detail || 'Auto-fill failed — is the concept matcher running?')
+      throw new Error(detail || 'Auto-fill failed — is the concept matcher running?', { cause: e })
     } finally {
       setRunning(false)
     }

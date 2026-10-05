@@ -16,6 +16,7 @@ import { Select } from '@/components/ui/select'
 import { useSourceFile } from '../../hooks/useSourceFile'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 
 interface Props {
   project: Project
@@ -49,6 +50,7 @@ export default function DeathStep({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<DeathConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  const [loaded, setLoaded] = useState(false)
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'death'), [project.etl_config])
   const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
   const availCols = (currentValue: string) =>
@@ -60,7 +62,7 @@ export default function DeathStep({ project, onUpdate }: Props) {
         setExtraInstructions(ex.extra_instructions || '')
         setCfg(ex)
       }
-    })
+    }).finally(() => setLoaded(true))
   }, [project.id])
 
   const saveConfig = async () => {
@@ -96,6 +98,13 @@ export default function DeathStep({ project, onUpdate }: Props) {
     datedField('death_datetime_col', 'Death datetime', cfg.death_date_col),
     matchField('cause_source_value_col', 'Cause of death'),
   ]
+
+  // ── Auto-map all steps (started from the Source step) ───────────────────
+  useAutoRunStep({
+    slug: 'death', label: 'Death', ready: loaded, files: [], activeFile: '',
+    autoMatch, match: { filenames: selectedFile ? [selectedFile.filename] : [], targets: autoMatchTargets, exclude: [...crossUsed, ...stepUsed] },
+    save: saveConfig,
+  })
 
   return (
     <WizardLayout

@@ -2,6 +2,8 @@ import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-
 import { useState, useEffect, useRef } from 'react'
 import { GenerationProvider } from './context/GenerationContext'
 import { StepFileSelectionContext } from './contexts/StepFileSelectionContext'
+import { AutoRunProvider } from './contexts/AutoRunContext'
+import AutoRunBanner from './components/AutoRunBanner'
 import Dashboard from './pages/Dashboard'
 import SourceStep from './pages/wizard/SourceStep'
 import LocationStep from './pages/wizard/LocationStep'
@@ -75,8 +77,11 @@ function ProjectWizard() {
   return (
     <StepFileSelectionContext.Provider value={fileSelections}>
       <GenerationProvider>
-        <Comp project={project} onUpdate={update} />
-        <ChatPanel project={project} onUpdate={update} />
+        <AutoRunProvider projectId={project.id}>
+          <Comp project={project} onUpdate={update} />
+          <AutoRunBanner />
+          <ChatPanel project={project} onUpdate={update} />
+        </AutoRunProvider>
       </GenerationProvider>
     </StepFileSelectionContext.Provider>
   )

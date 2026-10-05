@@ -12,7 +12,8 @@ export function ConceptAutoFillButton({ autoFill, targets, fields }: {
   const unavailable = autoFill.health?.available === false
   return (
     <Button
-      onClick={() => autoFill.run(targets)}
+      // A failure is shown by ConceptAutoFillSummary.
+      onClick={() => { autoFill.run(targets).catch(() => {}) }}
       disabled={autoFill.running || targets.length === 0 || unavailable}
       title={
         unavailable

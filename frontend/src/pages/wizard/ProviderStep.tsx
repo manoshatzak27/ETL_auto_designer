@@ -13,6 +13,7 @@ import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -72,6 +73,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [initialized, setInitialized] = useState(false)
+  const [loaded, setLoaded] = useState(false)
 
   const activeFilenameRef = useRef<string>('')
   activeFilenameRef.current = activeFilename
@@ -179,7 +181,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
       }
     }
 
-    bootstrap()
+    bootstrap().finally(() => setLoaded(true))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id])
 
@@ -374,6 +376,16 @@ export default function ProviderStep({ project, onUpdate }: Props) {
       })),
     })
   }
+
+  // ── Auto-map all steps (started from the Source step) ────────────────
+  useAutoRunStep({
+    slug: 'provider', label: 'Provider',
+    ready: loaded && (!activeFilename || columnInfosCache[activeFilename] !== undefined),
+    files: selectedFiles, activeFile: activeFilename, switchFile: switchActiveFile,
+    autoMatch, match: { filenames: [activeFilename], targets: autoMatchTargets, exclude: [...crossUsed, ...stepUsed] },
+    autoFill, fillTargets: autoFillTargets.filter(t => t.values.length > 0),
+    save: saveConfig,
+  })
 
   return (
     <WizardLayout

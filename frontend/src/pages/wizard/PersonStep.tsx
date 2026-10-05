@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { FileText, Info } from 'lucide-react'
 
@@ -82,6 +83,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [initialized, setInitialized] = useState(false)
+  const [loaded, setLoaded] = useState(false)
   const [pidMissingFiles, setPidMissingFiles] = useState<string[]>([])
 
   const autoFill = useConceptAutoFill(project.id)
@@ -211,7 +213,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
       }
     }
 
-    bootstrap()
+    bootstrap().finally(() => setLoaded(true))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id])
 
@@ -497,6 +499,16 @@ export default function PersonStep({ project, onUpdate }: Props) {
 
   // ── Render ────────────────────────────────────────────────────────────
   const showMappings = !!activeFilename
+
+  // ── Auto-map all steps (started from the Source step) ────────────────
+  useAutoRunStep({
+    slug: 'person', label: 'Person',
+    ready: loaded && (!activeFilename || columnInfosCache[activeFilename] !== undefined),
+    files: selectedFiles, activeFile: activeFilename, switchFile: switchActiveFile,
+    autoMatch, match: { filenames: [activeFilename], targets: autoMatchTargets, exclude: [...crossUsed, ...stepUsed] },
+    autoFill, fillTargets: autoFillTargets,
+    save: saveConfig,
+  })
 
   return (
     <WizardLayout

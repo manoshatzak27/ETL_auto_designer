@@ -36,7 +36,8 @@ export function ColumnAutoMatchControls({ autoMatch, targets, filenames, exclude
     <div className="flex flex-col items-end gap-1.5">
       <Button
         variant="outline"
-        onClick={() => autoMatch.run({ filenames, targets, exclude })}
+        // A failure is shown by ColumnAutoMatchSummary.
+        onClick={() => { autoMatch.run({ filenames, targets, exclude }).catch(() => {}) }}
         disabled={autoMatch.running || unmapped === 0}
         title={unmapped === 0
           ? 'Every field on this page is already mapped'

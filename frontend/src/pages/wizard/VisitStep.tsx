@@ -12,6 +12,7 @@ import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import {
   PLACE_OF_SERVICE_CONCEPTS,
   VISIT_CONCEPTS as VISIT_VOCABULARY,
@@ -42,9 +43,9 @@ const DEFAULT_VISIT: VisitDefinition = {
   visit_concept_id: 9202,
   type_concept_id: 32879,
   optional: false,
-}
   visit_concept_mode: 'column',
   visit_type_mode: 'column',
+}
 
 const DEFAULTS: VisitOccurrenceConfig = {
   enabled: true,
@@ -133,6 +134,9 @@ export default function VisitStep({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const [columnInfos, setColumnInfos] = useState<Record<string, ColumnInfo>>({})
+  // The file `columnInfos` belongs to, once loaded.
+  const [infosFor, setInfosFor] = useState<string | null>(null)
+  const [loaded, setLoaded] = useState(false)
   const [conceptModes, setConceptModes] = useState<Array<'column' | 'default'>>(['column'])
   const [typeModes, setTypeModes] = useState<Array<'column' | 'default'>>(['column'])
   const [visitValuesExpanded, setVisitValuesExpanded] = useState(false)
@@ -214,9 +218,17 @@ export default function VisitStep({ project, onUpdate }: Props) {
           setFileConfigs(blankConfigs)
         }
       }
-    })
-    getColumnValues(project.id).then(setColumnInfos)
+    }).finally(() => setLoaded(true))
   }, [project.id])
+
+  // Column values of the active file — each file's value lists differ.
+  useEffect(() => {
+    let stale = false
+    getColumnValues(project.id, activeFilename || undefined)
+      .then(infos => { if (!stale) { setColumnInfos(infos); setInfosFor(activeFilename) } })
+      .catch(() => { if (!stale) { setColumnInfos({}); setInfosFor(activeFilename) } })
+    return () => { stale = true }
+  }, [project.id, activeFilename])
 
   const distinctVals = (col: string): string[] => columnInfos[col]?.distinct_values ?? []
 
@@ -424,6 +436,16 @@ export default function VisitStep({ project, onUpdate }: Props) {
     setSaving(false)
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
+
+  // ── Auto-map all steps (started from the Source step) ─────────────────────
+  useAutoRunStep({
+    slug: 'visit', label: 'Visit',
+    ready: loaded && infosFor === activeFilename,
+    files: selectedFiles, activeFile: activeFilename, switchFile: switchActiveFile,
+    autoMatch, match: { filenames: activeFilename ? [activeFilename] : [], targets: autoMatchTargets, exclude: autoMatchExclude },
+    autoFill, fillTargets: autoFillTargets,
+    save: saveConfig,
+  })
 
   return (
     <WizardLayout
