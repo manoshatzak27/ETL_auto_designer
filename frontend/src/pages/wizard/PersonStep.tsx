@@ -118,21 +118,22 @@ export default function PersonStep({ project, onUpdate }: Props) {
     autoFill.clear()
     autoMatch.clear()
 
-    const gm = fc.gender_mode ?? (m.gender_concept_id?.source_col ? 'column' : 'default')
+    // Map a column unless an older config set only a default value.
+    const gm = fc.gender_mode ?? (!m.gender_concept_id?.source_col && m.gender_concept_id?.default ? 'default' : 'column')
     setGenderMode(gm)
     setGenderValues(gm === 'column' && m.gender_concept_id?.source_col
       ? getVals(m.gender_concept_id.source_col, m.gender_concept_id.value_map)
       : [])
 
     const raceM = m.race_concept_id as RaceEthnicityMapping | undefined
-    const rm = fc.race_mode ?? (raceM?.source_col ? 'column' : 'default')
+    const rm = fc.race_mode ?? (!raceM?.source_col && raceM?.default ? 'default' : 'column')
     setRaceMode(rm)
     setRaceValues(rm === 'column' && raceM?.source_col
       ? getVals(raceM.source_col, raceM.value_map ?? {})
       : [])
 
     const ethM = m.ethnicity_concept_id as RaceEthnicityMapping | undefined
-    const em = fc.ethnicity_mode ?? (ethM?.source_col ? 'column' : 'default')
+    const em = fc.ethnicity_mode ?? (!ethM?.source_col && ethM?.default ? 'default' : 'column')
     setEthnicityMode(em)
     setEthnicityValues(em === 'column' && ethM?.source_col
       ? getVals(ethM.source_col, ethM.value_map ?? {})

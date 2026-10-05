@@ -43,11 +43,13 @@ const DEFAULT_VISIT: VisitDefinition = {
   type_concept_id: 32879,
   optional: false,
 }
+  visit_concept_mode: 'column',
+  visit_type_mode: 'column',
 
 const DEFAULTS: VisitOccurrenceConfig = {
   enabled: true,
   visit_definitions: [
-    { label: 'Baseline', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: false },
+    { label: 'Baseline', date_col: '', visit_concept_id: 9202, type_concept_id: 32879, optional: false, visit_concept_mode: 'column', visit_type_mode: 'column' },
   ],
 }
 
@@ -169,8 +171,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
       visit_source_col: fc?.visit_source_col,
       auto_number_visits: fc?.auto_number_visits,
     }))
-    setConceptModes(vds.map(vd => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
-    setTypeModes(vds.map(vd => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
+    setConceptModes(vds.map(vd => vd.visit_concept_mode ?? 'column'))
+    setTypeModes(vds.map(vd => vd.visit_type_mode ?? 'column'))
   }
 
   // ── Initial load ──────────────────────────────────────────────────────────
@@ -192,8 +194,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
         // Legacy single-file or brand-new single-file config
         const vds = ex.visit_definitions ?? DEFAULTS.visit_definitions
         setCfg({ ...DEFAULTS, ...ex })
-        setConceptModes(vds.map(vd => vd.visit_concept_mode ?? (vd.visit_concept_source_col ? 'column' : 'default')))
-        setTypeModes(vds.map(vd => vd.visit_type_mode ?? (vd.visit_type_source_col ? 'column' : 'default')))
+        setConceptModes(vds.map(vd => vd.visit_concept_mode ?? 'column'))
+        setTypeModes(vds.map(vd => vd.visit_type_mode ?? 'column'))
         const first = allFiles[0]?.filename ?? ''
         setSelectedFiles(allFiles.map(f => f.filename))
         setActiveFilename(first)

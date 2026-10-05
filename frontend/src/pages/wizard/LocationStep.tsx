@@ -143,7 +143,8 @@ export default function LocationStep({ project, onUpdate }: Props) {
     autoFill.clear()
     autoMatch.clear()
 
-    const cm = fc.country_mode ?? (fc.country_col ? 'column' : 'default')
+    // Map a column unless an older config set only a default country.
+    const cm = fc.country_mode ?? (!fc.country_col && (fc.country_concept_id_default || fc.country_source_value) ? 'default' : 'column')
     setCountryMode(cm)
     if (cm === 'column' && fc.country_col) {
       const fresh = infos[fc.country_col]?.distinct_values ?? []
@@ -152,7 +153,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
       setCountryValues([])
     }
 
-    const csm = fc.cs_country_mode ?? (fc.cs_country_col ? 'column' : 'default')
+    const csm = fc.cs_country_mode ?? (!fc.cs_country_col && (fc.cs_country_concept_id_default || fc.cs_country_source_value) ? 'default' : 'column')
     setCsCountryMode(csm)
     if (csm === 'column' && fc.cs_country_col) {
       const fresh = infos[fc.cs_country_col]?.distinct_values ?? []
