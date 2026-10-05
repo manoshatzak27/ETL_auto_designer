@@ -19,6 +19,54 @@ interface Props {
   suggestions?: Record<string, ValueConceptSuggestion>
 }
 
+/** The matcher's top candidates for a value auto-fill didn't set, with their
+ *  scores (0–100). Usually the best one scored below 90, but a tie or a field's
+ *  vocabulary preference can hold back a higher score too. The suggested
+ *  concept comes first. */
+function SuggestionList({ suggestion, onUse }: {
+  suggestion: ValueConceptSuggestion
+  onUse: (conceptId: number) => void
+}) {
+  const rows: { concept_id: number; concept_name: string | null; vocabulary_id: string | null; score: number | null }[] = []
+  const seen = new Set<number>()
+  const add = (r: (typeof rows)[number]) => {
+    if (!seen.has(r.concept_id)) { seen.add(r.concept_id); rows.push(r) }
+  }
+  const suggested = suggestion.candidates.find(c => c.concept_id === suggestion.concept_id)
+  add(suggested ?? {
+    concept_id: suggestion.concept_id as number, concept_name: suggestion.concept_name,
+    vocabulary_id: null, score: suggestion.confidence,
+  })
+  suggestion.candidates.forEach(add)
+
+  return (
+    <div className="flex flex-col gap-0.5 text-[11px]">
+      <span className="text-muted-foreground">Suggested — not set automatically. Top matches, score 0–100:</span>
+      {rows.slice(0, 5).map((c, i) => (
+        <div key={c.concept_id} className={`flex items-center gap-1.5 ${i === 0 ? 'text-foreground' : 'text-muted-foreground'}`}>
+          <span
+            className={`font-mono w-7 text-right flex-shrink-0 ${i === 0 ? 'font-semibold' : ''}`}
+            title="Matcher score, 0–100"
+          >
+            {c.score == null ? '—' : Math.round(c.score)}
+          </span>
+          <span className="truncate" title={c.concept_name ?? undefined}>
+            {c.concept_name} <span className="font-mono">({c.concept_id})</span>
+          </span>
+          {c.vocabulary_id && <span className="text-[10px] text-muted-foreground flex-shrink-0">{c.vocabulary_id}</span>}
+          <button
+            type="button"
+            onClick={() => onUse(c.concept_id)}
+            className="text-primary hover:underline flex-shrink-0 ml-auto"
+          >
+            Use
+          </button>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function ConceptCell({
   conceptId,
   onChange,
@@ -202,19 +250,7 @@ function ConceptCell({
       </div>
       {commitError && <p className="text-[11px] text-destructive">{commitError}</p>}
       {suggestion?.concept_id != null && !searching && (
-        <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-          <span className="truncate">
-            Suggested: <span className="text-foreground">{suggestion.concept_name}</span>{' '}
-            <span className="font-mono">({suggestion.concept_id})</span>
-          </span>
-          <button
-            type="button"
-            onClick={() => onChange(suggestion.concept_id as number)}
-            className="text-primary hover:underline flex-shrink-0"
-          >
-            Use
-          </button>
-        </div>
+        <SuggestionList suggestion={suggestion} onUse={onChange} />
       )}
       {searchPanel}
     </div>

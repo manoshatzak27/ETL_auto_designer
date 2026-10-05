@@ -445,10 +445,14 @@ Gender concept), so every request is confined to it.
 - **Search** (🔍 beside every value, and beside the *Set default* inputs, in all
   seven table steps — Observation period and Death too) calls
   `GET /projects/{id}/search-concepts`, restricted to the field's domain. The
-  matcher's ranked shortlist is topped up with a plain name search over the
-  vocabulary (every word must appear in the name): an exact concept name ends the
-  matcher's search with that one concept, so *ambulance* alone would miss
-  *Ambulance - Land* (8668), and partial words (*hisp*) find nothing there.
+  matcher is asked for its full shortlist (`"shortlist": true`): normally an
+  exact concept name ends its search with that one concept, so *Native Hawaiian*
+  came back without *Native Hawaiian or Other Pacific Islander* (8557). With the
+  flag it keeps ranking alternatives behind the hit, without changing the hit
+  itself. Auto-fill asks for the same, which is what fills the *Suggested* list.
+  The shortlist is then topped up with a plain name search over the vocabulary
+  (every word must appear in the name), which catches partial words (*hisp*)
+  the matcher finds nothing for.
   Results are arranged as a **tree of broader → narrower concepts** (from
   `concept_ancestor`, nesting as deep as it goes — *Ambulance Visit › Ambulance ›
   Ambulance - Air or Water › Air Ambulance*), then the matches with no relatives

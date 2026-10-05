@@ -281,8 +281,14 @@ async def _post_match(
     note: str,
     candidates: int,
     domains: list[str] | None = None,
+    shortlist: bool = False,
 ) -> dict[str, Any]:
     """One POST to the matcher's /match, with its errors translated to ours.
+
+    `shortlist=True` asks the matcher to keep ranking alternatives behind an
+    exact-name hit instead of returning that one concept alone — for callers
+    that show a pick-list. The decision itself is unchanged by it. A matcher
+    that predates the flag ignores the key and behaves as before.
 
     Shared by both matching endpoints so the domain-restricted value passes
     below reach the pipeline exactly the way a plain column run does.
@@ -299,6 +305,8 @@ async def _post_match(
     # sent when the caller actually asked for a restriction.
     if domains is not None:
         body["domains"] = domains
+    if shortlist:
+        body["shortlist"] = True
 
     try:
         async with httpx.AsyncClient(timeout=settings.concept_matcher_timeout) as client:
@@ -896,6 +904,9 @@ async def suggest_value_concepts(
                 # A preference picks from the shortlist, so it needs a longer one.
                 max(payload.candidates, 10) if payload.prefer else payload.candidates,
                 [payload.domain],
+                # Alternatives behind an exact hit: they are what the
+                # "Suggested" list and a vocabulary preference choose from.
+                shortlist=True,
             )
             answered = answer.get("results") or []
             if len(answered) != len(chunk):
@@ -990,7 +1001,7 @@ async def search_concepts(
     answer, named = await asyncio.gather(
         _post_match(
             [{"name": term}], project_id, f"ETL Auto-Designer project {project_id} (search)",
-            limit, [domain],
+            limit, [domain], shortlist=True,
         ),
         by_name(),
     )
