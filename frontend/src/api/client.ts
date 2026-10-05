@@ -286,6 +286,67 @@ export const searchDomainConcepts = (projectId: string, query: string, domain: s
     )
     .then(r => r.data)
 
+// ---- Column auto-match (table steps) ----
+
+/** Whether the AI fallback of column auto-match can be used. */
+export interface LlmStatus {
+  status: 'ready' | 'not_configured' | 'error'
+  model: string
+  detail: string | null
+}
+
+export const getColumnMatcherHealth = (refresh = false) =>
+  api
+    .get<{ llm: LlmStatus }>('/projects/column-matcher/health', { params: refresh ? { refresh: 1 } : {} })
+    .then(r => r.data.llm)
+
+/** The source column picked for one step field. `auto` matches are confident
+ *  enough to fill in; `suggest` ones are offered for the user to accept. */
+export interface ColumnMatch {
+  column: string | null
+  filename: string | null
+  score: number
+  status: 'auto' | 'suggest' | 'none'
+  source: 'heuristic' | 'llm'
+  reason: string
+  alternatives: { column: string; filename: string; score: number }[]
+  /** Date fields: the format to set the step's date format to when applying
+   *  this match, or null to leave it as it is. */
+  date_format: string | null
+  /** Date fields: the format the column's values are written in. */
+  detected_format: string | null
+  /** Why a match was only suggested, or something to check about it. */
+  warning: string | null
+}
+
+export interface ColumnMatchField {
+  /** Unique within the request, e.g. "city_col" or "1:date_col". */
+  key: string
+  /** The backend field spec to match against, when it differs from `key`. */
+  spec?: string
+  /** What tells this field apart from its siblings, e.g. a visit's label. */
+  hint?: string
+  /** Files to look in for this field, when they differ from the request's. */
+  filenames?: string[]
+  /** Date fields: the step's current date format… */
+  date_format?: string
+  /** …the name shared by the fields that use that one format… */
+  format_group?: string
+  /** …and whether a column already mapped in the step relies on it. */
+  format_locked?: boolean
+}
+
+export const suggestColumnMapping = (
+  projectId: string,
+  body: { table: string; filenames: string[]; fields: ColumnMatchField[]; exclude_columns: string[]; use_llm: boolean },
+) =>
+  api
+    .post<{ matches: Record<string, ColumnMatch>; llm_available: boolean; llm_used: boolean; llm_error: string | null }>(
+      `/projects/${projectId}/suggest-column-mapping`,
+      body,
+    )
+    .then(r => r.data)
+
 export const getApiHealth = () =>
   api.get<{ status: string; openai_configured: boolean }>('/health').then(r => r.data)
 

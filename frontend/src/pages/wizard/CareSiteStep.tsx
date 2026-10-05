@@ -10,6 +10,8 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { PLACE_OF_SERVICE_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { FileText, Info } from 'lucide-react'
@@ -72,11 +74,13 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   const pidLockedFromLocation = locAutoIncrement || !!locPidCol
 
   const autoFill = useConceptAutoFill(project.id)
+  const autoMatch = useColumnAutoMatch(project.id, 'care_site')
 
   // ── Apply a CareSiteFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: CareSiteFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
+    autoMatch.clear()
     if (fc.place_of_service_col) {
       const fresh = infos[fc.place_of_service_col]?.distinct_values ?? []
       setPosValues(fresh.length > 0 ? fresh : Object.keys(fc.place_of_service_value_map ?? {}))
@@ -273,6 +277,14 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
       }]
     : []
 
+  const autoMatchTargets: ColumnTarget[] = [
+    ...(selectedFiles.length > 1 && !pidLockedFromLocation && personIdMode === 'column'
+      ? [{ key: 'person_id_col', label: 'Patient ID', current: activeCfg.person_id_col, apply: set('person_id_col') }]
+      : []),
+    { key: 'care_site_name_col', label: 'Care site name', current: activeCfg.care_site_name_col, apply: set('care_site_name_col') },
+    { key: 'place_of_service_col', label: 'Place of service', current: activeCfg.place_of_service_col, apply: handlePosColChange },
+  ]
+
   return (
     <WizardLayout
       project={project}
@@ -297,10 +309,14 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
             </p>
           </div>
           {showMappings && (
-            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="place of service" />
+            <div className="flex flex-wrap items-start gap-2">
+              <ColumnAutoMatchControls autoMatch={autoMatch} targets={autoMatchTargets} filenames={[activeFilename]} exclude={[...crossUsed, ...stepUsed]} />
+              <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="place of service" />
+            </div>
           )}
         </div>
 
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
         <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
@@ -442,6 +458,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
                           label="person_id"
                           sourceColumns={availCols(activeCfg.person_id_col)}
                           value={activeCfg.person_id_col}
+                          suggestion={autoMatch.suggestions['person_id_col']}
                           onChange={set('person_id_col')}
                           hint="Must be mapped for every selected file before code can be generated."
                         />
@@ -470,6 +487,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
                 label="care_site_name"
                 sourceColumns={availCols(activeCfg.care_site_name_col)}
                 value={activeCfg.care_site_name_col}
+                suggestion={autoMatch.suggestions['care_site_name_col']}
                 onChange={col => setActiveCfg(prev => ({ ...prev, care_site_name_col: col }))}
                 hint="The name of the care site as it appears in the source data (max 255 chars)."
               />
@@ -514,6 +532,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
                 label="place_of_service_col"
                 sourceColumns={availCols(activeCfg.place_of_service_col)}
                 value={activeCfg.place_of_service_col}
+                suggestion={autoMatch.suggestions['place_of_service_col']}
                 onChange={handlePosColChange}
                 hint="Source column whose values represent the place of service."
               />

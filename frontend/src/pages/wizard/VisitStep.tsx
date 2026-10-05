@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, type Dispatch, type SetStateAction } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getColumnValues } from '../../api/client'
-import { getCrossStepUsedCols } from '../../utils/usedColumns'
+import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
 import type { Project, VisitOccurrenceConfig, VisitDefinition, PerFileVisitConfig } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
@@ -10,6 +10,8 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import {
   PLACE_OF_SERVICE_CONCEPTS,
   VISIT_CONCEPTS as VISIT_VOCABULARY,
@@ -155,9 +157,11 @@ export default function VisitStep({ project, onUpdate }: Props) {
 
   // ── Apply a saved per-file config to UI state ─────────────────────────────
   const autoFill = useConceptAutoFill(project.id)
+  const autoMatch = useColumnAutoMatch(project.id, 'visit_occurrence')
 
   const applyFileConfig = (fc: PerFileVisitConfig | undefined) => {
     autoFill.clear()
+    autoMatch.clear()
     const vds = fc?.visit_definitions ?? DEFAULTS.visit_definitions
     setCfg(prev => ({
       ...prev,
@@ -283,6 +287,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
   const removeVisit = (i: number) => {
     // Suggestions are keyed by visit index, which shifts on removal.
     autoFill.clear()
+    autoMatch.clear()
     setCfg(prev => ({ ...prev, visit_definitions: prev.visit_definitions.filter((_, j) => j !== i) }))
     setConceptModes(prev => prev.filter((_, j) => j !== i))
     setTypeModes(prev => prev.filter((_, j) => j !== i))
@@ -336,6 +341,56 @@ export default function VisitStep({ project, onUpdate }: Props) {
       }]
     }),
   )
+
+  // ── Column auto-match ─────────────────────────────────────────────────────
+  // Keys are `${visit index}:${field}`; the visit's label tells the backend
+  // which of several date columns belongs to which visit.
+  const autoMatchTargets: ColumnTarget[] = [
+    ...(isMultiRow && !cfg.auto_number_visits
+      ? [{ key: 'visit_source_col', label: 'Visit identifier', current: cfg.visit_source_col ?? '',
+           apply: (v: string) => setCfg(prev => ({ ...prev, visit_source_col: v || undefined })) }]
+      : []),
+    ...cfg.visit_definitions.flatMap((vd, i): ColumnTarget[] => {
+      const name = vd.label || `Visit ${i + 1}`
+      const field = (spec: keyof VisitDefinition, label: string, apply?: (v: string) => void): ColumnTarget => ({
+        key: `${i}:${spec}`, spec, hint: vd.label, label: `${name} — ${label}`,
+        current: (vd[spec] as string | undefined) ?? '',
+        apply: apply ?? (v => updateVisit(i, spec, v || undefined)),
+      })
+      // Start and end date are read with the visit's one date format: a match
+      // brings its detected format along, unless the other date relies on it.
+      const dated = (spec: 'date_col' | 'end_date_col', label: string, other: string | undefined): ColumnTarget => ({
+        ...field(spec, label),
+        date_format: vd.date_format ?? '%Y-%m-%d',
+        format_group: `visit:${i}`,
+        format_locked: !!other,
+        apply: (v, _file, fmt) => updateVisitFields(i, {
+          [spec]: spec === 'date_col' ? v : v || undefined,
+          ...(fmt ? { date_format: fmt } : {}),
+        }),
+      })
+      const dateHasTime = dateFormatHasTime(vd.date_format ?? '%Y-%m-%d')
+      return [
+        dated('date_col', 'start date', vd.end_date_col),
+        ...(dateHasTime ? [] : [field('time_col', 'start time')]),
+        dated('end_date_col', 'end date', vd.date_col),
+        ...(dateHasTime ? [] : [field('end_time_col', 'end time')]),
+        ...(getMode(conceptModes, i) === 'column'
+          ? [field('visit_concept_source_col', 'visit concept', v => { autoFill.clear(`${i}:visit_concept`); updateVisit(i, 'visit_concept_source_col', v || undefined) })]
+          : []),
+        ...(getMode(typeModes, i) === 'column'
+          ? [field('visit_type_source_col', 'visit type', v => { autoFill.clear(`${i}:visit_type`); updateVisit(i, 'visit_type_source_col', v || undefined) })]
+          : []),
+        ...(INPATIENT_CONCEPT_IDS.has(vd.visit_concept_id)
+          ? [
+              field('admitted_from_source_col', 'admitted from', v => { autoFill.clear(`${i}:admitted_from`); updateVisit(i, 'admitted_from_source_col', v || undefined) }),
+              field('discharged_to_source_col', 'discharged to', v => { autoFill.clear(`${i}:discharged_to`); updateVisit(i, 'discharged_to_source_col', v || undefined) }),
+            ]
+          : []),
+      ]
+    }),
+  ]
+  const autoMatchExclude = [...crossUsed, ...extractMappedCols(cfg)]
 
   // ── Save ──────────────────────────────────────────────────────────────────
   const saveConfig = async () => {
@@ -466,9 +521,13 @@ export default function VisitStep({ project, onUpdate }: Props) {
               Map each CDM field to a source column and assign OMOP concept IDs to the values.
             </p>
           </div>
-          <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="visit concept, type, admitted-from and discharged-to" />
+          <div className="flex flex-wrap items-start gap-2">
+            <ColumnAutoMatchControls autoMatch={autoMatch} targets={autoMatchTargets} filenames={activeFilename ? [activeFilename] : []} exclude={autoMatchExclude} />
+            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="visit concept, type, admitted-from and discharged-to" />
+          </div>
         </div>
 
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
         <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiRow && (
@@ -511,6 +570,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                   label="Visit identifier column"
                   sourceColumns={availCols(cfg.visit_source_col ?? '')}
                   value={cfg.visit_source_col ?? ''}
+                  suggestion={autoMatch.suggestions['visit_source_col']}
                   onChange={v => {
                     setCfg(prev => ({ ...prev, visit_source_col: v || undefined }))
                     setVisitValuesExpanded(false)
@@ -600,6 +660,8 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       label="Start date"
                       sourceColumns={availCols(vd.date_col)}
                       value={vd.date_col}
+                      suggestion={autoMatch.suggestions[`${i}:date_col`]}
+                      onUseSuggestion={() => autoMatch.accept(`${i}:date_col`)}
                       onChange={v => updateVisit(i, 'date_col', v)}
                       required={!vd.optional}
                     />
@@ -607,6 +669,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       label="Start time (optional)"
                       sourceColumns={availCols(vd.time_col ?? '')}
                       value={vd.time_col ?? ''}
+                      suggestion={autoMatch.suggestions[`${i}:time_col`]}
                       onChange={v => updateVisit(i, 'time_col', v || undefined)}
                       disabled={dateHasTime}
                       hint={dateHasTime ? 'Start date already includes a time — this field is ignored.' : undefined}
@@ -615,12 +678,15 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       label="End date (optional)"
                       sourceColumns={availCols(vd.end_date_col ?? '')}
                       value={vd.end_date_col ?? ''}
+                      suggestion={autoMatch.suggestions[`${i}:end_date_col`]}
+                      onUseSuggestion={() => autoMatch.accept(`${i}:end_date_col`)}
                       onChange={v => updateVisit(i, 'end_date_col', v || undefined)}
                     />
                     <FieldMapper
                       label="End time (optional)"
                       sourceColumns={availCols(vd.end_time_col ?? '')}
                       value={vd.end_time_col ?? ''}
+                      suggestion={autoMatch.suggestions[`${i}:end_time_col`]}
                       onChange={v => updateVisit(i, 'end_time_col', v || undefined)}
                       disabled={dateHasTime}
                       hint={dateHasTime ? 'End date already includes a time — this field is ignored.' : undefined}
@@ -680,6 +746,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="visit_concept_id column"
                         sourceColumns={availCols(vd.visit_concept_source_col ?? '')}
                         value={vd.visit_concept_source_col ?? ''}
+                        suggestion={autoMatch.suggestions[`${i}:visit_concept_source_col`]}
                         onChange={v => { autoFill.clear(`${i}:visit_concept`); updateVisit(i, 'visit_concept_source_col', v || undefined) }}
                         hint="Values will be mapped to OMOP Visit concept IDs using the table below. The raw value is also stored verbatim in visit_source_value."
                       />
@@ -731,6 +798,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="visit_type_concept_id column"
                         sourceColumns={availCols(vd.visit_type_source_col ?? '')}
                         value={vd.visit_type_source_col ?? ''}
+                        suggestion={autoMatch.suggestions[`${i}:visit_type_source_col`]}
                         onChange={v => { autoFill.clear(`${i}:visit_type`); updateVisit(i, 'visit_type_source_col', v || undefined) }}
                         hint="Values will be mapped to OMOP Type concept IDs using the table below."
                       />
@@ -778,6 +846,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="Map from source column (optional)"
                         sourceColumns={availCols(vd.admitted_from_source_col ?? '')}
                         value={vd.admitted_from_source_col ?? ''}
+                        suggestion={autoMatch.suggestions[`${i}:admitted_from_source_col`]}
                         onChange={v => { autoFill.clear(`${i}:admitted_from`); updateVisit(i, 'admitted_from_source_col', v || undefined) }}
                         hint="Column whose values will be mapped to admitted_from_concept_id and admitted_from_source_value."
                       />
@@ -826,6 +895,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                         label="Map from source column (optional)"
                         sourceColumns={availCols(vd.discharged_to_source_col ?? '')}
                         value={vd.discharged_to_source_col ?? ''}
+                        suggestion={autoMatch.suggestions[`${i}:discharged_to_source_col`]}
                         onChange={v => { autoFill.clear(`${i}:discharged_to`); updateVisit(i, 'discharged_to_source_col', v || undefined) }}
                         hint="Column whose values will be mapped to discharged_to_concept_id and discharged_to_source_value."
                       />

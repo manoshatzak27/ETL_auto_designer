@@ -11,6 +11,8 @@ import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -91,11 +93,13 @@ export default function ProviderStep({ project, onUpdate }: Props) {
   const distinctVals = (col: string): string[] => columnInfos[col]?.distinct_values ?? []
 
   const autoFill = useConceptAutoFill(project.id)
+  const autoMatch = useColumnAutoMatch(project.id, 'provider')
 
   // ── Apply a ProviderFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: ProviderFileConfig) => {
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
+    autoMatch.clear()
     if (fc.specialty_mode) setSpecialtyMode(fc.specialty_mode)
     else if (fc.specialty_source_value_col) setSpecialtyMode('column')
     else if (fc.prefix_specialty) setSpecialtyMode('prefix')
@@ -313,6 +317,41 @@ export default function ProviderStep({ project, onUpdate }: Props) {
 
   const showMappings = !!activeFilename
 
+  const handleSpecialtyColChange = (v: string) => {
+    autoFill.clear('specialty')
+    setActiveCfg(prev => ({
+      ...prev,
+      specialty_source_value_col: v,
+      specialty_concept_value_map: v !== prev.specialty_source_value_col ? {} : prev.specialty_concept_value_map,
+    }))
+  }
+
+  const handleGenderColChange = (v: string) => {
+    autoFill.clear('gender')
+    setActiveCfg(prev => ({
+      ...prev,
+      gender_source_value_col: v,
+      gender_concept_value_map: v !== prev.gender_source_value_col ? {} : prev.gender_concept_value_map,
+    }))
+  }
+
+  // ── Column auto-match ────────────────────────────────────────────────
+  const autoMatchTargets: ColumnTarget[] = [
+    ...(selectedFiles.length > 1 && !pidLockedFromLocation && personIdMode === 'column'
+      ? [{ key: 'person_id_col', label: 'Patient ID', current: activeCfg.person_id_col, apply: set('person_id_col') }]
+      : []),
+    { key: 'provider_name_col', label: 'Provider name', current: activeCfg.provider_name_col, apply: set('provider_name_col') },
+    { key: 'npi_col', label: 'NPI', current: activeCfg.npi_col, apply: set('npi_col') },
+    { key: 'dea_col', label: 'DEA', current: activeCfg.dea_col, apply: set('dea_col') },
+    { key: 'year_of_birth_col', label: 'Year of birth', current: activeCfg.year_of_birth_col, apply: set('year_of_birth_col') },
+    ...(specialtyMode === 'column'
+      ? [{ key: 'specialty_source_value_col', label: 'Specialty', current: activeCfg.specialty_source_value_col, apply: handleSpecialtyColChange }]
+      : []),
+    ...(genderMode === 'column'
+      ? [{ key: 'gender_source_value_col', label: 'Gender', current: activeCfg.gender_source_value_col, apply: handleGenderColChange }]
+      : []),
+  ]
+
   // ── Concept auto-fill ────────────────────────────────────────────────
   const autoFillTargets: AutoFillTarget[] = []
   if (specialtyMode === 'column' && activeCfg.specialty_source_value_col) {
@@ -357,10 +396,14 @@ export default function ProviderStep({ project, onUpdate }: Props) {
             </p>
           </div>
           {showMappings && (
-            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets.filter(t => t.values.length > 0)} fields="specialty and gender" />
+            <div className="flex flex-wrap items-start gap-2">
+              <ColumnAutoMatchControls autoMatch={autoMatch} targets={autoMatchTargets} filenames={[activeFilename]} exclude={[...crossUsed, ...stepUsed]} />
+              <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets.filter(t => t.values.length > 0)} fields="specialty and gender" />
+            </div>
           )}
         </div>
 
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
         <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
@@ -502,6 +545,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                           label="person_id"
                           sourceColumns={availCols(activeCfg.person_id_col)}
                           value={activeCfg.person_id_col}
+                          suggestion={autoMatch.suggestions['person_id_col']}
                           onChange={set('person_id_col')}
                           hint="Must be mapped for every selected file before code can be generated."
                         />
@@ -530,6 +574,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                 label="provider_name"
                 sourceColumns={availCols(activeCfg.provider_name_col)}
                 value={activeCfg.provider_name_col}
+                suggestion={autoMatch.suggestions['provider_name_col']}
                 onChange={set('provider_name_col')}
                 hint="Name of the provider as it appears in the source (max 255 chars)."
               />
@@ -558,6 +603,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                 label="npi"
                 sourceColumns={availCols(activeCfg.npi_col)}
                 value={activeCfg.npi_col}
+                suggestion={autoMatch.suggestions['npi_col']}
                 onChange={set('npi_col')}
                 hint="National Provider Identifier (US). Max 20 chars."
               />
@@ -570,6 +616,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                 label="dea"
                 sourceColumns={availCols(activeCfg.dea_col)}
                 value={activeCfg.dea_col}
+                suggestion={autoMatch.suggestions['dea_col']}
                 onChange={set('dea_col')}
                 hint="DEA identifier for controlled substance prescriptions. Max 20 chars."
               />
@@ -582,6 +629,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                 label="year_of_birth"
                 sourceColumns={availCols(activeCfg.year_of_birth_col)}
                 value={activeCfg.year_of_birth_col}
+                suggestion={autoMatch.suggestions['year_of_birth_col']}
                 onChange={set('year_of_birth_col')}
                 hint="Column containing the provider's birth year (integer)."
               />
@@ -611,11 +659,8 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                     label="Specialty column"
                     sourceColumns={availCols(activeCfg.specialty_source_value_col)}
                     value={activeCfg.specialty_source_value_col}
-                    onChange={v => { autoFill.clear('specialty'); setActiveCfg(prev => ({
-                      ...prev,
-                      specialty_source_value_col: v,
-                      specialty_concept_value_map: v !== prev.specialty_source_value_col ? {} : prev.specialty_concept_value_map,
-                    })) }}
+                    suggestion={autoMatch.suggestions['specialty_source_value_col']}
+                    onChange={handleSpecialtyColChange}
                     hint="Values will populate specialty_source_value and be mapped to specialty_concept_id below."
                   />
                   {activeCfg.specialty_source_value_col && (
@@ -681,11 +726,8 @@ export default function ProviderStep({ project, onUpdate }: Props) {
                     label="Gender column"
                     sourceColumns={availCols(activeCfg.gender_source_value_col)}
                     value={activeCfg.gender_source_value_col}
-                    onChange={v => { autoFill.clear('gender'); setActiveCfg(prev => ({
-                      ...prev,
-                      gender_source_value_col: v,
-                      gender_concept_value_map: v !== prev.gender_source_value_col ? {} : prev.gender_concept_value_map,
-                    })) }}
+                    suggestion={autoMatch.suggestions['gender_source_value_col']}
+                    onChange={handleGenderColChange}
                     hint="Provider gender as it appears in the source. Values will populate gender_source_value and be mapped to gender_concept_id below."
                   />
                   {activeCfg.gender_source_value_col && (

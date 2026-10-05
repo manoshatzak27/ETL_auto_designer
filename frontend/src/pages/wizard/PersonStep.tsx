@@ -14,6 +14,8 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { FileText, Info } from 'lucide-react'
 
@@ -83,6 +85,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const [pidMissingFiles, setPidMissingFiles] = useState<string[]>([])
 
   const autoFill = useConceptAutoFill(project.id)
+  const autoMatch = useColumnAutoMatch(project.id, 'person')
   const { suggestions } = autoFill
 
   // Ref so async callbacks can check the current active filename
@@ -113,6 +116,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
 
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
+    autoMatch.clear()
 
     const gm = fc.gender_mode ?? (m.gender_concept_id?.source_col ? 'column' : 'default')
     setGenderMode(gm)
@@ -386,6 +390,40 @@ export default function PersonStep({ project, onUpdate }: Props) {
     }]
   })
 
+  // ── Column auto-match ────────────────────────────────────────────────
+  const mappings = activeCfg.mappings
+  const setDob = (v: string) => {
+    setField(['mappings', 'year_of_birth', 'source_col'], v)
+    setField(['mappings', 'month_of_birth', 'source_col'], v)
+    setField(['mappings', 'day_of_birth', 'source_col'], v)
+  }
+  const setDobFormat = (fmt: string) => {
+    setField(['mappings', 'year_of_birth', 'date_format'], fmt)
+    setField(['mappings', 'month_of_birth', 'date_format'], fmt)
+    setField(['mappings', 'day_of_birth', 'date_format'], fmt)
+  }
+  const autoMatchTargets: ColumnTarget[] = [
+    ...(!pidLockedFromLocation && !mappings.person_id.auto_increment
+      ? [{ key: 'person_id', label: 'Patient ID', current: mappings.person_id.source_col, apply: (v: string) => setField(['mappings', 'person_id', 'source_col'], v) }]
+      : []),
+    ...(genderMode === 'column'
+      ? [{ key: 'gender_concept_id', label: 'Gender', current: mappings.gender_concept_id.source_col, apply: handleGenderColChange }]
+      : []),
+    {
+      key: 'year_of_birth', label: 'Date of birth', current: mappings.year_of_birth.source_col,
+      // Only the birth date is read with this format, so a match may always set it.
+      date_format: mappings.year_of_birth.date_format, format_group: 'dob',
+      apply: (v, _file, fmt) => { setDob(v); if (fmt) setDobFormat(fmt) },
+    },
+    { key: 'birth_time', label: 'Birth time', current: activeCfg.birth_time_col ?? '', apply: (v: string) => setField(['birth_time_col'], v || undefined) },
+    ...(raceMode === 'column'
+      ? [{ key: 'race_concept_id', label: 'Race', current: (mappings.race_concept_id as RaceEthnicityMapping | undefined)?.source_col ?? '', apply: handleRaceColChange }]
+      : []),
+    ...(ethnicityMode === 'column'
+      ? [{ key: 'ethnicity_concept_id', label: 'Ethnicity', current: (mappings.ethnicity_concept_id as RaceEthnicityMapping | undefined)?.source_col ?? '', apply: handleEthnicityColChange }]
+      : []),
+  ]
+
   // ── Save ──────────────────────────────────────────────────────────────
   const saveConfig = async () => {
     const currentCfg: PersonFileConfig = { ...activeCfg, gender_mode: genderMode, race_mode: raceMode, ethnicity_mode: ethnicityMode }
@@ -478,10 +516,14 @@ export default function PersonStep({ project, onUpdate }: Props) {
             </p>
           </div>
           {showMappings && (
-            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="gender, race and ethnicity" />
+            <div className="flex flex-wrap items-start gap-2">
+              <ColumnAutoMatchControls autoMatch={autoMatch} targets={autoMatchTargets} filenames={[activeFilename]} exclude={[...crossUsed, ...stepUsed]} />
+              <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="gender, race and ethnicity" />
+            </div>
           )}
         </div>
 
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
         <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
@@ -618,6 +660,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                       label="Patient ID column"
                       sourceColumns={availCols(activeCfg.mappings.person_id.source_col)}
                       value={activeCfg.mappings.person_id.source_col}
+                      suggestion={autoMatch.suggestions['person_id']}
                       onChange={v => setField(['mappings', 'person_id', 'source_col'], v)}
                       required
                       hint="Kept exactly as it appears in the source, as person_source_value. The OMOP person_id is assigned sequentially."
@@ -645,6 +688,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     label="Gender column"
                     sourceColumns={availCols(activeCfg.mappings.gender_concept_id.source_col)}
                     value={activeCfg.mappings.gender_concept_id.source_col}
+                    suggestion={autoMatch.suggestions['gender_concept_id']}
                     onChange={handleGenderColChange}
                     required
                     hint="The source column that indicates biological sex."
@@ -692,17 +736,16 @@ export default function PersonStep({ project, onUpdate }: Props) {
                   label="Date of birth column"
                   sourceColumns={availCols(activeCfg.mappings.year_of_birth.source_col)}
                   value={activeCfg.mappings.year_of_birth.source_col}
-                  onChange={v => {
-                    setField(['mappings', 'year_of_birth', 'source_col'], v)
-                    setField(['mappings', 'month_of_birth', 'source_col'], v)
-                    setField(['mappings', 'day_of_birth', 'source_col'], v)
-                  }}
+                  suggestion={autoMatch.suggestions['year_of_birth']}
+                  onUseSuggestion={() => autoMatch.accept('year_of_birth')}
+                  onChange={setDob}
                   required
                 />
                 <FieldMapper
                   label="Birth time column (optional)"
                   sourceColumns={availCols(activeCfg.birth_time_col ?? '')}
                   value={activeCfg.birth_time_col ?? ''}
+                  suggestion={autoMatch.suggestions['birth_time']}
                   onChange={v => setField(['birth_time_col'], v || undefined)}
                 />
               </div>
@@ -714,9 +757,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     type="text"
                     value={activeCfg.mappings.year_of_birth.date_format}
                     onChange={e => {
-                      setField(['mappings', 'year_of_birth', 'date_format'], e.target.value)
-                      setField(['mappings', 'month_of_birth', 'date_format'], e.target.value)
-                      setField(['mappings', 'day_of_birth', 'date_format'], e.target.value)
+                      setDobFormat(e.target.value)
                     }}
                     placeholder="%Y-%m-%d"
                     className="mt-1 font-mono"
@@ -758,6 +799,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     label="Race column"
                     sourceColumns={availCols((activeCfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
                     value={(activeCfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
+                    suggestion={autoMatch.suggestions['race_concept_id']}
                     onChange={handleRaceColChange}
                   />
                   {(activeCfg.mappings.race_concept_id as RaceEthnicityMapping)?.source_col && (
@@ -811,6 +853,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
                     label="Ethnicity column"
                     sourceColumns={availCols((activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? '')}
                     value={(activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col ?? ''}
+                    suggestion={autoMatch.suggestions['ethnicity_concept_id']}
                     onChange={handleEthnicityColChange}
                   />
                   {(activeCfg.mappings.ethnicity_concept_id as RaceEthnicityMapping)?.source_col && (

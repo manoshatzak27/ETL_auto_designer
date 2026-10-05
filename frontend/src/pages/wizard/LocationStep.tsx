@@ -11,6 +11,8 @@ import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { COUNTRY_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -133,11 +135,13 @@ export default function LocationStep({ project, onUpdate }: Props) {
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
 
   const autoFill = useConceptAutoFill(project.id)
+  const autoMatch = useColumnAutoMatch(project.id, 'location')
 
   // ── Apply a LocationFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: LocationFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
+    autoMatch.clear()
 
     const cm = fc.country_mode ?? (fc.country_col ? 'column' : 'default')
     setCountryMode(cm)
@@ -370,6 +374,31 @@ export default function LocationStep({ project, onUpdate }: Props) {
   ]
   const autoFillTargets = countryTargets.filter(t => t.values.length > 0)
 
+  // ── Column auto-match ────────────────────────────────────────────────
+  const matchField = (key: keyof LocationFileConfig, label: string, apply: (col: string) => void = set(key)): ColumnTarget =>
+    ({ key, label, current: (activeCfg[key] as string | undefined) ?? '', apply })
+  const autoMatchTargets: ColumnTarget[] = [
+    ...(selectedFiles.length > 1 && personIdMode === 'column' ? [matchField('person_id_col', 'Patient ID')] : []),
+    matchField('address_1_col', 'Address 1'),
+    matchField('address_2_col', 'Address 2'),
+    matchField('city_col', 'City'),
+    matchField('state_col', 'State'),
+    matchField('zip_col', 'Zip'),
+    matchField('county_col', 'County'),
+    ...(countryMode === 'column' ? [matchField('country_col', 'Country', handleCountryColChange)] : []),
+    matchField('latitude_col', 'Latitude'),
+    matchField('longitude_col', 'Longitude'),
+    matchField('cs_address_1_col', 'Care site address 1'),
+    matchField('cs_address_2_col', 'Care site address 2'),
+    matchField('cs_city_col', 'Care site city'),
+    matchField('cs_state_col', 'Care site state'),
+    matchField('cs_zip_col', 'Care site zip'),
+    matchField('cs_county_col', 'Care site county'),
+    ...(csCountryMode === 'column' ? [matchField('cs_country_col', 'Care site country', handleCsCountryColChange)] : []),
+    matchField('cs_latitude_col', 'Care site latitude'),
+    matchField('cs_longitude_col', 'Care site longitude'),
+  ]
+
   const addCountryValue = () => {
     const val = prompt('Enter a source country value (e.g. US, GR, United States):')
     if (val) setCountryValues(prev => [...new Set([...prev, val])])
@@ -436,10 +465,14 @@ export default function LocationStep({ project, onUpdate }: Props) {
           </p>
         </div>
           {activeFilename && (
-            <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="country" />
+            <div className="flex flex-wrap items-start gap-2">
+              <ColumnAutoMatchControls autoMatch={autoMatch} targets={autoMatchTargets} filenames={[activeFilename]} exclude={[...crossUsed, ...stepUsed]} />
+              <ConceptAutoFillButton autoFill={autoFill} targets={autoFillTargets} fields="country" />
+            </div>
           )}
         </div>
 
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
         <ConceptAutoFillSummary autoFill={autoFill} />
 
         {isMultiFile && (
@@ -553,6 +586,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                       label="person_id"
                       sourceColumns={availCols(activeCfg.person_id_col)}
                       value={activeCfg.person_id_col}
+                      suggestion={autoMatch.suggestions['person_id_col']}
                       onChange={set('person_id_col')}
                       hint="Must be mapped for every selected file before code can be generated."
                     />
@@ -582,6 +616,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="address_1"
                   sourceColumns={availCols(activeCfg.address_1_col)}
                   value={activeCfg.address_1_col}
+                  suggestion={autoMatch.suggestions['address_1_col']}
                   onChange={set('address_1_col')}
                   hint="First line of the address (max 50 chars)."
                 />
@@ -589,6 +624,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="address_2"
                   sourceColumns={availCols(activeCfg.address_2_col)}
                   value={activeCfg.address_2_col}
+                  suggestion={autoMatch.suggestions['address_2_col']}
                   onChange={set('address_2_col')}
                   hint="Second line of the address (max 50 chars)."
                 />
@@ -600,6 +636,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="city"
                   sourceColumns={availCols(activeCfg.city_col)}
                   value={activeCfg.city_col}
+                  suggestion={autoMatch.suggestions['city_col']}
                   onChange={set('city_col')}
                 />
               </Card>
@@ -610,6 +647,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="state"
                   sourceColumns={availCols(activeCfg.state_col)}
                   value={activeCfg.state_col}
+                  suggestion={autoMatch.suggestions['state_col']}
                   onChange={set('state_col')}
                   hint="2-character state/province/district abbreviation."
                 />
@@ -617,6 +655,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="zip"
                   sourceColumns={availCols(activeCfg.zip_col)}
                   value={activeCfg.zip_col}
+                  suggestion={autoMatch.suggestions['zip_col']}
                   onChange={set('zip_col')}
                   hint="Zip / postal code stored as a string (up to 9 chars). Leading zeros are preserved."
                 />
@@ -624,6 +663,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="county"
                   sourceColumns={availCols(activeCfg.county_col)}
                   value={activeCfg.county_col}
+                  suggestion={autoMatch.suggestions['county_col']}
                   onChange={set('county_col')}
                   hint="County or sub-region (max 20 chars)."
                 />
@@ -650,6 +690,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                       label="country"
                       sourceColumns={availCols(activeCfg.country_col)}
                       value={activeCfg.country_col}
+                      suggestion={autoMatch.suggestions['country_col']}
                       onChange={handleCountryColChange}
                     />
                     {activeCfg.country_col && (
@@ -713,6 +754,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="latitude"
                   sourceColumns={availCols(activeCfg.latitude_col)}
                   value={activeCfg.latitude_col}
+                  suggestion={autoMatch.suggestions['latitude_col']}
                   onChange={set('latitude_col')}
                   hint="Decimal latitude — must be between −90 and 90."
                 />
@@ -720,6 +762,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="longitude"
                   sourceColumns={availCols(activeCfg.longitude_col)}
                   value={activeCfg.longitude_col}
+                  suggestion={autoMatch.suggestions['longitude_col']}
                   onChange={set('longitude_col')}
                   hint="Decimal longitude — must be between −180 and 180."
                 />
@@ -736,6 +779,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="address_1"
                   sourceColumns={availCols(activeCfg.cs_address_1_col)}
                   value={activeCfg.cs_address_1_col}
+                  suggestion={autoMatch.suggestions['cs_address_1_col']}
                   onChange={set('cs_address_1_col')}
                   hint="First line of the care site address (max 50 chars)."
                 />
@@ -743,6 +787,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="address_2"
                   sourceColumns={availCols(activeCfg.cs_address_2_col)}
                   value={activeCfg.cs_address_2_col}
+                  suggestion={autoMatch.suggestions['cs_address_2_col']}
                   onChange={set('cs_address_2_col')}
                   hint="Second line of the care site address (max 50 chars)."
                 />
@@ -754,6 +799,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="city"
                   sourceColumns={availCols(activeCfg.cs_city_col)}
                   value={activeCfg.cs_city_col}
+                  suggestion={autoMatch.suggestions['cs_city_col']}
                   onChange={set('cs_city_col')}
                 />
               </Card>
@@ -764,6 +810,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="state"
                   sourceColumns={availCols(activeCfg.cs_state_col)}
                   value={activeCfg.cs_state_col}
+                  suggestion={autoMatch.suggestions['cs_state_col']}
                   onChange={set('cs_state_col')}
                   hint="2-character state/province/district abbreviation."
                 />
@@ -771,6 +818,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="zip"
                   sourceColumns={availCols(activeCfg.cs_zip_col)}
                   value={activeCfg.cs_zip_col}
+                  suggestion={autoMatch.suggestions['cs_zip_col']}
                   onChange={set('cs_zip_col')}
                   hint="Zip / postal code stored as a string (up to 9 chars)."
                 />
@@ -778,6 +826,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="county"
                   sourceColumns={availCols(activeCfg.cs_county_col)}
                   value={activeCfg.cs_county_col}
+                  suggestion={autoMatch.suggestions['cs_county_col']}
                   onChange={set('cs_county_col')}
                   hint="County or sub-region (max 20 chars)."
                 />
@@ -804,6 +853,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                       label="country"
                       sourceColumns={availCols(activeCfg.cs_country_col)}
                       value={activeCfg.cs_country_col}
+                      suggestion={autoMatch.suggestions['cs_country_col']}
                       onChange={handleCsCountryColChange}
                     />
                     {activeCfg.cs_country_col && (
@@ -867,6 +917,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="latitude"
                   sourceColumns={availCols(activeCfg.cs_latitude_col)}
                   value={activeCfg.cs_latitude_col}
+                  suggestion={autoMatch.suggestions['cs_latitude_col']}
                   onChange={set('cs_latitude_col')}
                   hint="Decimal latitude — must be between −90 and 90."
                 />
@@ -874,6 +925,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
                   label="longitude"
                   sourceColumns={availCols(activeCfg.cs_longitude_col)}
                   value={activeCfg.cs_longitude_col}
+                  suggestion={autoMatch.suggestions['cs_longitude_col']}
                   onChange={set('cs_longitude_col')}
                   hint="Decimal longitude — must be between −180 and 180."
                 />

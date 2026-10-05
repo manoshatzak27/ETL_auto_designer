@@ -13,6 +13,8 @@ import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { useSourceFile } from '../../hooks/useSourceFile'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary, ColumnSuggestion } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { Plus, X } from 'lucide-react'
 
 interface Props {
@@ -46,6 +48,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period', ['visit_occurrence']), [project.etl_config])
+  const autoMatch = useColumnAutoMatch(project.id, 'observation_period')
 
   useEffect(() => {
     getTableConfig(project.id, 'observation_period').then((ex: ObservationPeriodConfig & { extra_instructions?: string }) => {
@@ -128,6 +131,37 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
     })
   }
 
+  // ── Column auto-match ───────────────────────────────────────────────────
+  // With several files each date picks its own; a date whose file is not yet
+  // chosen is looked for in every file, and the match sets the file too.
+  const allFilenames = files.map(f => f.filename)
+  // The one date format is shared by start, end and the fallback columns; a
+  // match brings its detected format along unless another of them relies on it.
+  const setStartDate = (col: string, filename: string, fmt: string | null) =>
+    setCfg(prev => ({
+      ...prev, start_date_col: col,
+      ...(isMultiFile && filename ? { start_date_file: filename } : {}),
+      ...(fmt ? { date_format: fmt } : {}),
+    }))
+  const setEndDate = (col: string, filename: string, fmt: string | null) =>
+    setCfg(prev => ({
+      ...prev, end_date_col: col,
+      ...(isMultiFile && filename ? { end_date_file: filename } : {}),
+      ...(fmt ? { date_format: fmt } : {}),
+    }))
+  const fallbackCols = fallbacks.some(fb => fb.type === 'column' && fb.col)
+  const dateFormat = cfg.date_format ?? '%Y-%m-%d'
+  const autoMatchTargets: ColumnTarget[] = [
+    { key: 'start_date_col', label: 'Start date', current: cfg.start_date_col, apply: setStartDate,
+      filenames: isMultiFile ? (cfg.start_date_file ? [cfg.start_date_file] : allFilenames) : undefined,
+      date_format: dateFormat, format_group: 'obs', format_locked: !!cfg.end_date_col || fallbackCols },
+    { key: 'end_date_col', label: 'End date', current: cfg.end_date_col, apply: setEndDate,
+      filenames: isMultiFile ? (cfg.end_date_file ? [cfg.end_date_file] : allFilenames) : undefined,
+      date_format: dateFormat, format_group: 'obs', format_locked: !!cfg.start_date_col || fallbackCols },
+  ]
+  const startSuggestion = autoMatch.suggestions['start_date_col']
+  const endSuggestion = autoMatch.suggestions['end_date_col']
+
   const startDateCols = availCols(cfg.start_date_file, cfg.start_date_col)
   const endDateCols = availCols(cfg.end_date_file, cfg.end_date_col)
 
@@ -142,7 +176,8 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
-        <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
           <h2 className="text-xl font-bold text-primary">Observation Period Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Define the time spans during which each patient was actively observed. Within these
@@ -151,6 +186,15 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
             Overlapping or adjacent periods are automatically merged.
           </p>
         </div>
+          <ColumnAutoMatchControls
+            autoMatch={autoMatch}
+            targets={autoMatchTargets}
+            filenames={isMultiFile ? allFilenames : allFilenames.slice(0, 1)}
+            exclude={[...crossUsed, cfg.start_date_col, cfg.end_date_col]}
+          />
+        </div>
+
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
 
         <Card className="flex flex-col gap-5 p-6">
 
@@ -181,6 +225,9 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
               <option value="">— not mapped —</option>
               {startDateCols.map(c => <option key={c} value={c}>{c}</option>)}
             </Select>
+            {startSuggestion?.column && !cfg.start_date_col && (
+              <ColumnSuggestion suggestion={startSuggestion} showFile={isMultiFile} onUse={() => autoMatch.accept('start_date_col')} />
+            )}
           </div>
 
           {/* End date */}
@@ -207,6 +254,9 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
               <option value="">— not mapped —</option>
               {endDateCols.map(c => <option key={c} value={c}>{c}</option>)}
             </Select>
+            {endSuggestion?.column && !cfg.end_date_col && (
+              <ColumnSuggestion suggestion={endSuggestion} showFile={isMultiFile} onUse={() => autoMatch.accept('end_date_col')} />
+            )}
           </div>
 
           {/* Fallback chain */}
