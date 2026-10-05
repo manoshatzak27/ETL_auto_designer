@@ -116,8 +116,8 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 
 | Variable                | Default                                | Purpose                                                       |
 |-------------------------|----------------------------------------|---------------------------------------------------------------|
-| `OPENAI_API_KEY`        | *(required for codegen / chat)*        | OpenAI API key                                                |
-| `OPENAI_MODEL`          | `gpt-4o`                               | Model used for code generation and the chat assistant         |
+| `OPENAI_API_KEY`        | *(required for codegen / chat)*        | OpenAI API key — also enables the AI fallback of column auto-match |
+| `OPENAI_MODEL`          | `gpt-4o`                               | Model used for code generation, the chat assistant and the column auto-match fallback |
 | `ENTITYLINKER_URL`      | (inside Docker: `http://entitylinker:8000/api/conceptlink`) | SapBERT+FAISS concept-search service. Started automatically by the compose stack. |
 | `DATABASE_URL`          | `sqlite:///./etl_designer.db`          | Wizard state DB (kept on SQLite for simplicity)               |
 | `POSTGRES_USER`         | `omop`                                 | OMOP Postgres user                                            |
@@ -428,6 +428,125 @@ never leaks into another's.
 
 ---
 
+## Column auto-match in the table steps
+
+Every table step (Location, Care Site, Provider, Person, Visit, Observation
+period, Death) asks, field by field, which source column holds what.
+**Auto-match columns** at the top of each step makes that first pass: it scores
+every source column against every *empty* field, fills in the confident matches
+and offers the rest as *Suggested: … Use* under the field. Fields already mapped
+are never sent, so re-running it is safe. The pipeline lives in
+[`column_matcher.py`](backend/app/services/column_matcher.py), behind
+`POST /projects/{id}/suggest-column-mapping`.
+
+```
+empty fields ──► profile the file ──► name score × value check ──► one column per field
+                                                                        │
+          date format ◄── AI fallback (fields still unsure) ◄───────────┘
+```
+
+**1. What the step sends.** The empty fields; the file(s) to look in (the active
+file tab — for Observation period, the file picked for that date, or every file
+when none is); the columns to skip (anything already mapped in this or another
+step, the same rule the dropdowns use); for Visit, each visit's label as a hint;
+for date fields, the step's date format and whether another mapped column uses it.
+
+**2. Profiling.** The first 5,000 rows are read as text and up to 500 distinct
+values kept per column. From those: the share that look like dates, times or
+years, are numbers (and in latitude / longitude range), match a zip, NPI or DEA
+pattern, or look like gender codes; and how many distinct values there are.
+Profiles are cached until the file changes.
+
+**3. Field specs.** Each field has a kind (`date`, `id`, `gender`, `category`,
+`text`, `zip`, `latitude`, …), a one-line description and the names it tends to
+go by — date of birth is `dob`, `birth date`, `year of birth`, `fecha nacimiento`…
+Care-site fields are the location names with a site word in front (`hospital
+city`, `facility zip`), so a plain `city` goes to the patient and `hospital_city`
+to the care site. Provider gender and year of birth need a provider word
+(`doctor_gender`), so the patient's `gender` is not taken.
+
+**4. Name score.** Names are split into words — `PatBirthDt`, `pat_birth_dt` and
+`pat-birth dt` all become *pat, birth, dt* — and filler words (*of*, *the*) dropped.
+The best score over the field's names counts:
+
+| case | score |
+|---|---|
+| same name, ignoring case and punctuation | 1.0 |
+| every word of the name is in the column | 0.92, −0.05 per extra word, −0.25 more per extra word naming another kind of field (*date, id, city, birth, name, address…*) |
+| a name of 5+ letters inside an unseparated column name (`patientbirthdate`) | 0.72 — a suggestion at most (`ethnicity` holds `city` the same way) |
+| a 3-letter name at the start or end of a one-word column (`patdob`) | 0.7 |
+| near-identical spelling (`adress`) | similarity × 0.8 |
+| some words in common | share × 0.6 |
+
+An abbreviation counts only as a real shortening of 4+ letters (`addr` →
+`address`, not `doc` → `doctor`). With a data dictionary loaded (Concepts step →
+Descriptions), a description containing all the words of a name scores 0.85. For
+Visit, a name combined with the visit's label scores in full and the bare names
+10% less, so the *Follow-up* visit gets `followup_date`, not `baseline_date`.
+Columns scoring under 0.35 are dropped.
+
+**5. Value check.** The values are tested against the field's kind — dates must
+parse, latitudes sit within ±90, an id has many distinct values, a category few.
+The score becomes **name × (0.65 + 0.35 × value)**, and a column whose values
+plainly are not that kind is multiplied by 0.3 — below the suggestion threshold,
+so `admission_type` never becomes an admission date. Values confirm or weaken a
+name; they never stand in for one.
+
+**6. Assignment.** All field–column pairs are taken best score first, so each
+column fills at most one field. **≥ 0.75** is filled in, **0.45–0.75** suggested,
+lower not offered; up to three alternatives are kept per field.
+
+**7. AI fallback.** Fields not filled in are sent, with the columns nobody
+claimed (up to 5 sample values each, and their descriptions), to the OpenAI model
+in `OPENAI_MODEL`. It must answer with column names from that list: an invented,
+excluded or doubly-used column is discarded. A pick is filled in only at
+confidence ≥ 0.7 *and* if its values pass step 5; otherwise it is a suggestion
+marked *AI*. If the call fails, the name-and-value results stand.
+
+The badge beside the button says whether the fallback can be used —
+**ready · gpt-4o** (key and model verified with one cheap request, cached five
+minutes), **off** (no `OPENAI_API_KEY`) or **error** (hover for why) — and
+clicking it checks again (`GET /projects/column-matcher/health?refresh=1`).
+**Use AI** turns it off per browser.
+
+**8. Date formats.** The generated scripts parse dates with the one `strptime`
+format set on the step and skip rows that don't fit it, so finding the column is
+only half the job. For each matched date column, about 70 formats (`%Y-%m-%d`,
+`%d/%m/%Y`, `%m/%d/%Y`, timestamps, `%Y` for a year of birth…) are tried on up to
+200 values and the one that reads the most is kept:
+
+- it differs from the step's format → the step's format is set to it, unless a
+  date column already mapped relies on the current one (Visit start and end
+  share a format per visit; Observation period start, end and fallbacks share
+  one; Death date and datetime share one) — then the column is only suggested,
+  with a warning;
+- two empty fields sharing a format disagree → the better match sets it, the
+  other is suggested;
+- under 95% of the values fit → suggested, since the rest would be skipped;
+- day and month can't be told apart (every day ≤ 12) → day-first, with a warning.
+
+**9. Back in the step.** A filled-in column goes through the same handler as a
+manual pick, so the value list loads and **Auto-fill concept IDs** (below) can
+map its values. **Use** on a suggestion sets its date format too. A summary lists
+what was filled, suggested, not found, and which date formats were set.
+
+### Auto-map all steps
+
+**Auto-map all steps** on the Source step walks every active table step in turn
+(never Concepts): on each it presses **Auto-match columns**, then **Auto-fill
+concept IDs**, for every selected file, saves the step and moves on — a bar at
+the top shows progress and can stop it. It ends back on the Source step with a
+per-step report. Suggestions are not kept across steps; open a step and press
+Auto-match columns again to see them. A step whose data doesn't load within 30 s
+is skipped with an error. The driver is
+[`useAutoRunStep.ts`](frontend/src/hooks/useAutoRunStep.ts); each step passes it
+its own targets and save, so it does exactly what the buttons do.
+
+What auto-match does *not* check: time formats (visit times, birth time keep
+`%H:%M:%S`), and columns picked by hand.
+
+---
+
 ## Concept IDs in the table steps (auto-fill + search)
 
 The table steps ask for standard concept ids per source value — gender, race,
@@ -547,7 +666,7 @@ Steps 2–4 and Death are optional (toggled from the Source step's table picker)
 
 | Step (slug)       | Page                       | Purpose                                                                                                                          |
 |-------------------|----------------------------|----------------------------------------------------------------------------------------------------------------------------------|
-| `source`          | Source upload              | Drop in your flat CSV — delimiter, encoding and columns are auto-detected. Toggle optional OMOP tables here.                     |
+| `source`          | Source upload              | Drop in your flat CSV — delimiter, encoding and columns are auto-detected. Toggle optional OMOP tables here. **Auto-map all steps** runs column auto-match and concept auto-fill on every table step (see above). |
 | `location` *      | Location                   | Map address columns (city, state, county/country) for both person and care site, with separate country-concept mappings. Auto-fill + search for country concepts. |
 | `care-site` *     | Care Site                  | Configure care_site name + place_of_service. Warns if Location has no `cs_*` columns mapped. Auto-fill + search for place of service. |
 | `provider` *      | Provider                   | Provider source value, gender default, specialty mapping (prefix or value-map). Help text clarifies precedence. Auto-fill + search for specialty and gender. |
@@ -689,6 +808,8 @@ Per-project `cdm_<id>` schemas are unaffected.
 | POST   | `/api/projects/{id}/match-values`                 | Map a column's distinct values, two passes, one domain per column |
 | POST   | `/api/projects/{id}/suggest-value-concepts`       | Suggest a concept per value within a given domain (`{domain, values}`); race rolled up to the five top-level categories |
 | GET    | `/api/projects/{id}/search-concepts`              | Free-text search within one domain (`?query=&domain=`), grouped under direct parents |
+| POST   | `/api/projects/{id}/suggest-column-mapping`       | Source column per step field (`{table, filenames, fields, exclude_columns, use_llm}`), with detected date formats |
+| GET    | `/api/projects/column-matcher/health`             | Can the AI fallback be used: `ready` / `not_configured` / `error` (`?refresh=1` re-checks) |
 | GET/PUT| `/api/projects/{id}/column-descriptions`          | Read / replace the project's data dictionary              |
 | POST   | `/api/projects/{id}/column-descriptions/upload`   | Merge in a CSV/Excel dictionary (`?replace=true` to overwrite) |
 | GET    | `/api/projects/{id}/column-descriptions/template` | Pre-filled `name,table,description` CSV to fill in        |
@@ -705,3 +826,9 @@ Run an end-to-end check against the bundled test source:
 
 The script creates a project, uploads `test_data/test_source.csv`, generates scripts,
 executes them, and prints the resulting output file list and per-table row counts.
+
+The column matcher has unit tests (the OpenAI client is mocked):
+
+```bash
+cd backend && pip install -r requirements-dev.txt && pytest tests
+```
