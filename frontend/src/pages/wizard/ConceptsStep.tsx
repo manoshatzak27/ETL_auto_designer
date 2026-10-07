@@ -8,6 +8,7 @@ import {
   downloadMappingFiles,
   downloadMappingSummary,
   lookupConceptDomain,
+  standardConceptError,
   conceptSearch,
   getApiHealth,
   getConceptMatcherHealth,
@@ -802,30 +803,19 @@ function ConceptPicker({
       return
     }
 
-    // Fast path: id + name both typed and nothing to validate — no lookup needed.
-    if (manualName.trim() && !validateDomain) {
-      commitConcept({ concept_id: id, concept_name: manualName.trim() })
-      return
-    }
-
+    // Always look the id up: an unknown or non-standard concept must never be set.
     setIdLocked(true)
     setLookingUpName(true)
     lookupConceptDomain(id)
       .then(res => {
-        if (validateDomain) {
-          const err = validateDomain(res.found ? res.domain_id : null)
-          if (err) { setDomainError(err); setIdLocked(false); return }
-        }
+        const err = standardConceptError(id, res) ?? validateDomain?.(res.domain_id) ?? null
+        if (err) { setDomainError(err); setIdLocked(false); return }
         const name = manualName.trim() || res.concept_name || `Concept ${id}`
         commitConcept({ concept_id: id, concept_name: name })
       })
       .catch(() => {
-        if (validateDomain) {
-          setDomainError("Couldn't verify this concept's domain — try again.")
-          setIdLocked(false)
-          return
-        }
-        commitConcept({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
+        setDomainError("Couldn't verify this concept — try again.")
+        setIdLocked(false)
       })
       .finally(() => setLookingUpName(false))
   }
@@ -836,21 +826,18 @@ function ConceptPicker({
     const id = parseInt(manualId)
     if (isNaN(id) || id < 0) return
     if (id === 0) { commitConcept({ concept_id: 0, concept_name: 'Not mapped' }); return }
-
-    if (!validateDomain) {
-      commitConcept({ concept_id: id, concept_name: manualName.trim() || `Concept ${id}` })
-      return
-    }
+    // Custom concepts aren't in the vocabulary — applyId knows how to reuse them.
+    if (usedCustomConceptIds.has(id)) { applyId(); return }
 
     setDomainError(null)
     setLookingUpName(true)
     lookupConceptDomain(id)
       .then(res => {
-        const err = validateDomain(res.found ? res.domain_id : null)
+        const err = standardConceptError(id, res) ?? validateDomain?.(res.domain_id) ?? null
         if (err) { setDomainError(err); return }
         commitConcept({ concept_id: id, concept_name: manualName.trim() || res.concept_name || `Concept ${id}` })
       })
-      .catch(() => setDomainError("Couldn't verify this concept's domain — try again."))
+      .catch(() => setDomainError("Couldn't verify this concept — try again."))
       .finally(() => setLookingUpName(false))
   }
 
@@ -1645,17 +1632,14 @@ function FixedConceptInput({
     if (isNaN(parsedId) || parsedId < 1) return
     setError(null)
 
-    if (!validateDomain && manualName.trim()) {
-      onSet(parsedId, manualName.trim())
-      setManualId(''); setManualName('')
-      return
-    }
-
+    // Always look the id up: an unknown or non-standard concept must never be set.
     setLookingUp(true)
     lookupConceptDomain(parsedId)
       .then(res => {
+        const standardErr = standardConceptError(parsedId, res)
+        if (standardErr) { setError(standardErr); return }
         if (validateDomain) {
-          const err = validateDomain(res.found ? res.domain_id : null)
+          const err = validateDomain(res.domain_id)
           if (err) { setError(err); return }
           // This name is stored as the source_value written into the OMOP output (e.g.
           // unit_source_value) — never substitute a placeholder like "Concept 8840" for
@@ -1673,11 +1657,7 @@ function FixedConceptInput({
         onSet(parsedId, resolvedName)
         setManualId(''); setManualName('')
       })
-      .catch(() => {
-        if (validateDomain) { setError("Couldn't verify this concept's domain — try again."); return }
-        onSet(parsedId, manualName.trim() || `Concept ${parsedId}`)
-        setManualId(''); setManualName('')
-      })
+      .catch(() => setError("Couldn't verify this concept — try again."))
       .finally(() => setLookingUp(false))
   }
 

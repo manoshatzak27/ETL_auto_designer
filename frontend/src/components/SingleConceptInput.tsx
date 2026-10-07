@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { lookupConceptDomain } from '../api/client'
+import { lookupConceptDomain, standardConceptError, invalidReasonLabel } from '../api/client'
 import DomainConceptSearch from './DomainConceptSearch'
 import { Loader2, AlertTriangle, CheckCircle, X, Search } from 'lucide-react'
 
@@ -25,6 +25,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   const [domain, setDomain] = useState<string | null>(null)
   const [conceptName, setConceptName] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
+  const [invalidReason, setInvalidReason] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -35,6 +36,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
     if (!hasValue) {
       setDomain(null)
       setStandardConcept(null)
+      setInvalidReason(null)
       setConceptName(null)
       setFailed(false)
       setNotFound(false)
@@ -43,6 +45,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
     setLookingUp(true)
     setDomain(null)
     setStandardConcept(null)
+    setInvalidReason(null)
     setConceptName(null)
     setFailed(false)
     setNotFound(false)
@@ -52,6 +55,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
           setDomain(res.domain_id)
           setConceptName(res.concept_name ?? null)
           setStandardConcept(res.standard_concept)
+          setInvalidReason(res.invalid_reason)
           onConceptName?.(res.concept_name ?? null)
         } else {
           setDomain(null)
@@ -65,24 +69,22 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
 
   const mismatch = !!expectedDomain && !!domain && domain.toLowerCase() !== expectedDomain.toLowerCase()
   const nonStandard = !!domain && standardConcept !== 'S'
+  const invalidConcept = !!domain && !!invalidReason
 
+  // Always look the id up: an unknown, invalid or non-standard concept must never be set.
   const commit = async () => {
     const id = parseInt(pending)
     if (isNaN(id) || id < 1) return
     setCommitError(null)
-    if (!expectedDomain) {
-      onChange(id)
-      setPending('')
-      return
-    }
     setLookingUp(true)
     try {
       const res = await lookupConceptDomain(id)
-      if (!res.found) {
-        setCommitError(`Concept ${id} was not found in the vocabulary.`)
+      const err = standardConceptError(id, res)
+      if (err) {
+        setCommitError(err)
         return
       }
-      if (res.domain_id && res.domain_id.toLowerCase() !== expectedDomain.toLowerCase()) {
+      if (expectedDomain && res.domain_id && res.domain_id.toLowerCase() !== expectedDomain.toLowerCase()) {
         setCommitError(`Concept ${id} belongs to domain "${res.domain_id}", expected "${expectedDomain}".`)
         return
       }
@@ -90,7 +92,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
       onConceptName?.(res.concept_name ?? null)
       setPending('')
     } catch {
-      setCommitError('Domain lookup failed — please try again.')
+      setCommitError("Couldn't verify this concept — please try again.")
     } finally {
       setLookingUp(false)
     }
@@ -125,7 +127,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   )
 
   if (hasValue) {
-    const invalid = mismatch || notFound || nonStandard
+    const invalid = mismatch || notFound || invalidConcept || nonStandard
     return (
       <div className={`flex flex-col gap-1 mt-1 ${className ?? ''}`}>
         <div className="flex items-center gap-1.5">
@@ -165,7 +167,12 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
         {!lookingUp && notFound && (
           <p className="text-xs text-amber-700">Concept {value} was not found in the vocabulary. Clear it and set a valid concept.</p>
         )}
-        {!lookingUp && !mismatch && !notFound && nonStandard && (
+        {!lookingUp && !mismatch && !notFound && invalidConcept && (
+          <p className="text-xs text-amber-700">
+            Concept {value} is invalid — {invalidReasonLabel(invalidReason as string)}. Clear it and set a valid concept.
+          </p>
+        )}
+        {!lookingUp && !mismatch && !notFound && !invalidConcept && nonStandard && (
           <p className="text-xs text-amber-700">
             Concept {value} is not a standard concept. Clear it and set a valid concept.
           </p>

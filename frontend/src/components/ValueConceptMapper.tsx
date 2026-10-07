@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Label } from '@/components/ui/label'
-import { lookupConceptDomain, type ValueConceptSuggestion } from '../api/client'
+import { lookupConceptDomain, standardConceptError, invalidReasonLabel, type ValueConceptSuggestion } from '../api/client'
 import DomainConceptSearch from './DomainConceptSearch'
 import { Loader2, AlertTriangle, CheckCircle, X, Search } from 'lucide-react'
 
@@ -88,6 +88,7 @@ function ConceptCell({
   const [domain, setDomain] = useState<string | null>(null)
   const [conceptName, setConceptName] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
+  const [invalidReason, setInvalidReason] = useState<string | null>(null)
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [commitError, setCommitError] = useState<string | null>(null)
@@ -96,6 +97,7 @@ function ConceptCell({
     if (conceptId === undefined || conceptId < 0) {
       setDomain(null)
       setStandardConcept(null)
+      setInvalidReason(null)
       setConceptName(null)
       setFailed(false)
       setNotFound(false)
@@ -105,6 +107,7 @@ function ConceptCell({
       // 0 is the OMOP "no matching concept" sentinel, not a real vocabulary entry.
       setDomain(null)
       setStandardConcept(null)
+      setInvalidReason(null)
       setConceptName(null)
       setFailed(false)
       setNotFound(false)
@@ -113,12 +116,13 @@ function ConceptCell({
     setLookingUp(true)
     setDomain(null)
     setStandardConcept(null)
+    setInvalidReason(null)
     setConceptName(null)
     setFailed(false)
     setNotFound(false)
     lookupConceptDomain(conceptId)
       .then(res => {
-        if (res.found && res.domain_id) { setDomain(res.domain_id); setStandardConcept(res.standard_concept); setConceptName(res.concept_name) }
+        if (res.found && res.domain_id) { setDomain(res.domain_id); setStandardConcept(res.standard_concept); setInvalidReason(res.invalid_reason); setConceptName(res.concept_name) }
         else { setDomain(null); setNotFound(true) }
       })
       .catch(() => setFailed(true))
@@ -127,12 +131,15 @@ function ConceptCell({
 
   const mismatch = !!expectedDomain && !!domain && domain.toLowerCase() !== expectedDomain.toLowerCase()
   const nonStandard = !!domain && standardConcept !== 'S'
+  const invalidConcept = !!domain && !!invalidReason
 
+  // Always look the id up (except the 0 "not mapped" sentinel): an unknown,
+  // invalid or non-standard concept must never be set.
   const commit = async () => {
     const id = parseInt(pending)
     if (isNaN(id) || id < 0) return
     setCommitError(null)
-    if (!expectedDomain || id === 0) {
+    if (id === 0) {
       onChange(id)
       setPending('')
       return
@@ -140,18 +147,19 @@ function ConceptCell({
     setLookingUp(true)
     try {
       const res = await lookupConceptDomain(id)
-      if (!res.found) {
-        setCommitError('Not found in vocabulary')
+      const err = standardConceptError(id, res)
+      if (err) {
+        setCommitError(err)
         return
       }
-      if (res.domain_id && res.domain_id.toLowerCase() !== expectedDomain.toLowerCase()) {
+      if (expectedDomain && res.domain_id && res.domain_id.toLowerCase() !== expectedDomain.toLowerCase()) {
         setCommitError(`Wrong domain: "${res.domain_id}", expected "${expectedDomain}"`)
         return
       }
       onChange(id)
       setPending('')
     } catch {
-      setCommitError('Lookup failed — retry')
+      setCommitError("Couldn't verify this concept — retry")
     } finally {
       setLookingUp(false)
     }
@@ -179,7 +187,7 @@ function ConceptCell({
   )
 
   if (conceptId !== undefined && conceptId >= 0) {
-    const invalid = mismatch || notFound || nonStandard
+    const invalid = mismatch || notFound || invalidConcept || nonStandard
     const isZero = conceptId === 0
     const boxClasses = isZero
       ? 'bg-muted border-border text-muted-foreground'
@@ -219,7 +227,10 @@ function ConceptCell({
         {!lookingUp && notFound && (
           <p className="text-[11px] text-amber-700">Not found in vocabulary</p>
         )}
-        {!lookingUp && !mismatch && !notFound && nonStandard && (
+        {!lookingUp && !mismatch && !notFound && invalidConcept && (
+          <p className="text-[11px] text-amber-700">Invalid concept — {invalidReasonLabel(invalidReason as string)}</p>
+        )}
+        {!lookingUp && !mismatch && !notFound && !invalidConcept && nonStandard && (
           <p className="text-[11px] text-amber-700">Not a standard concept</p>
         )}
         {searchPanel}

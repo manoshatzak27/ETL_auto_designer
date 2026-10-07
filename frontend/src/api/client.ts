@@ -69,7 +69,26 @@ export const downloadMappingSummary = (projectId: string) => {
 }
 
 export const lookupConceptDomain = (conceptId: number) =>
-  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; standard_concept: string | null; found: boolean })
+  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; standard_concept: string | null; invalid_reason: string | null; found: boolean; vocab_available: boolean })
+
+const INVALID_REASON_LABEL: Record<string, string> = { D: 'deleted', U: 'upgraded (replaced by another concept)' }
+
+// Human-readable form of an OMOP invalid_reason ('D' / 'U').
+export const invalidReasonLabel = (reason: string) => INVALID_REASON_LABEL[reason] ?? `invalid_reason '${reason}'`
+
+// Gate for the manual "Set" buttons: a typed concept id is only accepted when it
+// exists in the loaded vocabulary, is valid (invalid_reason null) and is standard.
+// Returns an error message to show (and block the set), or null when it's fine.
+export const standardConceptError = (
+  conceptId: number,
+  res: { found: boolean; standard_concept: string | null; invalid_reason: string | null; vocab_available: boolean },
+): string | null => {
+  if (!res.vocab_available) return "Couldn't verify this concept — load the OMOP vocabulary first, then try again."
+  if (!res.found) return `Concept ${conceptId} doesn't exist in the loaded vocabulary.`
+  if (res.invalid_reason) return `Concept ${conceptId} is invalid — ${invalidReasonLabel(res.invalid_reason)}.`
+  if (res.standard_concept !== 'S') return `Concept ${conceptId} is not a standard concept — use its standard equivalent.`
+  return null
+}
 
 export const getSourceFileContent = (projectId: string, filename: string, rows?: number) =>
   api
