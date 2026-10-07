@@ -3802,8 +3802,9 @@ def _generate_stem_table_script(project) -> str:
     pid_col = pid_cfg.get("source_col", "")
 
     # Background-inferred overrides (Concepts step fixed-unit cases) come first;
-    # user-entered overrides (Stem Table step UI) win on conflict because the
-    # generated OVERRIDE_MAP build uses dict overwrite (later entry wins).
+    # overrides saved in the config win on conflict because the generated
+    # OVERRIDE_MAP build uses dict overwrite (later entry wins). The Stem Table
+    # step no longer edits these, but older projects may still have entries.
     inferred_overrides = _infer_stem_overrides(project)
     user_overrides = stem_cfg.get("special_overrides", []) or []
     special_overrides = inferred_overrides + user_overrides

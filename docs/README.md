@@ -76,9 +76,11 @@ What it builds, before emitting any code:
   variable instead of a per-row lookup column (nothing to look up in that case, so the
   value is baked in directly).
 - **`SPECIAL_OVERRIDES`** — background-inferred overrides from `_infer_stem_overrides`
-  (e.g. a fixed unit with no unit column) merged with user-entered overrides from the
-  Stem Table step UI. Inferred entries come first; user entries win on conflict (dict
-  overwrite, later entry wins).
+  (e.g. a fixed unit with no unit column), merged with any `stem_table.special_overrides`
+  still saved in the project config. The Stem Table step no longer has a UI for editing
+  those (the Concepts step's "Fixed value" modes cover the same cases), but older
+  projects may still carry entries. Inferred entries come first; config entries win on
+  conflict (dict overwrite, later entry wins).
 
 The emitted script's `main()`, per row, per mapped variable:
 

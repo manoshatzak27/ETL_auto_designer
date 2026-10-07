@@ -1,16 +1,14 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig, getConceptDecisions } from '../../api/client'
-import type { Project, StemTableConfig, StemTableOverride } from '../../types'
+import type { Project, StemTableConfig } from '../../types'
 import { getStructuralColumns } from '../../utils'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
-import { Plus, Trash2, CheckCircle, AlertCircle } from 'lucide-react'
+import { CheckCircle, AlertCircle } from 'lucide-react'
 import { Card } from '../../components/ui/card'
-import { Input } from '../../components/ui/input'
-import { Select } from '../../components/ui/select'
 
 interface Props {
   project: Project
@@ -105,28 +103,6 @@ export default function StemTableStep({ project, onUpdate }: Props) {
       else delete next[variable]
       return { ...prev, variable_visit_map: next }
     })
-  }
-
-  const addOverride = () => {
-    setCfg(prev => ({
-      ...prev,
-      special_overrides: [...prev.special_overrides, { variable: '', field: 'unit_concept_id', value: 0 }],
-    }))
-  }
-
-  const updateOverride = (i: number, field: keyof StemTableOverride, value: unknown) => {
-    setCfg(prev => {
-      const overrides = [...prev.special_overrides]
-      overrides[i] = { ...overrides[i], [field]: value }
-      return { ...prev, special_overrides: overrides }
-    })
-  }
-
-  const removeOverride = (i: number) => {
-    setCfg(prev => ({
-      ...prev,
-      special_overrides: prev.special_overrides.filter((_, j) => j !== i),
-    }))
   }
 
   const saveConfig = async () => {
@@ -280,67 +256,6 @@ export default function StemTableStep({ project, onUpdate }: Props) {
             ))}
           </div>
         )}
-
-        {/* Special Overrides */}
-        <Card className="p-6 flex flex-col gap-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold text-foreground">Special Field Overrides</h3>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                Force a specific OMOP field value for individual variables after concept lookup.
-                Example: <code className="bg-accent px-1 rounded">unit_concept_id = 9580</code> (months) for DUP, DUI, DAP, DAT.
-              </p>
-            </div>
-            <button onClick={addOverride} className="flex items-center gap-1 text-xs text-primary hover:text-primary/80 font-medium">
-              <Plus className="w-3.5 h-3.5" /> Add override
-            </button>
-          </div>
-
-          {cfg.special_overrides.length === 0 && (
-            <p className="text-xs text-muted-foreground italic">No overrides defined.</p>
-          )}
-
-          <div className="flex flex-col gap-2">
-            {cfg.special_overrides.map((ov, i) => {
-              const variableOptions = ov.variable && !mappedCols.includes(ov.variable)
-                ? [ov.variable, ...mappedCols]
-                : mappedCols
-              return (
-                <div key={i} className="flex items-center gap-2 p-3 bg-muted rounded-lg">
-                  <Select
-                    value={ov.variable}
-                    onChange={e => updateOverride(i, 'variable', e.target.value)}
-                    className="h-8 text-sm font-mono w-48"
-                  >
-                    <option value="">— select a variable —</option>
-                    {variableOptions.map(col => (
-                      <option key={col} value={col}>{col}</option>
-                    ))}
-                  </Select>
-                  <Select
-                    value={ov.field || 'unit_concept_id'}
-                    onChange={e => updateOverride(i, 'field', e.target.value)}
-                    className="h-8 text-sm"
-                  >
-                    <option value="unit_concept_id">unit_concept_id</option>
-                    <option value="operator_concept_id">operator_concept_id</option>
-                  </Select>
-                  <span className="text-muted-foreground font-mono">=</span>
-                  <Input
-                    type="number"
-                    value={ov.value?.toString() ?? ''}
-                    onChange={e => updateOverride(i, 'value', parseInt(e.target.value) || 0)}
-                    placeholder="Concept ID"
-                    className="w-32 h-8 text-sm"
-                  />
-                  <button onClick={() => removeOverride(i)} className="text-destructive/50 hover:text-destructive ml-auto">
-                    <Trash2 className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              )
-            })}
-          </div>
-        </Card>
 
         <ExtraInstructions
           tableName="stem_table"
