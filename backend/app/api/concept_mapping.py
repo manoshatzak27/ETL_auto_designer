@@ -26,6 +26,7 @@ import shutil
 import tempfile
 import zipfile
 from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -43,22 +44,17 @@ from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["concept-mapping"])
 
-# ── Concept domain lookup (CONCEPT.csv cache) ───────────────────────────────
+# ── Concept lookup (vocab.concept) ──────────────────────────────────────────
 
-# Per-process LRU cache so the same concept_id only hits Postgres once.
-# Bound the size — the lookup is called as the user types concept IDs, so
-# duplicates within a session are common.
-from functools import lru_cache
-
-
-@lru_cache(maxsize=20000)
+# Deliberately uncached: the vocabulary can be (re)loaded while the backend
+# runs, and a cached answer would outlive it — a concept looked up before the
+# load would stay "not found", and one deprecated by a newer vocabulary would
+# stay standard/valid. A primary-key lookup is cheap enough to do every time.
 def _get_concept_info(concept_id: int) -> "tuple[str, str, str | None, str | None] | None":
     """Look up (domain_id, concept_name, standard_concept, invalid_reason) for an OMOP concept by
     querying the loaded vocabulary in Postgres. Returns None when the concept
     genuinely isn't there. Raises on connection/query errors instead of
-    swallowing them — lru_cache only memoizes normal returns, not exceptions,
-    so a transient failure (e.g. Postgres not reachable yet at startup) never
-    gets cached as a permanent "not found" for that concept_id."""
+    swallowing them, so callers can tell "not found" from "couldn't check"."""
     if concept_id is None or concept_id <= 0:
         return None
     from app.services.db import connect
@@ -85,6 +81,27 @@ def _get_concept_info(concept_id: int) -> "tuple[str, str, str | None, str | Non
             return None
 
 
+def _get_concept_names(concept_ids: "set[int]") -> dict[int, str]:
+    """concept_id → concept_name for many concepts in one query. Ids missing
+    from the vocabulary are simply absent. Raises on connection/query errors."""
+    ids = sorted(cid for cid in concept_ids if cid > 0)
+    if not ids:
+        return {}
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = settings.omop_vocab_schema or "vocab"
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_id, concept_name FROM {schema}.concept WHERE concept_id = ANY(%s)"
+                ).format(schema=pgsql.Identifier(schema)),
+                (ids,),
+            )
+            return {int(cid): str(name) for cid, name in cur.fetchall() if name is not None}
+
+
 @router.get("/concept-lookup/domain")
 def concept_lookup(concept_id: int):
     """Return the domain_id, concept_name and standard_concept flag for a given
@@ -98,8 +115,7 @@ def concept_lookup(concept_id: int):
     try:
         info = _get_concept_info(concept_id)
     except Exception as exc:
-        # Vocab schema/table missing (Load vocabulary hasn't run yet) or
-        # Postgres unreachable. Not cached — the next lookup will retry.
+        # Vocab schema/table missing or Postgres unreachable.
         print(f"[concept-lookup] vocab.concept query failed: {exc}")
         return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "invalid_reason": None, "found": False, "vocab_available": False}
     if info:
@@ -1279,12 +1295,31 @@ def download_mapping_summary(project_id: str, db: Session = Depends(get_db)):
     if not project.concept_decisions:
         raise HTTPException(status_code=400, detail="No concept decisions saved yet")
 
-    def lookup_name(concept_id: int) -> str:
+    # The summary only needs names for bare ids — the per-column unit/route
+    # mappings, which keep just {source value: concept_id}. Fetch them all at once.
+    def as_id(cid: Any) -> int | None:
         try:
-            info = _get_concept_info(concept_id)
-        except Exception:
-            return ""
-        return info[1] if info else ""
+            return int(cid)
+        except (TypeError, ValueError):
+            return None
+
+    bare_ids: set[int] = set()
+    for decision in project.concept_decisions.values():
+        decision = decision or {}
+        for mapping_key, concepts_key in (("unit_mapping", "unit_concepts"), ("route_mapping", "route_concepts")):
+            for cid in ((decision.get(mapping_key) or {}).get(concepts_key) or {}).values():
+                if (i := as_id(cid)) is not None:
+                    bare_ids.add(i)
+    try:
+        names = _get_concept_names(bare_ids)
+    except Exception as exc:
+        # Vocab not loaded / Postgres unreachable: export without those names.
+        print(f"[mapping-summary] concept name lookup failed: {exc}")
+        names = {}
+
+    def lookup_name(cid: Any) -> str:
+        i = as_id(cid)
+        return names.get(i, "") if i is not None else ""
 
     column_values = _all_distinct_values(project)
     buf = generate_mapping_summary_excel(_ordered_decisions(project), lookup_name, column_values)
