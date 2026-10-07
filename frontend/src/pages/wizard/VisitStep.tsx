@@ -163,11 +163,10 @@ export default function VisitStep({ project, onUpdate }: Props) {
 
   // ── Apply a saved per-file config to UI state ─────────────────────────────
   const autoFill = useConceptAutoFill(project.id)
-  const autoMatch = useColumnAutoMatch(project.id, 'visit_occurrence')
+  const autoMatch = useColumnAutoMatch(project.id, 'visit_occurrence', activeFilename)
 
   const applyFileConfig = (fc: PerFileVisitConfig | undefined) => {
     autoFill.clear()
-    autoMatch.clear()
     const vds = fc?.visit_definitions ?? DEFAULTS.visit_definitions
     setCfg(prev => ({
       ...prev,
@@ -404,6 +403,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
       ]
     }),
   ]
+  autoMatch.setTargets(autoMatchTargets)
   const autoMatchExclude = [...crossUsed, ...extractMappedCols(cfg)]
 
   // ── Save ──────────────────────────────────────────────────────────────────

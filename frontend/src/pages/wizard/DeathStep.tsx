@@ -45,8 +45,8 @@ const DEATH_TYPE_OPTIONS = [
 
 export default function DeathStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const autoMatch = useColumnAutoMatch(project.id, 'death')
-  const { cols, filePicker, selectedFile } = useSourceFile(project, 'death', { getConfig: () => cfg, setConfig: (saved) => { setCfg(saved ?? DEFAULTS); autoMatch.clear() } })
+  const { cols, filePicker, selectedFile } = useSourceFile(project, 'death', { getConfig: () => cfg, setConfig: (saved) => setCfg(saved ?? DEFAULTS) })
+  const autoMatch = useColumnAutoMatch(project.id, 'death', selectedFile?.filename ?? '')
   const [cfg, setCfg] = useState<DeathConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
@@ -98,6 +98,7 @@ export default function DeathStep({ project, onUpdate }: Props) {
     datedField('death_datetime_col', 'Death datetime', cfg.death_date_col),
     matchField('cause_source_value_col', 'Cause of death'),
   ]
+  autoMatch.setTargets(autoMatchTargets)
 
   // ── Auto-map all steps (started from the Source step) ───────────────────
   useAutoRunStep({

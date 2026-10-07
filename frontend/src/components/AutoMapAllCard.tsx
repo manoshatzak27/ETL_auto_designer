@@ -67,8 +67,8 @@ export default function AutoMapAllCard({ project, disabled }: { project: Project
             ))}
           </ul>
           <p className="mt-2 text-xs text-muted-foreground">
-            Matches that were only suggested were not applied, and the suggestions are not kept — open
-            the step and press Auto-match columns again to see them under their fields.
+            Matches that were only suggested were not applied — open the step to see them under their
+            fields, with a button to use each.
           </p>
         </div>
       )}

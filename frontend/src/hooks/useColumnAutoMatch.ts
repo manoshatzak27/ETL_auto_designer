@@ -36,23 +36,44 @@ function readUseLlm(): boolean {
   }
 }
 
+type Suggestions = Record<string, ColumnMatch>
+
+const NO_SUGGESTIONS: Suggestions = {}
+
+// Suggestions outlive the step component: "Auto-map all steps" leaves each
+// step (and each of its files) as soon as it has saved, and they must still be
+// there when the user opens it. Keyed by project, table and file.
+const savedSuggestions = new Map<string, Suggestions>()
+
 /**
  * "Auto-match columns" for a wizard step: every unmapped field is matched
  * against the source columns; confident matches are applied, weaker ones are
  * kept as suggestions (pass `suggestions[target.key]` to that field's
- * FieldMapper), the rest stay empty.
+ * FieldMapper), the rest stay empty. `scope` is the step's active file — each
+ * file keeps its own suggestions; '' for a step with one view.
  */
-export function useColumnAutoMatch(projectId: string, table: string) {
+export function useColumnAutoMatch(projectId: string, table: string, scope = '') {
   const [llm, setLlm] = useState<LlmStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [useLlm, setUseLlmState] = useState(readUseLlm)
   const [running, setRunning] = useState(false)
   const [summary, setSummary] = useState<ColumnAutoMatchSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [suggestions, setSuggestions] = useState<Record<string, ColumnMatch>>({})
-  // The fields of the last run, so a suggestion can be applied with its own
-  // handler (and date format) later.
+  const [, setVersion] = useState(0)
+  const storeKey = `${projectId}\u0000${table}\u0000${scope}`
+  const suggestions = savedSuggestions.get(storeKey) ?? NO_SUGGESTIONS
+  // The step's current fields, so a suggestion is applied with its own
+  // handler (and date format) — see setTargets.
   const targetsRef = useRef<Record<string, ColumnTarget>>({})
+
+  const updateSuggestions = useCallback((key: string, update: (prev: Suggestions) => Suggestions) => {
+    const prev = savedSuggestions.get(key) ?? NO_SUGGESTIONS
+    const next = update(prev)
+    if (next === prev) return
+    if (Object.keys(next).length === 0) savedSuggestions.delete(key)
+    else savedSuggestions.set(key, next)
+    setVersion(v => v + 1)
+  }, [])
 
   const checkLlm = useCallback((refresh = false) => {
     setChecking(true)
@@ -78,7 +99,8 @@ export function useColumnAutoMatch(projectId: string, table: string) {
   }): Promise<ColumnAutoMatchSummary | null> => {
     const todo = targets.filter(t => !t.current)
     if (todo.length === 0) return null
-    targetsRef.current = Object.fromEntries(todo.map(t => [t.key, t]))
+    // The file this run is for — auto-run may have moved on when it returns.
+    const runKey = storeKey
     setRunning(true)
     setError(null)
     setSummary(null)
@@ -104,7 +126,7 @@ export function useColumnAutoMatch(projectId: string, table: string) {
           offered[t.key] = m
         }
       }
-      setSuggestions(prev => {
+      updateSuggestions(runKey, prev => {
         const next = { ...prev }
         for (const t of todo) delete next[t.key]
         return { ...next, ...offered }
@@ -129,22 +151,30 @@ export function useColumnAutoMatch(projectId: string, table: string) {
     }
   }
 
-  /** Forget suggestions (all, or one field's) — call when the active file
-   *  changes, since they belong to the old file's columns. */
+  /** Forget the active file's suggestions (all, or one field's) — e.g. when
+   *  the keys they are stored under no longer mean the same fields. Another
+   *  file's are kept: switching files needs no clear. */
   const clear = useCallback((key?: string) => {
     if (key === undefined) {
-      setSuggestions({})
+      updateSuggestions(storeKey, () => NO_SUGGESTIONS)
       setSummary(null)
       setError(null)
     } else {
-      setSuggestions(prev => {
+      updateSuggestions(storeKey, prev => {
         if (!(key in prev)) return prev
         const next = { ...prev }
         delete next[key]
         return next
       })
     }
-  }, [])
+  }, [storeKey, updateSuggestions])
+
+  /** The step's fields as of this render — call on every render with the same
+   *  targets passed to `run`, so `accept` applies a suggestion through the
+   *  current handlers, also after the step was left and opened again. */
+  const setTargets = (targets: ColumnTarget[]) => {
+    targetsRef.current = Object.fromEntries(targets.map(t => [t.key, t]))
+  }
 
   /** Take a field's suggestion — the column, and the date format with it. */
   const accept = (key: string) => {
@@ -157,7 +187,7 @@ export function useColumnAutoMatch(projectId: string, table: string) {
 
   return {
     llm, llmReady, checking, checkLlm, useLlm, setUseLlm,
-    running, summary, error, suggestions, run, clear, accept,
+    running, summary, error, suggestions, run, clear, setTargets, accept,
   }
 }
 

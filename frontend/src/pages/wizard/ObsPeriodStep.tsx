@@ -161,6 +161,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
       filenames: isMultiFile ? (cfg.end_date_file ? [cfg.end_date_file] : allFilenames) : undefined,
       date_format: dateFormat, format_group: 'obs', format_locked: !!cfg.start_date_col || fallbackCols },
   ]
+  autoMatch.setTargets(autoMatchTargets)
   const startSuggestion = autoMatch.suggestions['start_date_col']
   const endSuggestion = autoMatch.suggestions['end_date_col']
 

@@ -137,13 +137,12 @@ export default function LocationStep({ project, onUpdate }: Props) {
     cols.filter(c => c === currentValue || (!crossUsed.has(c) && !stepUsed.has(c)))
 
   const autoFill = useConceptAutoFill(project.id)
-  const autoMatch = useColumnAutoMatch(project.id, 'location')
+  const autoMatch = useColumnAutoMatch(project.id, 'location', activeFilename)
 
   // ── Apply a LocationFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: LocationFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
-    autoMatch.clear()
 
     // Map a column unless an older config set only a default country.
     const cm = fc.country_mode ?? (!fc.country_col && (fc.country_concept_id_default || fc.country_source_value) ? 'default' : 'column')
@@ -401,6 +400,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
     matchField('cs_latitude_col', 'Care site latitude'),
     matchField('cs_longitude_col', 'Care site longitude'),
   ]
+  autoMatch.setTargets(autoMatchTargets)
 
   const addCountryValue = () => {
     const val = prompt('Enter a source country value (e.g. US, GR, United States):')

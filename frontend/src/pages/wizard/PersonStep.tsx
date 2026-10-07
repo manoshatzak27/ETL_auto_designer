@@ -87,7 +87,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
   const [pidMissingFiles, setPidMissingFiles] = useState<string[]>([])
 
   const autoFill = useConceptAutoFill(project.id)
-  const autoMatch = useColumnAutoMatch(project.id, 'person')
+  const autoMatch = useColumnAutoMatch(project.id, 'person', activeFilename)
   const { suggestions } = autoFill
 
   // Ref so async callbacks can check the current active filename
@@ -118,7 +118,6 @@ export default function PersonStep({ project, onUpdate }: Props) {
 
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
-    autoMatch.clear()
 
     // Map a column unless an older config set only a default value.
     const gm = fc.gender_mode ?? (!m.gender_concept_id?.source_col && m.gender_concept_id?.default ? 'default' : 'column')
@@ -426,6 +425,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
       ? [{ key: 'ethnicity_concept_id', label: 'Ethnicity', current: (mappings.ethnicity_concept_id as RaceEthnicityMapping | undefined)?.source_col ?? '', apply: handleEthnicityColChange }]
       : []),
   ]
+  autoMatch.setTargets(autoMatchTargets)
 
   // ── Save ──────────────────────────────────────────────────────────────
   const saveConfig = async () => {

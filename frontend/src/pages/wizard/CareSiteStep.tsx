@@ -76,13 +76,12 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   const pidLockedFromLocation = locAutoIncrement || !!locPidCol
 
   const autoFill = useConceptAutoFill(project.id)
-  const autoMatch = useColumnAutoMatch(project.id, 'care_site')
+  const autoMatch = useColumnAutoMatch(project.id, 'care_site', activeFilename)
 
   // ── Apply a CareSiteFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: CareSiteFileConfig, infos: Record<string, ColumnInfo>) => {
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
-    autoMatch.clear()
     if (fc.place_of_service_col) {
       const fresh = infos[fc.place_of_service_col]?.distinct_values ?? []
       setPosValues(fresh.length > 0 ? fresh : Object.keys(fc.place_of_service_value_map ?? {}))
@@ -286,6 +285,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
     { key: 'care_site_name_col', label: 'Care site name', current: activeCfg.care_site_name_col, apply: set('care_site_name_col') },
     { key: 'place_of_service_col', label: 'Place of service', current: activeCfg.place_of_service_col, apply: handlePosColChange },
   ]
+  autoMatch.setTargets(autoMatchTargets)
 
   // ── Auto-map all steps (started from the Source step) ────────────────
   useAutoRunStep({

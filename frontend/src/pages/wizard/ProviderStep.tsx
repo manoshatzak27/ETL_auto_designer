@@ -95,13 +95,12 @@ export default function ProviderStep({ project, onUpdate }: Props) {
   const distinctVals = (col: string): string[] => columnInfos[col]?.distinct_values ?? []
 
   const autoFill = useConceptAutoFill(project.id)
-  const autoMatch = useColumnAutoMatch(project.id, 'provider')
+  const autoMatch = useColumnAutoMatch(project.id, 'provider', activeFilename)
 
   // ── Apply a ProviderFileConfig into UI state ───────────────────────────
   const applyFileConfig = (fc: ProviderFileConfig) => {
     setActiveCfg(deepCopy(fc))
     autoFill.clear()
-    autoMatch.clear()
     if (fc.specialty_mode) setSpecialtyMode(fc.specialty_mode)
     else if (fc.specialty_source_value_col) setSpecialtyMode('column')
     else if (fc.prefix_specialty) setSpecialtyMode('prefix')
@@ -353,6 +352,7 @@ export default function ProviderStep({ project, onUpdate }: Props) {
       ? [{ key: 'gender_source_value_col', label: 'Gender', current: activeCfg.gender_source_value_col, apply: handleGenderColChange }]
       : []),
   ]
+  autoMatch.setTargets(autoMatchTargets)
 
   // ── Concept auto-fill ────────────────────────────────────────────────
   const autoFillTargets: AutoFillTarget[] = []
