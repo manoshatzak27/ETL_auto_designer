@@ -26,11 +26,8 @@ backend/etl_designer.db-journal
 # Postgres docker volume
 pgdata/
 
-# Athena vocab bundle (user-supplied) + EntityLinker FAISS / embedding caches
+# Athena vocab bundle (user-supplied)
 vocab_bundle/
-embeddings_*.npy
-faiss_*.index
-lookup_*.csv
 
 # Frontend
 frontend/node_modules/

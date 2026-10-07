@@ -295,10 +295,9 @@ def column_descriptions_template(project_id: str, db: Session = Depends(get_db))
 
 # The matcher is the staged pipeline from the sibling project, behind HTTP
 # (pipeline/service.py there, the `conceptmatcher` compose service here). It is
-# a different thing from EntityLinker: EntityLinker answers "what concepts look
-# like this phrase?" one query at a time for the AI Search box, while this maps
-# a whole column list in one pass and returns a decision per column
-# (auto_accept / review / unmapped) rather than a ranked list.
+# the app's only concept finder: it maps a whole column list in one pass and
+# returns a decision per column (auto_accept / review / unmapped), and the
+# search boxes (/search-concepts below) use its ranked shortlist for one term.
 
 
 class MatchColumn(BaseModel):
@@ -967,10 +966,10 @@ async def suggest_value_concepts(
     return {"domain": payload.domain, "results": {v: out[v] for v in values}}
 
 
-def _name_search(term: str, domain: str, limit: int) -> list[dict[str, Any]]:
-    """Valid standard concepts in `domain` whose name contains every word of
-    `term`, from the vocab schema — exact name first, then earliest match, then
-    shortest name.
+def _name_search(term: str, domain: str | None, limit: int) -> list[dict[str, Any]]:
+    """Valid standard concepts in `domain` (any domain when None) whose name
+    contains every word of `term`, from the vocab schema — exact name first,
+    then earliest match, then shortest name.
 
     Tops up the matcher's shortlist, which is deliberately short: an exact
     concept name ends its search at Stage 1 with that one concept, so searching
@@ -986,18 +985,19 @@ def _name_search(term: str, domain: str, limit: int) -> list[dict[str, Any]]:
         return []
     # LIKE wildcards in the user's text are dropped rather than escaped.
     like = ["%" + re.sub(r"[%_\\]", "", w) + "%" for w in words]
+    # `%s IS NULL OR …` rather than two queries: a NULL domain matches any.
     with connect() as conn:
         with conn.cursor() as cur:
             cur.execute(
                 pgsql.SQL(
                     "SELECT concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code "
-                    "FROM {s}.concept WHERE domain_id = %s AND standard_concept = 'S' "
+                    "FROM {s}.concept WHERE (%s::text IS NULL OR domain_id = %s) AND standard_concept = 'S' "
                     "AND invalid_reason IS NULL AND concept_name ILIKE ALL(%s) "
                     "ORDER BY lower(concept_name) = lower(%s) DESC, "
                     "strpos(lower(concept_name), lower(%s)) = 0, strpos(lower(concept_name), lower(%s)), "
                     "length(concept_name), concept_id LIMIT %s"
                 ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab")),
-                (domain, like, term, words[0], words[0], limit),
+                (domain, domain, like, term, words[0], words[0], limit),
             )
             keys = ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code")
             return [{**dict(zip(keys, row)), "score": None} for row in cur.fetchall()]
@@ -1007,12 +1007,16 @@ def _name_search(term: str, domain: str, limit: int) -> list[dict[str, Any]]:
 async def search_concepts(
     project_id: str,
     query: str,
-    domain: str,
+    domain: str | None = None,
     limit: int = 15,
     db: Session = Depends(get_db),
 ):
     """Ranked standard concepts in `domain` for a free-text query — the search
     box beside every concept field, so the user never has to go to Athena.
+
+    Without a domain the search is not restricted to one (the Concepts step's
+    per-variable search, whose domain is what the user is trying to find out),
+    and each result's `domain_id` says where it landed.
 
     The matcher's ranked shortlist comes first, topped up to `limit` with a
     plain name search over the vocabulary (see _name_search); both are grouped
@@ -1031,7 +1035,7 @@ async def search_concepts(
     if not query.strip():
         return {"term": "", "results": []}
 
-    term = normalize_term(query, domain)
+    term = normalize_term(query, domain) if domain else query.strip()
     limit = max(1, min(limit, 25))
 
     async def by_name() -> list[dict[str, Any]]:
@@ -1044,7 +1048,8 @@ async def search_concepts(
     answer, named = await asyncio.gather(
         _post_match(
             [{"name": term}], project_id, f"ETL Auto-Designer project {project_id} (search)",
-            limit, [domain], shortlist=True,
+            # None leaves the matcher's own domain settings in force.
+            limit, [domain] if domain else None, shortlist=True,
         ),
         by_name(),
     )

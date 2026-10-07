@@ -16,7 +16,6 @@ flowchart LR
   Frontend --> Backend
   Backend --> SQLite[(SQLite wizard state)]
   Backend --> OpenAI
-  Backend --> EntityLinker[EntityLinker / SapBERT+FAISS]
   Backend --> ConceptMatcher[Concept matcher / staged pipeline]
   ConceptMatcher --> VocabDb[(Athena vocabulary, standard-only)]
   Backend --> Executor[etl_executor]
@@ -24,7 +23,6 @@ flowchart LR
   Outputs --> Loader[omop_loader]
   Loader --> Postgres[(Postgres OMOP v5.4)]
   VocabBundle[Athena vocabulary] --> Loader
-  VocabBundle --> EntityLinker
 ```
 
 ```
@@ -50,15 +48,8 @@ ETL_auto_designer/
 │   │   └── types/
 │   └── Dockerfile
 │
-├── entitylinker/           SapBERT + FAISS concept-search service
-│   ├── entitylinker/       Python library (ConceptLinker, Reranker, config loader)
-│   ├── api/                FastAPI app exposing POST /api/conceptlink
-│   ├── config.container.yaml  data_dir + vocabularies for the container
-│   ├── dockerfile
-│   └── requirements.txt
-│
 ├── scripts/init-omop.sh    Calls python -m app.services.ddl_applier bootstrap to split vocab/clinical DDL into separate schemas
-├── docker-compose.yml      Postgres + omop-init + entitylinker + conceptmatcher + backend + frontend
+├── docker-compose.yml      Postgres + omop-init + conceptmatcher + backend + frontend
 └── .env.example            Stack-wide environment variables
 
 ../new concept finding/     Sibling checkout — the staged concept matcher (see below).
@@ -83,7 +74,6 @@ Services:
 |----------------|---------------------------|----------------------------------------------|
 | Frontend       | http://localhost:5173     | Vite dev server                              |
 | Backend        | http://localhost:8000     | FastAPI + Swagger at `/docs`                 |
-| EntityLinker   | http://localhost:8001     | SapBERT + FAISS concept search. Swagger at `/docs`. Internal URL `http://entitylinker:8000/api/conceptlink`. |
 | Postgres       | localhost:5432            | `psql -U omop -d omop`                       |
 | `omop-init`    | one-shot                  | Splits the OMOP v5.4 DDL into vocabulary and clinical buckets and applies each into its own schema (`${OMOP_VOCAB_SCHEMA}` and `${OMOP_SCHEMA}`). Idempotent via per-schema marker rows. |
 
@@ -118,7 +108,6 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 |-------------------------|----------------------------------------|---------------------------------------------------------------|
 | `OPENAI_API_KEY`        | *(required for codegen / chat)*        | OpenAI API key — also enables the AI fallback of column auto-match |
 | `OPENAI_MODEL`          | `gpt-4o`                               | Model used for code generation, the chat assistant and the column auto-match fallback |
-| `ENTITYLINKER_URL`      | (inside Docker: `http://entitylinker:8000/api/conceptlink`) | SapBERT+FAISS concept-search service. Started automatically by the compose stack. |
 | `DATABASE_URL`          | `sqlite:///./etl_designer.db`          | Wizard state DB (kept on SQLite for simplicity)               |
 | `POSTGRES_USER`         | `omop`                                 | OMOP Postgres user                                            |
 | `POSTGRES_PASSWORD`     | `omop`                                 | OMOP Postgres password                                        |
@@ -129,7 +118,7 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 | `OMOP_VOCAB_SCHEMA`     | `vocab`                                | Target schema for the shared vocabulary tables                |
 | `ATHENA_BUNDLE_ROOT`    | *(empty)*                              | Allow-list root for `/load-vocabulary` (security guard)       |
 | `MAPPINGS_BUNDLE_ROOT`  | *(empty → uploads dir)*                | Allow-list root for `/load-mappings-from-dir`                 |
-| `CONCEPT_MATCHER_URL`   | (inside Docker: `http://conceptmatcher:8000`) | Bulk concept matcher behind the Concepts step's "Load concepts" button. Empty disables the button. |
+| `CONCEPT_MATCHER_URL`   | (inside Docker: `http://conceptmatcher:8000`) | Concept matcher behind every concept search and the Concepts step's "Load concepts" button. Empty disables them. |
 | `CONCEPT_PIPELINE_PATH` | `../new concept finding`               | Docker build context for that service — the sibling checkout  |
 | `CONCEPT_MATCHER_PORT`  | `8002`                                 | Host port the matcher is published on                         |
 | `CONCEPT_MATCHER_EMBEDDINGS` | `1`                               | Build arg. `0` drops Stage 5 and shrinks the image ~2GB → ~310MB; the remaining stages' weights are renormalized rather than scored zero |
@@ -140,14 +129,16 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 
 ## Automatic concept matching (Concepts step → "Load concepts")
 
-The Concepts step has two, quite different, concept finders:
+Every concept finder in the app goes through one service, `conceptmatcher` —
+the staged pipeline in `../new concept finding` — over that project's own
+Postgres: **standard + valid concepts only**. It is used two ways:
 
-| | **AI Search** (per row) | **Load concepts** (whole project) |
+| | **Search** (per row / per field) | **Load concepts** (whole project) |
 |---|---|---|
-| service | `entitylinker` — SapBERT + FAISS | `conceptmatcher` — the staged pipeline in `../new concept finding` |
+| endpoint | `GET /projects/{id}/search-concepts` | `POST /projects/{id}/match-concepts` (+ `/match-values`) |
 | answers | "what concepts look like this phrase?" — a ranked list you pick from | "what is this column?" — one concept per column, plus a decision |
-| you get | candidates + optional GPT justification | `auto_accept` / `review` / `unmapped` per column, with a confidence |
-| vocabulary | the Athena bundle at `ATHENA_BUNDLE_PATH` | that project's own Postgres: **standard + valid concepts only** |
+| you get | the matcher's shortlist, topped up by a name search and grouped under parents | `auto_accept` / `review` / `unmapped` per column, with a confidence |
+| domain | the field's own; none on a Concepts step variable, where each result shows its domain | the domains the run asks for |
 
 ### What the matcher actually is
 
@@ -309,22 +300,12 @@ auto-accept / 12 review / 2 unmapped, and both genuinely wrong answers were in
 the review queue rather than accepted, each with the right concept visible in
 its candidate list. That is the behaviour the step is built around.
 
-Against EntityLinker on the same inputs, the two are near-opposites:
-
-| | this pipeline | EntityLinker | + GPT |
-|---|---|---|---|
-| 114 curated columns, top-1 | **30.7%** | 9.6% | 14.9% |
-| 114 curated columns, top-5 | **59.6%** | 18.4% | 18.4% |
-| 50 lab columns, top-1 | 90.0% | **94.0%** | **96.0%** |
-| ms/column | 384 | 136 | 5737 |
-
-**Short canonical clinical terms → AI Search wins.** SapBERT is trained on
-exactly that shape. **Questionnaire items, opaque variable names, prose →
-Load concepts wins by ~3×**, because cosine on a 15-word survey item has nothing
-to anchor on. EntityLinker returned the *instrument* ("Perceived stress
-scale-10") for six individual PSS items. So the two buttons are complements, not
-a fast path and a slow path — if a bulk run leaves a short lab column unmapped,
-AI Search on that one row is the right follow-up.
+Measured against the SapBERT + FAISS search this app used before (since
+removed), the matcher wins by ~3× on questionnaire items, opaque variable names
+and prose (114 curated columns, top-5: **59.6%** vs 18.4%). It is slightly
+behind on short canonical lab terms (50 lab columns, top-1: 90.0% vs 94.0%) —
+if a bulk run leaves a short lab column unmapped, a Search on that one row with
+a reworded term is the right follow-up.
 
 ### Three limits that will bite
 
@@ -674,7 +655,7 @@ Steps 2–4 and Death are optional (toggled from the Source step's table picker)
 | `visit`           | Visit                      | Define multiple visit timepoints. Each gets a stable internal id; `visit_source_value` is auto-computed as `{person}|{label}`. Auto-fill + search for visit concept, type, admitted from / discharged to. |
 | `obs-period`      | Observation period         | Start date is required; period-type uses a dropdown of standard OMOP concepts.                                                   |
 | `death` *         | Death                      | Inline help clarifies filter semantics (empty filter → all rows treated as deceased).                                            |
-| `concepts`        | Concept mapping            | Per-column decision, defaulting to **Map variable**. Upload a data dictionary under **Descriptions**, then **Load concepts** maps every variable at once through the staged matcher — and every distinct value of the **Map values** variables, two passes so all of a variable's values share one domain (see above); AI Search and manual entry handle the rest. Gate-on-progress before next. |
+| `concepts`        | Concept mapping            | Per-column decision, defaulting to **Map variable**. Upload a data dictionary under **Descriptions**, then **Load concepts** maps every variable at once through the staged matcher — and every distinct value of the **Map values** variables, two passes so all of a variable's values share one domain (see above); per-row Search and manual entry handle the rest. Gate-on-progress before next. |
 | `stem-table`      | Stem table                 | Variable groups derived from the visit labels defined in the Visit step. Structural FK columns hidden from the picker.           |
 | `finalize`        | Generate + Load            | Generate all scripts (or per-table), execute them in dependency order with per-table logs, then load results into Postgres. Two cards: **Card 1** bulk-loads the Athena vocab bundle; **Card 2** bulk-COPYs the project's output CSVs and optionally applies indices + FK constraints. |
 
@@ -737,29 +718,20 @@ Both polls run at 1.5 s.
 ## Vocabulary files — single source of truth
 
 You only manage **one** directory on the host. Point `ATHENA_BUNDLE_PATH` (in `.env`) at the
-folder containing your unzipped Athena export, and three different components pick what they
+folder containing your unzipped Athena export, and the components below pick what they
 need from it:
 
 | Component | Files read | Mounted at | Mode |
 |---|---|---|---|
 | Finalize / Card 1 — vocab loader | CONCEPT.csv, VOCABULARY.csv, DOMAIN.csv, CONCEPT_CLASS.csv, RELATIONSHIP.csv, CONCEPT_RELATIONSHIP.csv, CONCEPT_SYNONYM.csv, CONCEPT_ANCESTOR.csv, DRUG_STRENGTH.csv (all tab-delimited) | `/vocab` on `backend` | read-only |
 | Finalize / Card 2 — ETL loader | (your project's generated CSVs in `outputs/<project_id>/`) | `/app/outputs` on `backend` | read-write |
-| Concepts step — EntityLinker concept search | CONCEPT.csv (tab-delimited) only | `/data` on `entitylinker` | read-write* |
-
-*EntityLinker uses the same directory to cache its FAISS index and SapBERT embeddings
-(`embeddings_*.npy`, `lookup_*.csv`, `faiss_*.index`). These files are auto-created on first
-run (a few minutes for SNOMED+LOINC; longer for full RxNorm). `.gitignore` already excludes
-them.
 
 **Concretely**: drop your unzipped Athena bundle anywhere on the host, set
 `ATHENA_BUNDLE_PATH=/your/absolute/path` in `.env`, then `docker compose up --build`.
-Card 1 of the Finalize step auto-detects the bundle and shows "Detected 9 vocabulary files"; the
-EntityLinker container starts building its FAISS index on first request.
+Card 1 of the Finalize step auto-detects the bundle and shows "Detected 9 vocabulary files".
 
-If you don't want to bundle EntityLinker's caches with the same dir, mount them separately
-by editing `docker-compose.yml` — change the `entitylinker` service's
-`${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/data` to a dedicated cache volume and copy
-`CONCEPT.csv` into it.
+The concept matcher does not read this directory — it has its own standard-only vocabulary
+database (see *Automatic concept matching*).
 
 ## Upgrading from a pre-vocab-schema dev DB
 

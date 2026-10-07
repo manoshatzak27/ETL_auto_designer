@@ -351,16 +351,6 @@ export interface DeathConfig {
   cause_source_concept_id: number | null
 }
 
-export interface ConceptLink {
-  concept_name: string
-  concept_code: string
-  concept_id: number
-  domain: string
-  vocabulary_id: string
-  score: number
-  justification?: string
-}
-
 export interface ChatMessage {
   role: 'user' | 'assistant'
   content: string

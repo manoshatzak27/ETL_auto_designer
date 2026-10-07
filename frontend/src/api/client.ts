@@ -129,19 +129,6 @@ export const getGenerateProgress = (projectId: string, table: string) =>
   api.get(`/projects/${projectId}/generate/${table}/progress`)
     .then(r => r.data as { active: boolean; used: number; limit: number; content: string })
 
-export const conceptSearch = (
-  projectId: string,
-  query: string,
-  topK = 20,
-  useReranker = false,
-) =>
-  api
-    .post(
-      `/projects/${projectId}/concept-search?query=${encodeURIComponent(query)}` +
-        `&top_k=${topK}&use_reranker=${useReranker ? 'true' : 'false'}`,
-    )
-    .then(r => r.data)
-
 // ---- Column descriptions (the project's data dictionary) ----
 
 export interface DescriptionUploadResult {
@@ -297,7 +284,8 @@ export interface DomainSearchResult extends Omit<ConceptMatchCandidate, 'score'>
   parent_id?: number
 }
 
-export const searchDomainConcepts = (projectId: string, query: string, domain: string, limit = 15) =>
+/** `domain` omitted searches every domain; each result's `domain_id` says which. */
+export const searchDomainConcepts = (projectId: string, query: string, domain?: string, limit = 15) =>
   api
     .get<{ term: string; results: DomainSearchResult[] }>(
       `/projects/${projectId}/search-concepts`,

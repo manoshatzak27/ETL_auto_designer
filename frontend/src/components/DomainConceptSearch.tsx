@@ -4,16 +4,18 @@ import { Search, Loader2, X } from 'lucide-react'
 
 interface Props {
   projectId: string
-  /** OMOP domain the search is confined to — the field decides it, not the user. */
-  domain: string
+  /** OMOP domain the search is confined to — the field decides it, not the
+   *  user. Omitted, every domain is searched and each result shows its own. */
+  domain?: string
   onSelect: (concept: DomainSearchResult) => void
   onClose?: () => void
   /** Pre-filled query, e.g. the source value being mapped. Searched on open. */
   initialQuery?: string
 }
 
-/** Free-text search for standard concepts in one domain, through the concept
- *  matcher — the in-app replacement for looking an id up on Athena. */
+/** Free-text search for standard concepts in one domain (or all of them),
+ *  through the concept matcher — the in-app replacement for looking an id up
+ *  on Athena. */
 export default function DomainConceptSearch({ projectId, domain, onSelect, onClose, initialQuery = '' }: Props) {
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<DomainSearchResult[] | null>(null)
@@ -21,6 +23,8 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // How the domain reads in prose: "Condition concepts" vs plain "concepts".
+  const scope = domain ? `${domain} ` : ''
   // Only the latest search may update the list: the one run on open for the
   // source value can finish after a search the user typed, and would
   // otherwise replace its results.
@@ -64,7 +68,7 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
             if (e.key === 'Enter') search(query)
             if (e.key === 'Escape') onClose?.()
           }}
-          placeholder={`Search ${domain} concepts…`}
+          placeholder={`Search ${scope}concepts…`}
           className="border border-border rounded px-2 py-1 text-xs flex-1 min-w-0 h-8 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
         />
         <button
@@ -72,7 +76,7 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
           onClick={() => search(query)}
           disabled={!query.trim() || loading}
           className="px-2 py-1 text-xs bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90 flex-shrink-0 h-8"
-          title={`Search standard ${domain} concepts`}
+          title={`Search standard ${scope}concepts`}
         >
           {loading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Search className="w-3.5 h-3.5" />}
         </button>
@@ -88,7 +92,7 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
       {results && (
         results.length === 0 ? (
           <p className="text-[11px] text-muted-foreground px-1">
-            No standard {domain} concept found{term && term !== query.trim() ? ` for "${term}"` : ''}. Try another word.
+            No standard {scope}concept found{term && term !== query.trim() ? ` for "${term}"` : ''}. Try another word.
           </p>
         ) : (
           <>
@@ -126,8 +130,13 @@ export default function DomainConceptSearch({ projectId, domain, onSelect, onClo
                         )}
                         <span className={`text-xs text-foreground truncate ${c.is_parent ? 'font-medium' : ''}`}>{c.concept_name}</span>
                       </span>
-                      <span className="text-[10px] text-muted-foreground font-mono flex-shrink-0">
-                        {c.concept_id} · {c.vocabulary_id}
+                      <span className="flex items-center gap-1.5 flex-shrink-0">
+                        {!domain && c.domain_id && (
+                          <span className="text-[10px] px-1 rounded bg-secondary text-secondary-foreground">{c.domain_id}</span>
+                        )}
+                        <span className="text-[10px] text-muted-foreground font-mono">
+                          {c.concept_id} · {c.vocabulary_id}
+                        </span>
                       </span>
                     </button>
                   </div>

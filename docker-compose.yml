@@ -6,9 +6,8 @@
 # Services:
 #   postgres       Stores the OMOP CDM v5.4 data and (optionally) vocabulary.
 #   omop-init      One-shot. Applies DDL + primary keys on first run.
-#   entitylinker   SapBERT + FAISS concept-search service used by Step 9.
-#   conceptmatcher The staged OMOP matching pipeline behind HTTP; the Concepts
-#                  step's "Load concepts" button maps every variable through it.
+#   conceptmatcher The staged OMOP matching pipeline behind HTTP — every concept
+#                  search, and the Concepts step's "Load concepts" button.
 #   backend        FastAPI server (port 8000), with hot reload.
 #   frontend       Vite dev server (port 5173), with HMR.
 #
@@ -60,30 +59,6 @@ services:
       - ./backend:/app
       - ./scripts/init-omop.sh:/init-omop.sh:ro
     entrypoint: ["/bin/sh", "/init-omop.sh"]
-
-  entitylinker:
-    build:
-      context: ./entitylinker
-      dockerfile: dockerfile
-    container_name: omop-entitylinker
-    restart: unless-stopped
-    environment:
-      ENTITYLINKER_CONFIG: /app/config.yaml
-      EL_API_HOST: 0.0.0.0
-      EL_API_PORT: 8000
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-    volumes:
-      - ./entitylinker/config.container.yaml:/app/config.yaml:ro
-      - ${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/data
-    ports:
-      - "${ENTITYLINKER_PORT:-8001}:8000"
-    command: ["--config", "/app/config.yaml", "--host", "0.0.0.0", "--port", "8000"]
-    healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/').read()"]
-      interval: 15s
-      timeout: 5s
-      retries: 20
-      start_period: 120s
 
   # ────────────────────────────────────────────────────────────────────────
   # The multi-stage concept matcher from the sibling "new concept finding"
@@ -165,14 +140,11 @@ services:
         condition: service_healthy
       omop-init:
         condition: service_completed_successfully
-      entitylinker:
-        condition: service_started
       conceptmatcher:
         condition: service_started
     environment:
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
-      ENTITYLINKER_URL: http://entitylinker:8000/api/conceptlink
       CONCEPT_MATCHER_URL: http://conceptmatcher:8000
       OMOP_DB_HOST: postgres
       OMOP_DB_PORT: 5432

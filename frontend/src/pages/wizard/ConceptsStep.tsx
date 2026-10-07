@@ -9,8 +9,6 @@ import {
   downloadMappingSummary,
   lookupConceptDomain,
   standardConceptError,
-  conceptSearch,
-  getApiHealth,
   getConceptMatcherHealth,
   matchConcepts,
   matchColumnValues,
@@ -22,8 +20,9 @@ import {
 } from '../../api/client'
 import type {
   ConceptMatchRequestColumn, ConceptMatchResult, ConceptMatchCandidate,
-  ConceptValueMatchColumn, DescriptionUploadResult,
+  ConceptValueMatchColumn, DescriptionUploadResult, DomainSearchResult,
 } from '../../api/client'
+import DomainConceptSearch from '../../components/DomainConceptSearch'
 import type { Project } from '../../types'
 import { getStructuralColumns, getStructuralColFileMap } from '../../utils'
 import WizardLayout from './WizardLayout'
@@ -59,7 +58,7 @@ interface ConceptRef {
   concept_code?: string
   concept_class_id?: string
   domain_id_str?: string     // OMOP domain string, what gets inserted into vocab.concept
-  // EntityLinker result fields (only present on search results)
+  // Concept matcher fields (only present on matched / searched concepts)
   score?: number
   justification?: string
 }
@@ -285,12 +284,10 @@ interface CustomConceptEntry {
 // ── Shared per-page settings (avoid prop-drilling) ─────────────────────────
 
 interface ConceptsSettings {
-  rerankerAvailable: boolean
   usedCustomConceptIds: Map<number, CustomConceptEntry>
 }
 
 const ConceptsCtx = createContext<ConceptsSettings>({
-  rerankerAvailable: false,
   usedCustomConceptIds: new Map(),
 })
 
@@ -306,10 +303,11 @@ interface ColumnInfo {
 
 // ── Bulk matcher ("Load concepts") ─────────────────────────────────────────
 
-// One of the pipeline's ranked alternatives, in the shape the pickers use.
-// `score` is the composite out of 100; the picker's confidence chip expects 0-1.
+// One of the pipeline's ranked alternatives (or a concept search result), in
+// the shape the pickers use. `score` is the composite out of 100; the picker's
+// confidence chip expects 0-1. A search result topped up by name has none.
 function conceptRefFromCandidate(
-  candidate: ConceptMatchCandidate, reason: string,
+  candidate: ConceptMatchCandidate | DomainSearchResult, reason?: string,
 ): ConceptRef {
   return {
     concept_id: candidate.concept_id,
@@ -321,7 +319,7 @@ function conceptRefFromCandidate(
       : undefined,
     concept_class_id: candidate.concept_class_id ?? undefined,
     concept_code: candidate.concept_code ?? undefined,
-    score: candidate.score / 100,
+    score: candidate.score == null ? undefined : candidate.score / 100,
     justification: reason,
   }
 }
@@ -510,42 +508,6 @@ function DomainPicker({ value, onChange }: { value: number | null; onChange: (v:
   )
 }
 
-// ── Mini concept search hook ───────────────────────────────────────────────
-
-function useConceptSearch(projectId: string) {
-  const [query, setQuery] = useState('')
-  const [results, setResults] = useState<ConceptRef[]>([])
-  const [loading, setLoading] = useState(false)
-  const [unavailable, setUnavailable] = useState(false)
-
-  const search = async (q?: string, useReranker = false) => {
-    const term = q ?? query
-    if (!term.trim()) return
-    setLoading(true)
-    setUnavailable(false)
-    try {
-      const data = await conceptSearch(projectId, term, 15, useReranker)
-      setResults((data.conceptlinks || []).map((c: Record<string, unknown>) => ({
-        concept_id: c.concept_id as number,
-        concept_name: c.concept_name as string,
-        vocabulary_id: c.vocabulary_id as string | undefined,
-        domain: c.domain as string | undefined,
-        score: typeof c.score === 'number' ? c.score : undefined,
-        justification: typeof c.justification === 'string' ? c.justification : undefined,
-      })))
-    } catch {
-      setUnavailable(true)
-      setResults([])
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const clear = () => { setResults([]); setQuery('') }
-
-  return { query, setQuery, results, loading, unavailable, search, clear }
-}
-
 // ── Custom concept form ───────────────────────────────────────────────────
 
 function CustomConceptForm({
@@ -713,13 +675,12 @@ function ConceptPicker({
   value: ConceptRef | null
   onSelect: (c: ConceptRef) => void
   onClear: () => void
-  // When provided, gates every commit path (manual ID/name, AI search pick, custom
+  // When provided, gates every commit path (manual ID/name, search pick, custom
   // concept create) on the concept's OMOP domain. Return an error message to block
   // the selection (input stays as typed, nothing is applied) or null to allow it.
   validateDomain?: (domainStr: string | null) => string | null
 }) {
-  const { rerankerAvailable, usedCustomConceptIds } = useConceptsSettings()
-  const cs = useConceptSearch(projectId)
+  const { usedCustomConceptIds } = useConceptsSettings()
   const [manualId, setManualId] = useState('')
   const [idLocked, setIdLocked] = useState(false)
   const [manualName, setManualName] = useState('')
@@ -727,7 +688,6 @@ function ConceptPicker({
   const [editingName, setEditingName] = useState('')
   const [showSearch, setShowSearch] = useState(false)
   const [showCustom, setShowCustom] = useState(false)
-  const [useReranker, setUseReranker] = useState(rerankerAvailable)
   const [domainError, setDomainError] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
   const [checkingStandard, setCheckingStandard] = useState(false)
@@ -870,7 +830,7 @@ function ConceptPicker({
             {!isUnmapped && value.vocabulary_id && <span className="opacity-60 ml-0.5">· {value.vocabulary_id}</span>}
             {isCustom && value.concept_code && <span className="opacity-60 ml-0.5">· {value.concept_code}</span>}
             {/* Confidence, when the concept came from a scored source (the bulk
-                matcher or AI Search) rather than being typed in. Amber below the
+                matcher or a concept search) rather than being typed in. Amber below the
                 pipeline's 90-point auto-accept threshold: that's a concept a
                 human is meant to look at, and once the chip is locked there is
                 otherwise nothing to distinguish it from a certain one. */}
@@ -971,16 +931,16 @@ function ConceptPicker({
       )}
       <div className="flex items-center gap-1.5">
         <button
-          onClick={() => { setShowSearch(s => !s); setShowCustom(false); if (!cs.query) cs.setQuery(defaultQuery) }}
+          onClick={() => { setShowSearch(s => !s); setShowCustom(false) }}
           className={clsx(
             'flex items-center gap-1 px-2.5 py-1 text-xs rounded border font-medium transition-colors',
             showSearch
               ? 'bg-indigo-100 border-indigo-400 text-indigo-800'
               : 'border-indigo-200 bg-white text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50',
           )}
-          title="Semantic search via SapBERT + FAISS"
+          title="Search standard concepts in every domain through the concept matcher"
         >
-          <Sparkles className="w-3 h-3" /> AI Search
+          <Sparkles className="w-3 h-3" /> Search
         </button>
         <button
           onClick={() => { setShowCustom(s => !s); setShowSearch(false) }}
@@ -998,86 +958,19 @@ function ConceptPicker({
 
       {/* Search panel */}
       {showSearch && (
-        <div className="flex flex-col gap-1.5 pl-2 border-l-2 border-indigo-400/60 bg-indigo-50/30 rounded-r py-1.5">
-          <div className="flex items-center gap-1.5 px-1">
-            <Sparkles className="w-3.5 h-3.5 text-indigo-600 flex-shrink-0" />
-            <input
-              type="text"
-              value={cs.query}
-              onChange={e => cs.setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && cs.search(undefined, useReranker)}
-              placeholder={`Search "${defaultQuery}"…`}
-              className="flex-1 border border-indigo-200 rounded px-2 py-1 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-400 bg-white text-foreground"
-              autoFocus
-            />
-            <button
-              onClick={() => cs.search(undefined, useReranker)}
-              disabled={cs.loading || !cs.query.trim()}
-              className="px-3 py-1 text-xs bg-indigo-600 text-white rounded disabled:opacity-40 hover:bg-indigo-700 font-medium flex items-center gap-1"
-            >
-              {cs.loading ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Search'}
-            </button>
-          </div>
-          {/* Reranker toggle */}
-          <div className="flex items-center gap-2 px-1">
-            <label className={clsx(
-              'flex items-center gap-1.5 text-xs cursor-pointer select-none',
-              !rerankerAvailable && 'opacity-50 cursor-not-allowed',
-            )}>
-              <input
-                type="checkbox"
-                checked={useReranker && rerankerAvailable}
-                disabled={!rerankerAvailable}
-                onChange={e => setUseReranker(e.target.checked)}
-                className="rounded accent-indigo-600"
-              />
-              <span className="text-indigo-900 font-medium">GPT reranker</span>
-              <span className="text-indigo-600 text-[10px]">
-                {rerankerAvailable
-                  ? useReranker ? 'slower, with justification' : 'fast cosine similarity'
-                  : 'requires OPENAI_API_KEY'}
-              </span>
-            </label>
-          </div>
-          {cs.unavailable && (
-            <p className="text-xs text-amber-600 flex items-center gap-1 px-1">
-              <AlertTriangle className="w-3 h-3" /> EntityLinker not running — use manual ID entry or Custom
-            </p>
-          )}
-          {cs.loading && useReranker && (
-            <p className="text-xs text-indigo-600 px-1 italic">Reranking with GPT — this can take 10-30 s…</p>
-          )}
-          {cs.results.length > 0 && (
-            <div className="border border-indigo-200 rounded bg-white max-h-72 overflow-y-auto shadow-sm">
-              {cs.results.map(c => (
-                <button
-                  key={c.concept_id}
-                  onClick={() => {
-                    if (validateDomain) {
-                      const err = validateDomain(c.domain ?? null)
-                      if (err) { setDomainError(err); return }
-                    }
-                    onSelect(c); setShowSearch(false); cs.clear()
-                  }}
-                  className="w-full text-left px-2.5 py-2 hover:bg-indigo-50 border-b last:border-0 border-indigo-100 flex flex-col gap-0.5"
-                >
-                  <div className="flex items-baseline gap-1.5 flex-wrap">
-                    <span className="text-xs font-semibold text-foreground">{c.concept_name}</span>
-                    <span className="text-[10px] text-muted-foreground font-mono">{c.concept_id}</span>
-                    {c.domain && <span className="text-[10px] text-indigo-700 bg-indigo-100 px-1 rounded">{c.domain}</span>}
-                    {c.vocabulary_id && <span className="text-[10px] text-muted-foreground">{c.vocabulary_id}</span>}
-                    {typeof c.score === 'number' && (
-                      <span className="ml-auto text-[10px] text-indigo-700 font-semibold">{(c.score * 100).toFixed(0)}%</span>
-                    )}
-                  </div>
-                  {c.justification && c.justification !== 'Cosine similarity score' && (
-                    <p className="text-[11px] text-muted-foreground italic leading-snug">↳ {c.justification}</p>
-                  )}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
+        <DomainConceptSearch
+          projectId={projectId}
+          initialQuery={defaultQuery}
+          onClose={() => setShowSearch(false)}
+          onSelect={c => {
+            if (validateDomain) {
+              const err = validateDomain(c.domain_id ?? null)
+              if (err) { setDomainError(err); return }
+            }
+            commitConcept(conceptRefFromCandidate(c, 'concept search'))
+            setShowSearch(false)
+          }}
+        />
       )}
 
       {/* Custom concept form */}
@@ -3381,7 +3274,7 @@ const VariableRow = memo(function VariableRow({
     decision.domain_id !== null ? 'manual' : 'auto'
   )
   const [lookingUpDomain, setLookingUpDomain] = useState(false)
-  // Raw domain string from CSV/EntityLinker (may not map to our 5 tables)
+  // Raw domain string from CSV/the concept matcher (may not map to our 5 tables)
   const [rawDomain, setRawDomain] = useState<string | null>(null)
   const [lookupFailed, setLookupFailed] = useState(false)
 
@@ -3393,7 +3286,7 @@ const VariableRow = memo(function VariableRow({
 
     setLookupFailed(false)
 
-    // EntityLinker results already carry domain — use it directly
+    // Matcher results already carry domain — use it directly
     if (concept.domain) {
       setRawDomain(concept.domain)
       const numeric = DOMAIN_STRING_MAP[concept.domain.toLowerCase()]
@@ -4239,8 +4132,6 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [domainFilter, setDomainFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
 
-  // AI settings
-  const [openaiConfigured, setOpenaiConfigured] = useState(false)
   const [customConceptsOpen, setCustomConceptsOpen] = useState(false)
   // Custom concepts pre-registered from the "Custom concepts created" dialog,
   // before they've been attached to any column/value. Once a decision reuses
@@ -4268,12 +4159,6 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [dictResult, setDictResult] = useState<DescriptionUploadResult | null>(null)
   const [dictError, setDictError] = useState('')
   const dictFileRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    getApiHealth()
-      .then(h => setOpenaiConfigured(!!h.openai_configured))
-      .catch(() => setOpenaiConfigured(false))
-  }, [])
 
   useEffect(() => {
     getConceptMatcherHealth()
@@ -4965,7 +4850,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   })
 
   return (
-    <ConceptsCtx.Provider value={{ rerankerAvailable: openaiConfigured, usedCustomConceptIds: customConceptsById }}>
+    <ConceptsCtx.Provider value={{ usedCustomConceptIds: customConceptsById }}>
     <WizardLayout
       project={project}
       currentSlug="concepts"
@@ -5343,16 +5228,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           </span>
         </div>
 
-        {/* AI reranker status + custom concepts summary */}
+        {/* Custom concepts summary */}
         <div className="flex items-center gap-3 flex-wrap rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs">
-          <div className="flex items-center gap-1.5">
-            <Sparkles className={clsx('w-3.5 h-3.5', openaiConfigured ? 'text-indigo-600' : 'text-muted-foreground')} />
-            <span className="font-semibold text-foreground">AI reranker:</span>
-            <span className={openaiConfigured ? 'text-indigo-700' : 'text-muted-foreground'}>
-              {openaiConfigured ? 'available' : 'disabled (set OPENAI_API_KEY)'}
-            </span>
-          </div>
-          <span className="text-muted-foreground">·</span>
           <button
             type="button"
             onClick={() => setCustomConceptsOpen(true)}

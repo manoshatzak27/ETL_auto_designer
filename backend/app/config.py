@@ -5,10 +5,10 @@ from pathlib import Path
 class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
-    entitylinker_url: str = "http://localhost:8000/api/conceptlink"
     # Base URL of the staged OMOP matching pipeline (pipeline/service.py in the
-    # "new concept finding" project), used by the Concepts step's bulk
-    # "Load concepts" button. Empty disables the button rather than erroring.
+    # "new concept finding" project) — every concept search and the Concepts
+    # step's bulk "Load concepts" go through it. Empty disables them rather than
+    # erroring.
     concept_matcher_url: str = "http://localhost:8002"
     # Ceiling on how long a whole-project match may take. A cold call pays the
     # embedding model load before the first column is scored, and the pipeline
