@@ -203,7 +203,11 @@ export interface ConceptMatchResult {
 
 export const getConceptMatcherHealth = () =>
   api
-    .get<{ available: boolean; detail?: string | null; vocabulary_version?: string; concepts?: number; embeddings?: boolean }>(
+    .get<{
+      available: boolean; detail?: string | null; vocabulary_version?: string; concepts?: number; embeddings?: boolean
+      /** Domains the matcher's vocabulary defines, most concepts first. */
+      domains?: string[] | null
+    }>(
       '/projects/concept-matcher/health',
     )
     .then(r => r.data)
@@ -284,12 +288,23 @@ export interface DomainSearchResult extends Omit<ConceptMatchCandidate, 'score'>
   parent_id?: number
 }
 
-/** `domain` omitted searches every domain; each result's `domain_id` says which. */
-export const searchDomainConcepts = (projectId: string, query: string, domain?: string, limit = 15) =>
+/** `domain` is the one domain a field fixes; an array is the user's domain
+ *  filter (any of them). Omitted or empty searches every domain; each result's
+ *  `domain_id` says which. */
+export const searchDomainConcepts = (
+  projectId: string, query: string, domain?: string | string[], limit = 15,
+) =>
   api
     .get<{ term: string; results: DomainSearchResult[] }>(
       `/projects/${projectId}/search-concepts`,
-      { params: { query, domain, limit } },
+      {
+        params: Array.isArray(domain)
+          ? { query, domains: domain, limit }
+          : { query, domain, limit },
+        // Repeated `domains=a&domains=b`, which FastAPI reads as a list —
+        // axios's default `domains[]=a` would arrive as an unknown parameter.
+        paramsSerializer: { indexes: null },
+      },
     )
     .then(r => r.data)
 

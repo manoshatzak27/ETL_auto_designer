@@ -661,6 +661,10 @@ function CustomConceptForm({
 
 // ── ConceptPicker — inline search + manual ID entry ────────────────────────
 
+// One-click entries in the search's domain filter, beside the Custom button:
+// the domains a variable's concept is almost always in.
+const SEARCH_SHORTCUT_DOMAINS = ['Drug', 'Condition', 'Observation', 'Measurement', 'Procedure']
+
 function ConceptPicker({
   projectId,
   defaultQuery,
@@ -687,6 +691,9 @@ function ConceptPicker({
   const [lookingUpName, setLookingUpName] = useState(false)
   const [editingName, setEditingName] = useState('')
   const [showSearch, setShowSearch] = useState(false)
+  // The search's domain filter, owned here so the shortcut buttons and the
+  // filter's own checklist are one selection.
+  const [searchDomains, setSearchDomains] = useState<string[]>([])
   const [showCustom, setShowCustom] = useState(false)
   const [domainError, setDomainError] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
@@ -929,7 +936,7 @@ function ConceptPicker({
           {domainError}
         </p>
       )}
-      <div className="flex items-center gap-1.5">
+      <div className="flex items-center gap-1.5 flex-wrap">
         <button
           onClick={() => { setShowSearch(s => !s); setShowCustom(false) }}
           className={clsx(
@@ -938,7 +945,7 @@ function ConceptPicker({
               ? 'bg-indigo-100 border-indigo-400 text-indigo-800'
               : 'border-indigo-200 bg-white text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50',
           )}
-          title="Search standard concepts in every domain through the concept matcher"
+          title="Search standard concepts through the concept matcher"
         >
           <Sparkles className="w-3 h-3" /> Search
         </button>
@@ -954,6 +961,30 @@ function ConceptPicker({
         >
           <Plus className="w-3 h-3" /> Custom
         </button>
+        {/* Domain shortcuts: toggle that domain in the search filter, opening
+            the search if it is closed. */}
+        <span className="w-px h-4 bg-border mx-0.5" />
+        {SEARCH_SHORTCUT_DOMAINS.map(d => {
+          const active = searchDomains.includes(d)
+          return (
+            <button
+              key={d}
+              onClick={() => {
+                setSearchDomains(ds => active ? ds.filter(x => x !== d) : [...ds, d])
+                setShowSearch(true); setShowCustom(false)
+              }}
+              className={clsx(
+                'px-2 py-1 text-xs rounded border font-medium transition-colors',
+                active
+                  ? 'bg-indigo-600 border-indigo-600 text-white'
+                  : 'border-indigo-200 bg-white text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50',
+              )}
+              title={active ? `Stop restricting the search to ${d}` : `Search ${d} concepts`}
+            >
+              {d}
+            </button>
+          )
+        })}
       </div>
 
       {/* Search panel */}
@@ -961,6 +992,8 @@ function ConceptPicker({
         <DomainConceptSearch
           projectId={projectId}
           initialQuery={defaultQuery}
+          pickedDomains={searchDomains}
+          onPickedDomainsChange={setSearchDomains}
           onClose={() => setShowSearch(false)}
           onSelect={c => {
             if (validateDomain) {
