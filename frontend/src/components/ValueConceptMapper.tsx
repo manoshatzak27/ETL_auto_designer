@@ -123,7 +123,8 @@ function ConceptCell({
     lookupConceptDomain(conceptId)
       .then(res => {
         if (res.found && res.domain_id) { setDomain(res.domain_id); setStandardConcept(res.standard_concept); setInvalidReason(res.invalid_reason); setConceptName(res.concept_name) }
-        else { setDomain(null); setNotFound(true) }
+        // No vocabulary to check against (empty / unreachable) ≠ "not found".
+        else { setDomain(null); if (res.vocab_available) setNotFound(true); else setFailed(true) }
       })
       .catch(() => setFailed(true))
       .finally(() => setLookingUp(false))
@@ -187,7 +188,8 @@ function ConceptCell({
   )
 
   if (conceptId !== undefined && conceptId >= 0) {
-    const invalid = mismatch || notFound || invalidConcept || nonStandard
+    // Unverified (no vocabulary / lookup failed) isn't wrong, but it isn't a green check either.
+    const invalid = mismatch || notFound || invalidConcept || nonStandard || failed
     const isZero = conceptId === 0
     const boxClasses = isZero
       ? 'bg-muted border-border text-muted-foreground'
@@ -208,7 +210,9 @@ function ConceptCell({
             ) : domain ? (
               <span className={`ml-1 text-[10px] px-1 rounded ${mismatch ? 'text-amber-700 bg-amber-100' : 'text-indigo-700 bg-indigo-100'}`}>{domain}</span>
             ) : failed ? (
-              <AlertTriangle className="w-3 h-3 flex-shrink-0 ml-1 text-amber-500" title="Domain lookup failed" />
+              <span title="Couldn't check this concept" className="flex-shrink-0 ml-1">
+                <AlertTriangle className="w-3 h-3 text-amber-500" />
+              </span>
             ) : null}
           </div>
           <button
@@ -226,6 +230,9 @@ function ConceptCell({
         )}
         {!lookingUp && notFound && (
           <p className="text-[11px] text-amber-700">Not found in vocabulary</p>
+        )}
+        {!lookingUp && failed && (
+          <p className="text-[11px] text-amber-700">Couldn't check — vocabulary not loaded or database unreachable</p>
         )}
         {!lookingUp && !mismatch && !notFound && invalidConcept && (
           <p className="text-[11px] text-amber-700">Invalid concept — {invalidReasonLabel(invalidReason as string)}</p>

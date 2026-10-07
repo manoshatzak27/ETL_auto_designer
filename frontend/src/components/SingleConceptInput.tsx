@@ -59,7 +59,9 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
           onConceptName?.(res.concept_name ?? null)
         } else {
           setDomain(null)
-          setNotFound(true)
+          // No vocabulary to check against (empty / unreachable) ≠ "not found".
+          if (res.vocab_available) setNotFound(true)
+          else setFailed(true)
           onConceptName?.(null)
         }
       })
@@ -127,7 +129,8 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
   )
 
   if (hasValue) {
-    const invalid = mismatch || notFound || invalidConcept || nonStandard
+    // Unverified (no vocabulary / lookup failed) isn't wrong, but it isn't a green check either.
+    const invalid = mismatch || notFound || invalidConcept || nonStandard || failed
     return (
       <div className={`flex flex-col gap-1 mt-1 ${className ?? ''}`}>
         <div className="flex items-center gap-1.5">
@@ -145,7 +148,7 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
             ) : failed ? (
               <>
                 <AlertTriangle className="w-3 h-3 flex-shrink-0 ml-1 text-amber-500" />
-                <span className="ml-0.5 text-amber-700">Lookup failed</span>
+                <span className="ml-0.5 text-amber-700">Not verified</span>
               </>
             ) : null}
             <button
@@ -166,6 +169,11 @@ export default function SingleConceptInput({ value, onChange, onConceptName, pla
         )}
         {!lookingUp && notFound && (
           <p className="text-xs text-amber-700">Concept {value} was not found in the vocabulary. Clear it and set a valid concept.</p>
+        )}
+        {!lookingUp && failed && (
+          <p className="text-xs text-amber-700">
+            Couldn't check concept {value} — the OMOP vocabulary isn't loaded or the database is unreachable.
+          </p>
         )}
         {!lookingUp && !mismatch && !notFound && invalidConcept && (
           <p className="text-xs text-amber-700">

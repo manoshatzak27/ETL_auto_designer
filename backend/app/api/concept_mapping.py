@@ -50,11 +50,17 @@ router = APIRouter(prefix="/projects", tags=["concept-mapping"])
 # runs, and a cached answer would outlive it — a concept looked up before the
 # load would stay "not found", and one deprecated by a newer vocabulary would
 # stay standard/valid. A primary-key lookup is cheap enough to do every time.
+class VocabNotLoaded(Exception):
+    """vocab.concept exists but is empty — the OMOP DDL is applied (omop-init
+    does that on first run) but no vocabulary has been loaded into it yet."""
+
+
 def _get_concept_info(concept_id: int) -> "tuple[str, str, str | None, str | None] | None":
     """Look up (domain_id, concept_name, standard_concept, invalid_reason) for an OMOP concept by
     querying the loaded vocabulary in Postgres. Returns None when the concept
     genuinely isn't there. Raises on connection/query errors instead of
-    swallowing them, so callers can tell "not found" from "couldn't check"."""
+    swallowing them, and VocabNotLoaded when the concept table is empty, so
+    callers can tell "not found" from "couldn't check"."""
     if concept_id is None or concept_id <= 0:
         return None
     from app.services.db import connect
@@ -78,6 +84,15 @@ def _get_concept_info(concept_id: int) -> "tuple[str, str, str | None, str | Non
                     # Loader stores '' as NULL, but normalise in case a vocab was loaded another way.
                     (str(row[3]).strip() or None) if row[3] is not None else None,
                 )
+            # Not found — but an empty table would say that about every id.
+            # Only checked on a miss, so found concepts cost nothing extra.
+            cur.execute(
+                pgsql.SQL("SELECT EXISTS (SELECT 1 FROM {schema}.concept)").format(
+                    schema=pgsql.Identifier(schema)
+                )
+            )
+            if not cur.fetchone()[0]:
+                raise VocabNotLoaded(f"{schema}.concept is empty")
             return None
 
 
@@ -109,11 +124,14 @@ def concept_lookup(concept_id: int):
     standard_concept is 'S' for standard concepts, 'C' for classification
     concepts, and null/None for non-standard concepts — per OMOP convention.
     invalid_reason is null for valid concepts, 'D' (deleted) or 'U' (upgraded)
-    otherwise. vocab_available is False when the lookup couldn't run at all, so callers can
-    tell "this concept doesn't exist" apart from "couldn't check".
+    otherwise. vocab_available is False when no vocabulary is loaded (empty
+    concept table) or the lookup couldn't run at all, so callers can tell
+    "this concept doesn't exist" apart from "couldn't check".
     """
     try:
         info = _get_concept_info(concept_id)
+    except VocabNotLoaded:
+        return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "invalid_reason": None, "found": False, "vocab_available": False}
     except Exception as exc:
         # Vocab schema/table missing or Postgres unreachable.
         print(f"[concept-lookup] vocab.concept query failed: {exc}")
