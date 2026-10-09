@@ -468,6 +468,54 @@ def _value_domain(result: dict[str, Any]) -> str | None:
     return result.get("domain_id") or None
 
 
+# A yes/no column ("Swollen joints?" → Yes / No) carries its meaning in the
+# column, not in the values: matched on its own, "Yes" finds the literal answer
+# concept, never "Joint swelling". Such a column is recognised by every value
+# being one of these words (or a missing-data marker); "Yes" is then matched on
+# the column's name and description instead, and "No" is recorded as not mapped
+# (concept 0) — the absence of the finding produces no row.
+AFFIRMATIVE_VALUES = frozenset({"yes", "y", "true", "present"})
+NEGATIVE_VALUES = frozenset({"no", "n", "false", "absent"})
+MISSING_VALUES = frozenset({
+    "unknown", "unk", "not known", "don't know", "dont know",
+    "n/a", "na", "missing", "not applicable",
+})
+
+
+def _yes_no_split(values: list[str]) -> tuple[list[str], list[str], list[str]] | None:
+    """(yes, no, missing) values of a yes/no column, or None if it isn't one.
+    At least one affirmative value is required: a column of only "No" has
+    nothing for the column-name search to be applied to."""
+    yes, no, missing = [], [], []
+    for value in values:
+        key = value.strip().lower()
+        if key in AFFIRMATIVE_VALUES:
+            yes.append(value)
+        elif key in NEGATIVE_VALUES:
+            no.append(value)
+        elif key in MISSING_VALUES:
+            missing.append(value)
+        else:
+            return None
+    return (yes, no, missing) if yes else None
+
+
+def _fixed_value_result(value: str, concept_id: int | None, reason: str) -> dict[str, Any]:
+    """A value result decided here rather than by the matcher, in the matcher's
+    result shape so the caller handles it like any other."""
+    return {
+        "column_name": value,
+        "status": "auto_accept" if concept_id is not None else "unmapped",
+        "confidence": 100.0 if concept_id is not None else 0.0,
+        "concept_id": concept_id,
+        "concept_name": "Not mapped" if concept_id == 0 else None,
+        "domain_id": None, "vocabulary_id": None,
+        "concept_class_id": None, "concept_code": None,
+        "decision_reason": reason,
+        "ambiguous": False, "error": None, "candidates": [],
+    }
+
+
 class MatchValuesPayload(BaseModel):
     # The columns whose distinct values should be matched. The values themselves
     # are read from the source files here rather than posted, so the caller
@@ -500,6 +548,10 @@ async def match_values(
     restricted to it, so a value whose best overall match was off-domain still
     gets the best in-domain one instead of being dropped.
 
+    A yes/no column (see `_yes_no_split`) skips both passes: its affirmative
+    values are matched once on the column's name and description, and its
+    negative values come back as concept 0. It is flagged `yes_no`.
+
     Per column the response carries the chosen domain, the vote it came from, and
     one result per value in the matcher's own shape, keyed by the source value.
     """
@@ -519,15 +571,18 @@ async def match_values(
     async def match_values_of(
         column: MatchColumn, values: list[str], domains: list[str] | None,
     ) -> list[dict[str, Any]]:
-        """One pass over `values`, in order, chunked. The value is the term to
-        match; the column's description (or its name) rides along as the context
-        that tells the pipeline what kind of value it is looking at."""
-        context = (column.description or "").strip() or described.get(column.name) or column.name
+        """One pass over `values`, in order, chunked. The value alone is the term
+        to match. The column's name or description is deliberately not sent as
+        context: the matcher folds it into the query, and on this study's value
+        columns it cost far more than it gave — an identifier like
+        PAT_MED_ARD_NAME_1 dragged exact drug names ("Prednison") below the
+        review threshold, and even written descriptions pulled in wrong concepts.
+        The column's domain is enforced by pass 2 below instead."""
         results: list[dict[str, Any]] = []
         for start in range(0, len(values), VALUE_CHUNK):
             chunk = values[start:start + VALUE_CHUNK]
             answer = await _post_match(
-                [{"name": v, "description": context, "table": column.table} for v in chunk],
+                [{"name": v, "table": column.table} for v in chunk],
                 source_system, note, payload.candidates, domains,
             )
             # Results come back in request order, so they are paired positionally
@@ -556,9 +611,41 @@ async def match_values(
             "domain": None,
             "domain_votes": {},
             "rematched": 0,
+            "yes_no": False,
             "results": {},
         }
         if not values:
+            columns_out.append(entry)
+            continue
+
+        split = _yes_no_split(values)
+        if split:
+            yes, no, missing = split
+            entry["yes_no"] = True
+            # The column itself is the term, as in a variable match; restricted
+            # to the stem domains because the answer becomes a stem-table row.
+            description = (column.description or "").strip() or described.get(column.name) or None
+            answer = await _post_match(
+                [{"name": column.name, "description": description, "table": column.table}],
+                source_system, note, payload.candidates, list(STEM_DOMAINS),
+            )
+            found = (answer.get("results") or [{}])[0]
+            entry["domain"] = _value_domain(found)
+            if entry["domain"]:
+                entry["domain_votes"] = {entry["domain"]: len(yes)}
+            results: dict[str, Any] = {}
+            for value in yes:
+                results[value] = {
+                    **found,
+                    "decision_reason": f"yes/no column, matched on the column · {found.get('decision_reason') or ''}",
+                }
+            for value in no:
+                results[value] = _fixed_value_result(
+                    value, 0, "negative answer in a yes/no column — not mapped")
+            for value in missing:
+                results[value] = _fixed_value_result(
+                    value, None, "missing-data marker in a yes/no column")
+            entry["results"] = results
             columns_out.append(entry)
             continue
 

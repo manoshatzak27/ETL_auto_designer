@@ -347,10 +347,22 @@ function applyValueMatch(
   // concept outside them produces no usable row — and the summary says as much
   // rather than the column looking like the matcher found nothing.
   const numericDomain = answer.domain ? DOMAIN_STRING_MAP[answer.domain.toLowerCase()] : undefined
+  // Values committed to a real concept, as opposed to "No" in a yes/no column
+  // being recorded as not mapped — only the former say anything about the domain.
+  let committedConcepts = 0
 
   for (const [value, r] of Object.entries(answer.results)) {
     if (value in valueConcepts) continue        // already decided — never overwritten
     if (r.error) { stats.failed += 1; continue }
+
+    // The negative answer of a yes/no column: decided by the backend as "not
+    // mapped" (concept 0), the same value a user picks by hand to skip a value.
+    if (r.concept_id === 0 && r.status === 'auto_accept') {
+      valueConcepts[value] = { concept_id: 0, concept_name: 'Not mapped', justification: r.decision_reason }
+      delete suggestions[value]
+      stats.accepted += 1
+      continue
+    }
 
     // A shortlist is only offered for the pipeline's own "review" verdict, the
     // same as at variable level: below that threshold its candidates are guesses
@@ -375,6 +387,7 @@ function applyValueMatch(
       }
       delete suggestions[value]
       stats.accepted += 1
+      committedConcepts += 1
     } else if (shortlist.length > 0) {
       suggestions[value] = shortlist
       stats.review += 1
@@ -390,8 +403,11 @@ function applyValueMatch(
       value_suggestions: Object.keys(suggestions).length > 0 ? suggestions : undefined,
       // map_values has no row-level domain picker, so this is the only place the
       // column's domain gets recorded — which is what the domain-specific field
-      // sections (unit, route, …) and the domain filter read.
-      domain_id: numericDomain ?? base.domain_id,
+      // sections (unit, route, …) and the domain filter read. Only recorded when
+      // at least one value was actually committed to a concept in it; otherwise
+      // the vote rests on nothing the user has accepted, so the existing domain
+      // is kept.
+      domain_id: committedConcepts > 0 ? numericDomain ?? base.domain_id : base.domain_id,
     },
     stats,
   }

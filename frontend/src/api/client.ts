@@ -234,6 +234,9 @@ export interface ConceptValueMatchColumn {
   /** How many values were searched again because the first pass put them outside
    *  the chosen domain. */
   rematched: number
+  /** Every value was a yes/no word: "Yes" was matched on the column's name and
+   *  description, "No" came back as concept 0 (not mapped). */
+  yes_no?: boolean
   /** Keyed by the source value. */
   results: Record<string, ConceptMatchResult>
 }
