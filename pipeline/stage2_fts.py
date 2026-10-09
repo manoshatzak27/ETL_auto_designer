@@ -21,6 +21,8 @@ from __future__ import annotations
 from functools import lru_cache
 from typing import Any, Sequence
 
+from psycopg.rows import dict_row
+
 from . import resources, text_utils
 from .config import PipelineConfig
 from .db import Database
@@ -335,25 +337,41 @@ class FullTextSearcher:
         That happens when every input token stems to something no concept
         contains — in practice, a typo. The GIN trigram index on
         concept_name_norm makes this a lookup rather than a 3.5M-row scan.
+
+        Scored by word_similarity, not similarity: the input is compared with
+        the best-matching stretch of the name rather than the whole of it. A
+        whole-name score is diluted by every word the input never spelled, so
+        'certoluzimab' scored 0.33 against 'certolizumab pegol' and missed the
+        cut, and the longer product names scored lower still — the more
+        complete the concept, the less reachable by a typo. Whole-name
+        similarity stays as the tiebreak, so the bare ingredient outranks its
+        products when the misspelt word matches all of them equally.
         """
         probe = text_utils.normalize_for_exact_match(variant.search_string)
         if not probe:
             return []
         domain_filter = "AND cs.domain_id = ANY(%(domains)s)" if domains else ""
-        return self.db.fetch_all(
-            f"""
-            SELECT cs.concept_id, cs.concept_name, cs.domain_id, cs.vocabulary_id,
-                   cs.concept_class_id, cs.concept_code, cs.synonyms,
-                   similarity(cs.concept_name_norm, %(probe)s) AS rank
-            FROM pipeline.concept_search cs
-            WHERE cs.concept_name_norm %% %(probe)s
-              {domain_filter}
-            ORDER BY rank DESC
-            LIMIT %(limit)s
-            """,
-            {"probe": probe, "domains": list(domains),
-             "limit": self.config.trigram_fallback_limit},
-        )
+        threshold = self.config.trigram_fallback_threshold
+        with self.db.connection() as conn, conn.cursor(row_factory=dict_row) as cur:
+            # `<%` filters at pg_trgm.word_similarity_threshold (default 0.6);
+            # set it for this transaction only so the index does the cutting.
+            cur.execute("SELECT set_config('pg_trgm.word_similarity_threshold', %s, true)",
+                        (str(threshold),))
+            cur.execute(
+                f"""
+                SELECT cs.concept_id, cs.concept_name, cs.domain_id, cs.vocabulary_id,
+                       cs.concept_class_id, cs.concept_code, cs.synonyms,
+                       word_similarity(%(probe)s, cs.concept_name_norm) AS rank
+                FROM pipeline.concept_search cs
+                WHERE %(probe)s <%% cs.concept_name_norm
+                  {domain_filter}
+                ORDER BY rank DESC, similarity(cs.concept_name_norm, %(probe)s) DESC
+                LIMIT %(limit)s
+                """,
+                {"probe": probe, "domains": list(domains),
+                 "limit": self.config.trigram_fallback_limit},
+            )
+            return cur.fetchall()
 
     # ── scoring ─────────────────────────────────────────────────────────
     def _absorb(self, found: dict[int, Candidate], row: dict[str, Any],
@@ -362,8 +380,8 @@ class FullTextSearcher:
         raw = float(row["rank"] or 0.0)
 
         if trigram:
-            if raw < self.config.trigram_fallback_threshold:
-                return
+            # Already cut at trigram_fallback_threshold by the `<%` filter in
+            # _trigram_fallback, so every row here clears it.
             score = raw * 100.0
         else:
             # Step 2.4's threshold, read relative to the best rank this rung

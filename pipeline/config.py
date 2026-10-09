@@ -114,9 +114,12 @@ class PipelineConfig:
     # (they move with query length and term rarity), so a fixed cutoff admits
     # everything for one column and nothing for the next.
     fts_rank_threshold: float = 0.2
-    # Trigram recall net for when FTS matches nothing at all.
+    # Trigram recall net for when FTS matches nothing at all. The threshold is
+    # on word_similarity (the input against the best-matching stretch of the
+    # name), which runs higher than whole-name similarity, so it sits above
+    # the 0.35 the whole-name version used.
     trigram_fallback_limit: int = 30
-    trigram_fallback_threshold: float = 0.35
+    trigram_fallback_threshold: float = 0.4
     # Step 2.3b: least a candidate keeps when every content word of its name
     # is one the query never asked for. 1.0 disables the precision discount.
     #
