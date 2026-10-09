@@ -69,6 +69,19 @@ class PipelineConfig:
     # paraphrase (clotting_time / "How long blood takes to clot") get worse.
     # Set false to search name+description only.
     description_only_variant: bool = True
+    # Stage 0 spelling correction (pipeline/spelling.py): a word the vocabulary
+    # does not contain is looked up with SymSpell against pipeline.word_freq,
+    # and a corrected copy of the input is searched as an extra interpretation
+    # alongside the original. Words shorter than spelling_min_length are never
+    # touched; from spelling_two_edit_length letters up, two edits are allowed.
+    spelling_correction: bool = True
+    spelling_min_length: int = 5
+    spelling_two_edit_length: int = 8
+    # The vocabulary contains typos too ('creatnine' x1, 'posphate' x8). A known
+    # word seen at most spelling_rare_max times, one edit from a word at least
+    # spelling_rare_ratio times as frequent, is corrected as if unknown.
+    spelling_rare_max: int = 10
+    spelling_rare_ratio: float = 100.0
 
     # ── Domain restriction (caller-supplied) ────────────────────────────
     # A hard allow-list: when non-empty, no concept outside these OMOP domains

@@ -46,6 +46,7 @@ class Validator:
             return
 
         self._check_ambiguity(result)
+        self._check_spelling(result)
         self._check_units(result)
         self._check_concept(result)
 
@@ -78,6 +79,30 @@ class Validator:
         if result.status == "auto_accept":
             result.status = "review"
             result.decision_reason += "; downgraded to review (ambiguous match)"
+
+    def _check_spelling(self, result: MatchResult) -> None:
+        """A winner that only a spelling correction found is never auto-accepted.
+
+        The corrected interpretation is spelled exactly like the concept it
+        was corrected towards, so every stage scores it as a perfect match and
+        the composite says 100 about what is really a guess: 'Systelic blood
+        pressure' corrected to 'systemic' (one edit, and more frequent than
+        'systolic') was auto-accepted as Systemic blood pressure. The correction
+        is evidence enough to propose the concept, not to commit to it.
+
+        `merge_candidates` keeps the first interpretation on a tie, and the
+        input as typed comes first, so a concept the uncorrected text scores
+        just as well is not caught here.
+        """
+        selected = result.selected
+        if selected is None or "spelling" not in selected.variant_label:
+            return
+        fixes = ", ".join(f"{typed}->{fixed}"
+                          for typed, fixed in result.context.spelling_corrections)
+        result.validation_flags.append(f"found through spelling correction ({fixes})")
+        if result.status == "auto_accept":
+            result.status = "review"
+            result.decision_reason += "; downgraded to review (spelling correction)"
 
     # ── Step 7.2 ────────────────────────────────────────────────────────
     def _check_units(self, result: MatchResult) -> None:

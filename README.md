@@ -714,6 +714,71 @@ reweights the query badly: for `egfr` / "Estimated glomerular filtration rate"
 it made the phrase's four words worth as much as the single word `receptor`,
 and the wrong expansion of the acronym overtook the right concept.
 
+## Misspelt input
+
+A misspelt word breaks every lexical stage at once. When it is the whole input
+("Certoluzimab") Stage 2 finds nothing and the column is unmapped with no
+candidates. When the rest of the input still matches ("Serum bolirubin level")
+it is worse: the typo is silently ignored and the answer is whichever
+"Serum ... level" concept ranks highest — Serum phenytoin level, in practice.
+
+Stage 0 therefore spell-checks the input with
+[SymSpell](https://github.com/mammothb/symspellpy) against a dictionary built
+from the vocabulary itself: `pipeline.word_freq`, every word of every concept
+name and English synonym with its frequency (`sql/14_pipeline_spelling.sql`,
+built by `./setup_pipeline.sh`). A general English dictionary would not do —
+it knows neither `certolizumab` nor `bilirubin`, and "corrects" what it does
+not know. Code is in [`pipeline/spelling.py`](pipeline/spelling.py).
+
+The rules, each one there because the simpler version failed:
+
+- **A correction adds an interpretation; it never replaces the input.** The
+  text as typed stays the primary interpretation and Stage 6 keeps the better
+  concept across them, so a wrong correction costs a search pass, not the
+  answer. `PASDAS` is "corrected" to `pandas` — harmlessly.
+- **Words under 5 letters are never touched**, one edit is allowed up to 7
+  letters and two from 8. Shorter words reach too many real words.
+- **Known words are trusted — unless rare and next to a common one.** The
+  vocabulary has typos of its own (`creatnine` ×1, `posphate` ×8), so a word
+  seen at most 10 times that is one edit from a word 100× more frequent is
+  corrected anyway.
+- **Corrections never reach Stage 1, and never auto-accept.** A corrected
+  interpretation is spelled exactly like the concept it was corrected towards,
+  so every stage scores it 100. `Systelic` → `systemic` (one edit, and more
+  frequent than `systolic`) auto-accepted "Systemic blood pressure" until a
+  winner found only through a correction was capped at *review*, with a
+  validation flag naming the correction.
+- **Letter runs, not tokens:** `C-reactuve` is one token, `reactuve` the word.
+
+Building the index costs ~7 s and ~450 MB, once per process, and only when an
+input word is actually unknown or suspiciously rare — known words are answered
+by a primary-key lookup, so a one-off `match` on clean text pays nothing.
+After that, a correction costs well under a millisecond. Without `symspellpy`
+installed the checker reports itself unavailable and corrects nothing.
+`spelling_correction: false` in `pipeline.json` switches it off.
+
+Measured by `benchmarks/compare_typos.py`: the 45 literal gold-set columns plus
+35 drug names (`benchmarks/drug_set.csv`), each misspelt six ways in the word
+that matters (`benchmarks/make_typo_set.py` → `typo_set.csv`). Description
+only, so a column name cannot rescue a typo; all 80 clean descriptions are
+right at top-1, so every miss is the typo's.
+
+| 480 misspellings | before | trigram fallback on word_similarity | + spelling correction |
+|---|---|---|---|
+| right at top-1 | 60.0% | 62.1% | **97.9%** |
+| drugs (210) | 85.2% | 90.0% | **100.0%** |
+| labs (270) | 40.4% | 40.4% | **96.3%** |
+| right *and* not unmapped | 19.2% | 17.3% | **97.1%** |
+| two edits in one word (80) | 42.5% | 43.8% | **90.0%** |
+| wrong concept auto-accepted | 0 | 0 | **0** |
+
+Gold set and user mappings are unchanged by it (92.0 / 97.8 / 96.0; 35 exact,
+69 agreed, 68 top-5, 43 unmapped), and so is steady-state latency.
+
+What is left: two edits in a word under 8 letters (`soodum`, `glyocse`),
+words under 5 letters (`Whie`), and a tie the frequency tiebreak gets wrong
+(`Systelic` → `systemic`, held at review rather than accepted).
+
 ## Variables and values
 
 The single largest remaining source of wrong answers is that OMOP contains

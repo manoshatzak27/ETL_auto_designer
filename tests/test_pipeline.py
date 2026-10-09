@@ -485,6 +485,77 @@ class TestDomainRestriction(unittest.TestCase):
             parse_shortlist({"shortlist": "false"})
 
 
+# ── spelling correction ─────────────────────────────────────────────────
+
+
+class _FakeSpeller:
+    """Stands in for pipeline.spelling.SpellChecker without the database."""
+
+    def __init__(self, fixes: dict[str, str]) -> None:
+        self.fixes = fixes
+
+    def correct(self, word: str) -> str | None:
+        return self.fixes.get(word)
+
+
+class TestSpelling(unittest.TestCase):
+    def preprocessor(self, fixes: dict[str, str]) -> Preprocessor:
+        return Preprocessor(make_config(), speller=_FakeSpeller(fixes))
+
+    def test_correction_adds_an_interpretation_and_keeps_the_original_first(self):
+        ctx = self.preprocessor({"bolirubin": "bilirubin"}).run("", "Serum bolirubin level")
+        self.assertEqual(ctx.spelling_corrections, [("bolirubin", "bilirubin")])
+        self.assertIn("bolirubin", ctx.variants[0].tokens)
+        self.assertNotIn("spelling", ctx.variants[0].label)
+        corrected = [v for v in ctx.variants if "spelling" in v.label]
+        self.assertEqual(len(corrected), 1)
+        self.assertIn("bilirubin", corrected[0].tokens)
+
+    def test_word_inside_a_hyphenated_token_is_corrected(self):
+        # "c-reactuve" is one whitespace token; the letter run inside it is
+        # what has to be looked up.
+        ctx = self.preprocessor({"reactuve": "reactive"}).run("", "C-reactuve protein")
+        self.assertEqual(ctx.spelling_corrections, [("reactuve", "reactive")])
+
+    def test_abbreviations_are_never_spell_checked(self):
+        from pipeline import resources
+
+        abbreviation = next(k for k in resources.abbreviations() if k.isalpha() and len(k) >= 3)
+        ctx = self.preprocessor({abbreviation: "wrong"}).run("", f"{abbreviation} value")
+        self.assertEqual(ctx.spelling_corrections, [])
+
+    def test_disabled_by_config(self):
+        config = make_config()
+        config.spelling_correction = False
+        pre = Preprocessor(config, speller=_FakeSpeller({"bolirubin": "bilirubin"}))
+        ctx = pre.run("", "Serum bolirubin level")
+        self.assertEqual(ctx.spelling_corrections, [])
+        self.assertFalse(any("spelling" in v.label for v in ctx.variants))
+
+    def test_stage1_never_probes_a_corrected_interpretation(self):
+        """An exact hit exits at 100, so it must not rest on a guess."""
+        from pipeline.stage1_exact import ExactMatcher
+
+        ctx = self.preprocessor({"bolirubin": "bilirubin"}).run("", "Serum bolirubin level")
+        probes = ExactMatcher(make_config(), None).name_probes(ctx)
+        self.assertFalse(any("bilirubin" in p.split() for p in probes))
+
+    def test_a_winner_found_only_by_spelling_is_not_auto_accepted(self):
+        from pipeline.models import MatchResult
+        from pipeline.stage7_validate import Validator
+
+        ctx = ContextBundle(column_name="", column_description="Systelic blood pressure",
+                            spelling_corrections=[("systelic", "systemic")])
+        winner = Candidate(concept_id=1, concept_name="Systemic blood pressure",
+                           domain_id="Measurement", vocabulary_id="SNOMED",
+                           composite_score=100.0, variant_label="spelling/primary")
+        result = MatchResult(context=ctx, candidates=[winner], selected=winner,
+                             status="auto_accept", confidence=100.0)
+        Validator(make_config(), None)._check_spelling(result)
+        self.assertEqual(result.status, "review")
+        self.assertTrue(any("spelling" in f for f in result.validation_flags))
+
+
 # ── integration ─────────────────────────────────────────────────────────
 
 
@@ -700,6 +771,48 @@ class TestDomainRestrictionIntegration(unittest.TestCase):
         # restriction to it could only ever return nothing.
         with self.assertRaises(ValueError):
             db.resolve_domains(["Modifier"])
+
+
+@unittest.skipUnless(database_available(),
+                     "vocabulary database not reachable; run ./load_vocab.sh "
+                     "and ./setup_pipeline.sh")
+class TestSpellingIntegration(unittest.TestCase):
+    """SymSpell over pipeline.word_freq, end to end."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        from pipeline.runner import ConceptMatcher
+
+        config = make_config()
+        config.embeddings_enabled = False
+        cls.matcher = ConceptMatcher(config)
+        if cls.matcher.speller.unavailable_reason:
+            raise unittest.SkipTest(cls.matcher.speller.unavailable_reason)
+
+    @classmethod
+    def tearDownClass(cls) -> None:
+        cls.matcher.close()
+
+    def test_misspelt_drug_reaches_review(self):
+        """The case that started this: unmapped with nothing scored before."""
+        self.matcher.config.restrict_domains = ("Drug",)
+        self.addCleanup(setattr, self.matcher.config, "restrict_domains", ())
+        result = self.matcher.match("", "Certoluzimab", log_result=False)
+        self.assertIn(("certoluzimab", "certolizumab"), result.context.spelling_corrections)
+        self.assertEqual(result.selected.concept_id, 912263)    # certolizumab pegol
+        self.assertNotEqual(result.status, "unmapped")
+        self.assertNotEqual(result.status, "auto_accept")
+
+    def test_common_words_are_left_alone(self):
+        for word in ("bilirubin", "serum", "concentration", "certolizumab"):
+            self.assertIsNone(self.matcher.speller.correct(word), word)
+
+    def test_short_words_are_left_alone(self):
+        self.assertIsNone(self.matcher.speller.correct("whie"))
+
+    def test_a_typo_the_vocabulary_itself_contains_is_still_corrected(self):
+        # 'creatnine' occurs once in concept names; 'creatinine' thousands of times.
+        self.assertEqual(self.matcher.speller.correct("creatnine"), "creatinine")
 
 
 if __name__ == "__main__":

@@ -646,6 +646,10 @@ def render_explain(result: MatchResult, config: PipelineConfig,
         lines.append("  abbreviations  : " + ", ".join(
             f"{a.abbreviation}->{a.expansion}" + (" (ambiguous)" if a.ambiguous else "")
             for a in ctx.abbreviations))
+    if ctx.spelling_corrections:
+        lines.append("  spelling       : " + ", ".join(
+            f"{typed}->{fixed}" for typed, fixed in ctx.spelling_corrections)
+            + "  (searched as an extra interpretation; the original is kept)")
     lines.append(f"  hints          : domain={ctx.domain_hint or '(none)'} "
                  f"vocabulary={ctx.vocabulary_hint or '(none)'} "
                  f"numeric={ctx.numeric_flag} temporal={ctx.temporal_flag}")

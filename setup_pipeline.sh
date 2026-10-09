@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds the database-side objects the matching pipeline needs on top of the
 # already-loaded, filtered vocabulary:
-#   extensions -> search matview + log/feedback tables -> indexes -> IDF table.
+#   extensions -> search matview + log/feedback tables -> indexes -> IDF table
+#   -> spelling dictionary.
 #
 # Safe to re-run. Derived structures (matview, token_idf) are rebuilt; captured
 # history (mapping logs, manual mappings, embedding cache) is preserved.
@@ -55,6 +56,7 @@ run_sql 10_pipeline_extensions.sql
 run_sql 11_pipeline_schema.sql
 run_sql 12_pipeline_indexes.sql
 run_sql 13_pipeline_idf.sql
+run_sql 14_pipeline_spelling.sql
 
 echo
 echo "==> Pipeline schema ready."

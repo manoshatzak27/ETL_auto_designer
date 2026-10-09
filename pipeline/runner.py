@@ -35,6 +35,7 @@ from typing import Iterator, Sequence
 from .config import PipelineConfig
 from .db import Database, shared_database
 from .models import Candidate, ContextBundle, MatchResult
+from .spelling import SpellChecker
 from .stage0_preprocess import Preprocessor
 from .stage1_exact import ExactMatcher
 from .stage2_fts import FullTextSearcher
@@ -62,7 +63,8 @@ class ConceptMatcher:
         except Exception as exc:
             log.debug("no learned weights available: %s", exc)
 
-        self.preprocessor = Preprocessor(self.config)
+        self.speller = SpellChecker(self.config, self.db)
+        self.preprocessor = Preprocessor(self.config, speller=self.speller)
         self.idf = IdfIndex(self.db)
 
         self.stage1 = ExactMatcher(self.config, self.db)

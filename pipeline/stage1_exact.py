@@ -264,6 +264,13 @@ class ExactMatcher:
         add(ctx.column_description)
         add(ctx.lookup_key)
         for variant in ctx.variants:
+            # A spelling correction is a guess, not a deterministic reading:
+            # an exact hit on it would exit at 100 and auto-accept whatever the
+            # guess happened to name, past every check in Stage 6. Corrected
+            # interpretations go through the ranked stages and earn their score.
+            # (Abbreviation expansions stay: that dictionary is curated.)
+            if "spelling" in variant.label:
+                continue
             add(" ".join(text_utils.split_phrase(t) for t in variant.tokens))
         add(ctx.column_name)
         return probes

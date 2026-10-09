@@ -18,7 +18,7 @@ from __future__ import annotations
 import itertools
 import re
 from functools import lru_cache
-from typing import Iterable
+from typing import TYPE_CHECKING, Iterable
 
 from . import resources, text_utils
 from .config import PipelineConfig
@@ -30,6 +30,12 @@ from .models import (
     NumericConstraint,
     SearchVariant,
 )
+
+if TYPE_CHECKING:
+    from .spelling import SpellChecker
+
+# Stage 0 spelling correction works on runs of letters (see _correct_spelling).
+_LETTER_RUN = re.compile(r"[a-z]+")
 
 # ── Step 0.1: embedded code patterns ────────────────────────────────────
 
@@ -143,8 +149,10 @@ def _normalize_unit_token(raw: str) -> str:
 class Preprocessor:
     """Stage 0. Stateless apart from cached dictionaries; safe to share."""
 
-    def __init__(self, config: PipelineConfig, spacy_model: str | None = None) -> None:
+    def __init__(self, config: PipelineConfig, spacy_model: str | None = None,
+                 speller: SpellChecker | None = None) -> None:
         self.config = config
+        self.speller = speller
         self.lemmatizer = text_utils.default_lemmatizer(spacy_model)
         self._concept_token_cache: dict[str, tuple[str, ...]] = {}
 
@@ -252,6 +260,19 @@ class Preprocessor:
         description_base = self._description_base(description, name_text)
         if description_base:
             bases.append((description_base, "description"))
+
+        # Spelling: a corrected copy of each base, searched as one more
+        # interpretation. Corrected before abbreviation expansion and phrase
+        # protection so that "blood presure" still becomes the protected
+        # phrase it would have been, spelled right. The original stays first —
+        # it is the primary variant, and a wrong correction must not displace it.
+        corrected_bases = []
+        for base_text, base_label in bases:
+            corrected = self._correct_spelling(base_text, ctx)
+            if corrected != base_text:
+                label = f"{base_label}/spelling" if base_label else "spelling"
+                corrected_bases.append((corrected, label))
+        bases += corrected_bases
 
         # ── Steps 0.6 / 0.7 / 0.8 per variant ───────────────────────────
         built: list[SearchVariant] = []
@@ -453,6 +474,35 @@ class Preprocessor:
         parts += [u.raw for u in ctx.units]
         parts += [c.raw for c in ctx.codes]
         return parts
+
+    # ── spelling ────────────────────────────────────────────────────────
+    def _correct_spelling(self, text: str, ctx: ContextBundle) -> str:
+        """``text`` with every misspelt word replaced, or ``text`` unchanged.
+
+        A known abbreviation is never corrected — 'hgb' is not a typo of
+        anything, it is Step 0.2's job — and neither is a stopword, which
+        is dropped later regardless of how it is spelled.
+        """
+        if not (self.speller and self.config.spelling_correction):
+            return text
+        abbreviations = resources.abbreviations()
+        words = resources.stopwords()
+        ignore = words["generic"] | words["metadata"] | words["structural"]
+
+        def replace(match: re.Match[str]) -> str:
+            word = match.group(0)
+            if word in abbreviations or word in ignore:
+                return word
+            fix = self.speller.correct(word)
+            if not fix:
+                return word
+            if (word, fix) not in ctx.spelling_corrections:
+                ctx.spelling_corrections.append((word, fix))
+            return fix
+
+        # Letter runs, not whitespace tokens: "c-reactuve" is one token, and
+        # as a whole it is not a word the checker can look up.
+        return _LETTER_RUN.sub(replace, text)
 
     # ── Step 0.2 ────────────────────────────────────────────────────────
     def _expand_abbreviations(

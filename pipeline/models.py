@@ -123,6 +123,9 @@ class ContextBundle:
     abbreviations: list[AbbreviationExpansion] = field(default_factory=list)
     numeric_constraints: list[NumericConstraint] = field(default_factory=list)
     date_formats: list[str] = field(default_factory=list)
+    # Stage 0 spelling correction: (as typed, corrected) per word changed. Each
+    # base text with a correction also gets a "spelling" interpretation.
+    spelling_corrections: list[tuple[str, str]] = field(default_factory=list)
 
     domain_hint: str | None = None
     eligible_domains: tuple[str, ...] = ()
