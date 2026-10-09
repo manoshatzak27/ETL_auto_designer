@@ -836,6 +836,56 @@ shares a domain — a study's lab panel, a questionnaire — and no help at all 
 a mixed schema, where the domain is the thing that has to be inferred per
 column. That inference is still the open problem.
 
+## Matching values
+
+A column mapped value by value ("Methotrexate", "Prednison", "Yes") is a
+different task from a column mapped as a whole, and
+`benchmarks/compare_value_mappings.py` measures it on its own:
+[`value_mappings/value_gold.csv`](benchmarks/value_mappings/value_gold.csv)
+holds every distinct value of the 92 columns a person mapped by value in the
+rheumatology study. 647 values are graded: 449 whose concept is in this
+database, 99 deliberately left at 0, and 99 custom or absent ones. The script
+replays the strategy the ETL Auto-Designer runs on this pipeline (its
+`/match-values` endpoint), through the same `MatchService` as the HTTP API:
+
+1. **Yes/no columns.** Every value is yes/no/a missing-data marker and at
+   least one is a yes. The **column** (name + description) is matched once,
+   restricted to the five stem domains. Every "Yes" takes that answer and every
+   "No" becomes 0, because the absence of a finding produces no row.
+2. **Everything else.** Each value is matched unrestricted, the picks' domains
+   are counted and the most frequent stem domain wins, then the values outside
+   it are matched again restricted to it.
+
+| 449 reachable values | value + column name | value + description | value only | **value only + yes/no** |
+|---|---|---|---|---|
+| set automatically, right | 213 | 217 | 239 | **245** |
+| right concept offered for review | 3 | 14 | 76 | **84** |
+| **right, or one click away** | 48.1% | 51.4% | 70.2% | **73.3%** |
+| unmapped, nothing offered | 228 | 187 | 26 | 35 |
+| set automatically, wrong | 4 | 8 | 9 | 11 (+1 set to 0) |
+| of the 99 the human set to 0: set to 0 | 0 | 0 | 0 | **64** |
+
+**Column context hurts values.** The pipeline folds a description into the
+query (see "Searching the description on its own"), and that is right for a
+column. For a value, the column's words outweigh the one word that matters.
+`PAT_MED_ARD_NAME_1` alongside "Prednison" drops prednisone from auto-accept
+97.0 to unmapped 57.8. A written description ("Name of antirheumatic drug")
+is no better: "Certoluzimab" then lands on a salicylic acid soap. The value
+has to be searched alone, and the column's domain enforced by the vote instead.
+
+**A yes/no value carries no meaning of its own.** Searched alone, every "Yes"
+finds the answer concept *Yes* (score 100, held for review as ambiguous), so
+none of the 41 reachable "Yes" values could be right. Matched on the column
+instead, 6 are set right (Dactylitis of finger, Collection of hair specimen,
+two SF-36 items, …), 8 more are offered, 2 are set wrong (`Shift working` for
+*Shift worker*, `Number of specimens received of Stool` for *Collection of
+stool specimen*), and the rest stay unmapped. 26 of those have custom answers
+that no search could find.
+
+**"No" → 0 is wrong 5 times.** One is an inverted question
+(`DOC_RHEUMA_FACTOR_NEG`, where "No" means the factor is present). The other
+four are questionnaire items whose "No" the person mapped to a custom concept.
+
 ## Measured behaviour
 
 Cumulative effect of the four changes above, measured after each one. The
