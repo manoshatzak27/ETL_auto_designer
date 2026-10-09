@@ -40,7 +40,20 @@ class Database:
                         self.config.conninfo,
                         min_size=self.config.pool_min_size,
                         max_size=self.config.pool_max_size,
-                        kwargs={"options": f"-c statement_timeout={self.config.statement_timeout_ms}"},
+                        kwargs={
+                            "options": f"-c statement_timeout={self.config.statement_timeout_ms}",
+                            # No server-side prepared statements. psycopg
+                            # prepares a query after 5 runs on a connection,
+                            # and Postgres then moves the prepared Stage 2 FTS
+                            # queries to generic plans that ignore the search
+                            # terms — so a long-running matcher got slower the
+                            # more it was used: the same 206 columns took 110,
+                            # 149, 212, 230 ms/column on four successive runs
+                            # in one process, all of it Stage 2. Without
+                            # preparing they hold at ~93. Planning these
+                            # queries costs far less than a bad plan does.
+                            "prepare_threshold": None,
+                        },
                         open=True,
                     )
                     self._pool.wait(timeout=30)
