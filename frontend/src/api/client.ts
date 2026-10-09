@@ -377,6 +377,9 @@ export const updateProjectSettings = (
   payload: { custom_vocabulary_id?: string; name?: string; description?: string },
 ) => api.patch(`/projects/${projectId}`, payload).then(r => r.data)
 
+export const renameProject = (projectId: string, name: string) =>
+  updateProjectSettings(projectId, { name })
+
 // ---- Execution ----
 export const executeProject = (projectId: string, outputMode: 'basic' | 'detailed' = 'basic') =>
   api.post(`/projects/${projectId}/execute`, { output_mode: outputMode }).then(r => r.data)

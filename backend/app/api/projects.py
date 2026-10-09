@@ -49,7 +49,17 @@ def update_project(project_id: str, payload: ProjectUpdate, db: Session = Depend
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     if payload.name is not None:
-        project.name = payload.name
+        name = payload.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="name cannot be empty")
+        clash = (
+            db.query(Project)
+            .filter(Project.id != project_id, Project.name == name)
+            .first()
+        )
+        if clash:
+            raise HTTPException(status_code=409, detail="A project with this name already exists")
+        project.name = name
     if payload.description is not None:
         project.description = payload.description
     if payload.custom_vocabulary_id is not None:
