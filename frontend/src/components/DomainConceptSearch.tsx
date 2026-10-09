@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { getConceptMatcherHealth, searchDomainConcepts, type DomainSearchResult } from '../api/client'
-import { Search, Loader2, X, ChevronDown, Check } from 'lucide-react'
+import { Search, Loader2, X, ChevronDown, Check, Lock } from 'lucide-react'
 
 interface Props {
   projectId: string
@@ -17,6 +17,9 @@ interface Props {
    *  own. Either way a change re-runs the search. */
   pickedDomains?: string[]
   onPickedDomainsChange?: (domains: string[]) => void
+  /** Set when the parent has fixed `pickedDomains` and the user may not change
+   *  them: the filter is shown locked, with this as the explanation. */
+  domainsLockedReason?: string
 }
 
 // The domain filter's options: every domain the matcher's vocabulary defines,
@@ -34,10 +37,12 @@ const loadDomainOptions = () => {
 }
 
 /** The domain filter: a checklist in a dropdown. None checked is every domain. */
-function DomainFilter({ options, picked, onChange }: {
+function DomainFilter({ options, picked, onChange, lockedReason }: {
   options: string[]
   picked: string[]
   onChange: (domains: string[]) => void
+  /** Shown as the button's tooltip; the list can't be opened while set. */
+  lockedReason?: string
 }) {
   const [open, setOpen] = useState(false)
   const rootRef = useRef<HTMLDivElement>(null)
@@ -76,15 +81,20 @@ function DomainFilter({ options, picked, onChange }: {
       <button
         type="button"
         onClick={() => setOpen(o => !o)}
-        title={picked.length > 1 ? picked.join(', ') : 'Only search these OMOP domains'}
-        className={`border rounded px-2 text-xs w-36 h-8 flex items-center justify-between gap-1 bg-background focus:outline-none focus:ring-1 focus:ring-ring ${
-          picked.length ? 'border-primary text-primary' : 'border-border text-foreground'
+        disabled={!!lockedReason}
+        title={lockedReason ?? (picked.length > 1 ? picked.join(', ') : 'Only search these OMOP domains')}
+        className={`border rounded px-2 text-xs w-36 h-8 flex items-center justify-between gap-1 focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed ${
+          lockedReason ? 'border-primary bg-primary/10 text-primary'
+            : picked.length ? 'border-primary bg-background text-primary'
+            : 'border-border bg-background text-foreground'
         }`}
       >
         <span className="truncate">{label}</span>
-        <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 opacity-60" />
+        {lockedReason
+          ? <Lock className="w-3.5 h-3.5 flex-shrink-0" />
+          : <ChevronDown className="w-3.5 h-3.5 flex-shrink-0 opacity-60" />}
       </button>
-      {open && (
+      {open && !lockedReason && (
         <div className="absolute right-0 top-9 z-20 w-56 max-h-64 overflow-y-auto rounded border border-border bg-card shadow-md py-1">
           <button
             type="button"
@@ -116,6 +126,7 @@ function DomainFilter({ options, picked, onChange }: {
  *  on Athena. */
 export default function DomainConceptSearch({
   projectId, domain, onSelect, onClose, initialQuery = '', pickedDomains, onPickedDomainsChange,
+  domainsLockedReason,
 }: Props) {
   const [query, setQuery] = useState(initialQuery)
   const [results, setResults] = useState<DomainSearchResult[] | null>(null)
@@ -198,8 +209,8 @@ export default function DomainConceptSearch({
           placeholder={`Search ${scope}concepts…`}
           className="border border-border rounded px-2 py-1 text-xs flex-1 min-w-0 h-8 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
         />
-        {!domain && options.length > 0 && (
-          <DomainFilter options={options} picked={picked} onChange={pickDomains} />
+        {!domain && (options.length > 0 || !!domainsLockedReason) && (
+          <DomainFilter options={options} picked={picked} onChange={pickDomains} lockedReason={domainsLockedReason} />
         )}
         <button
           type="button"
@@ -216,6 +227,12 @@ export default function DomainConceptSearch({
           </button>
         )}
       </div>
+
+      {domainsLockedReason && (
+        <p className="text-[11px] text-primary flex items-center gap-1 px-1">
+          <Lock className="w-3 h-3 flex-shrink-0" /> {domainsLockedReason}
+        </p>
+      )}
 
       {error && <p className="text-[11px] text-destructive">{error}</p>}
 

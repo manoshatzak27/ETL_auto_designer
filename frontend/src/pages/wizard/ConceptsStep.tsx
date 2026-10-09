@@ -665,6 +665,18 @@ function CustomConceptForm({
 // the domains a variable's concept is almost always in.
 const SEARCH_SHORTCUT_DOMAINS = ['Drug', 'Condition', 'Observation', 'Measurement', 'Procedure']
 
+// The OMOP domain_id string behind each stem-table domain number — what the
+// concept search filters on.
+const SEARCH_DOMAIN_BY_ID: Record<number, string> = {
+  1: 'Measurement', 2: 'Observation', 3: 'Drug', 4: 'Procedure', 5: 'Condition',
+}
+
+/** A search domain the caller has decided, which the user may not change. */
+interface LockedSearchDomain {
+  domain: string
+  reason: string
+}
+
 function ConceptPicker({
   projectId,
   defaultQuery,
@@ -672,10 +684,15 @@ function ConceptPicker({
   onSelect,
   onClear,
   validateDomain,
+  lockedSearchDomain,
+  searchQuery,
 }: {
   projectId: string
   label: string
   defaultQuery: string
+  // What the search box opens with, when it should differ from defaultQuery
+  // (which also names a new custom concept).
+  searchQuery?: string
   value: ConceptRef | null
   onSelect: (c: ConceptRef) => void
   onClear: () => void
@@ -683,6 +700,9 @@ function ConceptPicker({
   // concept create) on the concept's OMOP domain. Return an error message to block
   // the selection (input stays as typed, nothing is applied) or null to allow it.
   validateDomain?: (domainStr: string | null) => string | null
+  // When set, the search is restricted to this domain: the filter and the
+  // shortcut buttons show it selected, and neither can change it.
+  lockedSearchDomain?: LockedSearchDomain
 }) {
   const { usedCustomConceptIds } = useConceptsSettings()
   const [manualId, setManualId] = useState('')
@@ -694,6 +714,9 @@ function ConceptPicker({
   // The search's domain filter, owned here so the shortcut buttons and the
   // filter's own checklist are one selection.
   const [searchDomains, setSearchDomains] = useState<string[]>([])
+  // The user's own selection is kept underneath a lock, so it comes back if
+  // the lock lifts (the other values are cleared).
+  const effectiveSearchDomains = lockedSearchDomain ? [lockedSearchDomain.domain] : searchDomains
   const [showCustom, setShowCustom] = useState(false)
   const [domainError, setDomainError] = useState<string | null>(null)
   const [standardConcept, setStandardConcept] = useState<string | null>(null)
@@ -965,22 +988,27 @@ function ConceptPicker({
             the search if it is closed. */}
         <span className="w-px h-4 bg-border mx-0.5" />
         {SEARCH_SHORTCUT_DOMAINS.map(d => {
-          const active = searchDomains.includes(d)
+          const active = effectiveSearchDomains.includes(d)
           return (
             <button
               key={d}
+              disabled={!!lockedSearchDomain}
               onClick={() => {
                 setSearchDomains(ds => active ? ds.filter(x => x !== d) : [...ds, d])
                 setShowSearch(true); setShowCustom(false)
               }}
               className={clsx(
-                'px-2 py-1 text-xs rounded border font-medium transition-colors',
+                'px-2 py-1 text-xs rounded border font-medium transition-colors flex items-center gap-1',
                 active
                   ? 'bg-indigo-600 border-indigo-600 text-white'
                   : 'border-indigo-200 bg-white text-indigo-700 hover:border-indigo-400 hover:bg-indigo-50',
+                lockedSearchDomain && 'cursor-not-allowed',
+                lockedSearchDomain && !active && 'opacity-40 hover:bg-white hover:border-indigo-200',
               )}
-              title={active ? `Stop restricting the search to ${d}` : `Search ${d} concepts`}
+              title={lockedSearchDomain?.reason
+                ?? (active ? `Stop restricting the search to ${d}` : `Search ${d} concepts`)}
             >
+              {lockedSearchDomain && active && <Lock className="w-3 h-3" />}
               {d}
             </button>
           )
@@ -991,9 +1019,10 @@ function ConceptPicker({
       {showSearch && (
         <DomainConceptSearch
           projectId={projectId}
-          initialQuery={defaultQuery}
-          pickedDomains={searchDomains}
+          initialQuery={searchQuery ?? defaultQuery}
+          pickedDomains={effectiveSearchDomains}
           onPickedDomainsChange={setSearchDomains}
+          domainsLockedReason={lockedSearchDomain?.reason}
           onClose={() => setShowSearch(false)}
           onSelect={c => {
             if (validateDomain) {
@@ -1180,6 +1209,21 @@ function ValueConceptRow({
 
   const detectedDomainId = concept?.domain_id ?? null
 
+  // The domain the variable's other values are already mapped to. Every value
+  // of one variable has to land in the same stem-table domain (see
+  // validateStemDomain below), so the search is locked to it rather than
+  // offering concepts that would only be rejected on click.
+  const siblingDomainId = Object.entries(siblingConcepts).find(
+    ([v, cv]) => v !== val && cv.domain_id !== undefined && cv.domain_id !== null,
+  )?.[1].domain_id
+  const siblingDomain = siblingDomainId != null ? SEARCH_DOMAIN_BY_ID[siblingDomainId] : undefined
+  const lockedSearchDomain = useMemo<LockedSearchDomain | undefined>(
+    () => siblingDomain
+      ? { domain: siblingDomain, reason: `Filtered to ${siblingDomain}: the other values of this variable are mapped to ${siblingDomain}.` }
+      : undefined,
+    [siblingDomain],
+  )
+
   // Value mapping only ever routes through the stem_table, which only knows how to
   // route 5 domains. Anything else (Gender, Race, Visit, …) would silently produce no
   // usable row downstream, so it's rejected at selection time rather than accepted and
@@ -1220,10 +1264,14 @@ function ValueConceptRow({
         projectId={projectId}
         label={val}
         defaultQuery={`${column} ${val}`}
+        // The value alone is the term being looked up; prefixing the column
+        // name only dilutes it in the search.
+        searchQuery={val}
         value={concept}
         onSelect={c => onSelect(c)}
         onClear={onClear}
         validateDomain={validateStemDomain}
+        lockedSearchDomain={lockedSearchDomain}
       />
       {concept && (
         <div className="pl-1">
