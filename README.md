@@ -241,8 +241,17 @@ you pick takes one click and is right.
 
 Rows awaiting a choice are badged while collapsed and have their own **Review**
 filter in the toolbar, and the shortlists are saved with the rest of the step,
-so a run survives a reload. The panel at the top lists, by name, what needs a
-look and what came back unmapped.
+so a run survives a reload.
+
+A results panel at the top sums up the run: variable and value counts side by
+side as coloured bars (set, to pick, unsupported domain, unmapped, failed), then
+a **Needs your attention** list of the affected columns as chips, and a
+collapsible per-column table of the value results, columns needing work first.
+Clicking a column filters the list to it; it does so with a quoted search
+(`"PAT_MED_HIST"`), which matches that name exactly instead of every column
+containing it — the same works when typed into the filter box. The panel is kept
+in the browser per project, so it too survives a reload, until dismissed or
+replaced by the next run.
 
 ### Variables mapped by value: two passes, one domain
 
@@ -289,9 +298,10 @@ auto-accept sets the concept, review leaves the value's own 5-candidate shortlis
 on its row, unmapped leaves it alone. A value you had already decided is never
 touched. If the domain the values agreed on is *not* one of the five — nothing
 stem-table-shaped can be built from it — nothing is set for that column at all,
-and the summary says so. The summary panel reports the value totals and which domain each
-variable's values were confined to, and the row badges how many of its values are
-waiting on a choice.
+and the results panel marks that domain as unsupported. The panel's value-columns
+table shows, per column, the domain its values were confined to and how many
+were set, left to pick, unmapped or failed; the row badges how many of its values
+are waiting on a choice.
 
 Values are read server-side from the source CSVs (up to 500 distinct values per
 column), so this works for columns of files other than the selected one. Columns
