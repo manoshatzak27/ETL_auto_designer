@@ -37,6 +37,10 @@ import clsx from 'clsx'
 import { useSourceFile } from '../../hooks/useSourceFile'
 import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
+import { SuggestionList as ValueSuggestionList } from '../../components/ValueConceptMapper'
+import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { useConceptAutoFill, type AutoFillSuggestions, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
+import type { ValueConceptSuggestion } from '../../api/client'
 
 interface Props {
   project: Project
@@ -2340,6 +2344,7 @@ function SimpleConceptIdRow({
   onClear,
   accentClass,
   validateDomain,
+  suggestion,
 }: {
   value: string
   conceptId: number | null | undefined
@@ -2350,6 +2355,9 @@ function SimpleConceptIdRow({
   // wrong/unresolvable domain is rejected with an inline message instead of set.
   // 0 ("not mapped") always skips validation.
   validateDomain?: (domainStr: string | null) => string | null
+  // Left by "Auto-fill units & routes" when the match wasn't confident enough
+  // to set on its own; offered for one-click use while the row is unset.
+  suggestion?: ValueConceptSuggestion
 }) {
   const [manualId, setManualId] = useState('')
   const [name, setName] = useState<string | null>(null)
@@ -2445,9 +2453,20 @@ function SimpleConceptIdRow({
           {error}
         </p>
       )}
+      {!isSet && suggestion?.concept_id != null && (
+        // Already confined to this field's domain by the auto-fill, so a pick
+        // is set directly rather than looked up and validated again.
+        <ValueSuggestionList suggestion={suggestion} onUse={onSet} />
+      )}
     </div>
   )
 }
+
+// Suggestions from "Auto-fill units & routes", keyed `${variable}::${fieldKey}`
+// (fieldKey "unit_col" / "route_col") and then by source value. A context rather
+// than a prop so the memoized variable rows don't re-render when a run finishes —
+// only the value lists that read it do.
+const UnitRouteSuggestionsContext = createContext<AutoFillSuggestions>({})
 
 // Column picker + per-distinct-value concept-id mapping, shared by Unit's "per column"
 // mode and Route mapping: pick a sibling column, then map each of ITS distinct values
@@ -2482,6 +2501,8 @@ function ColumnValueIdMapper({
 }) {
   const options = fileColumns.filter(c => c !== excludeColumn)
   const info = col ? columnInfos[col] : null
+  const allSuggestions = useContext(UnitRouteSuggestionsContext)
+  const suggestions = ownVariable && fieldKey ? allSuggestions[`${ownVariable}::${fieldKey}`] : undefined
 
   return (
     <div className="flex flex-col gap-2">
@@ -2531,6 +2552,7 @@ function ColumnValueIdMapper({
                   }}
                   accentClass={accentClass}
                   validateDomain={validateDomain}
+                  suggestion={suggestions?.[v]}
                 />
               ))}
             </div>
@@ -4418,6 +4440,51 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     setDecisions(prev => ({ ...prev, ...updates }))
   }, [])
 
+  // ── "Auto-fill units & routes": the earlier steps' auto-fill, per field ──
+  // Every variable with a unit or route column gets one target: its column's
+  // distinct values, matched in the Unit / Route domain. Confident matches are
+  // set, the rest are offered on the value's row, and nothing already set is
+  // sent. Only the selected file's values are loaded here, so a column from
+  // another file is left for when that file is selected.
+  const unitRouteFill = useConceptAutoFill(project.id)
+  const unitRouteTargets = useMemo(() => {
+    const targets: AutoFillTarget[] = []
+    for (const [variable, d] of Object.entries(decisions)) {
+      if (d.strategy === 'skip' || d.enabled === false) continue
+      const fields = [
+        { fieldKey: 'unit_col', label: 'unit', domain: 'Unit', col: d.unit_mapping?.unit_col, mapped: d.unit_mapping?.unit_concepts },
+        { fieldKey: 'route_col', label: 'route', domain: 'Route', col: d.route_mapping?.route_col, mapped: d.route_mapping?.route_concepts },
+      ] as const
+      for (const f of fields) {
+        const values = f.col ? columnInfos[f.col]?.distinct_values : undefined
+        if (!f.col || !values?.length) continue
+        const col = f.col
+        targets.push({
+          key: `${variable}::${f.fieldKey}`,
+          label: `${variable} ${f.label} (${col})`,
+          domain: f.domain,
+          values,
+          mapped: f.mapped ?? {},
+          // Merged into the latest state, not the one this target was built
+          // from: a variable's unit and route are applied one after the other.
+          apply: filled => setDecisions(prev => {
+            const cur = prev[variable]
+            if (!cur) return prev
+            if (f.fieldKey === 'unit_col') {
+              const m = cur.unit_mapping
+              if (!m || m.unit_col !== col) return prev
+              return { ...prev, [variable]: { ...cur, unit_mapping: { ...m, unit_concepts: { ...filled, ...m.unit_concepts } } } }
+            }
+            const m = cur.route_mapping
+            if (!m || m.route_col !== col) return prev
+            return { ...prev, [variable]: { ...cur, route_mapping: { ...m, route_concepts: { ...filled, ...m.route_concepts } } } }
+          }),
+        })
+      }
+    }
+    return targets
+  }, [decisions, columnInfos])
+
   const toggleSelect = useCallback((col: string, checked: boolean) => {
     setSelectedCols(prev => checked ? [...prev, col] : prev.filter(c => c !== col))
   }, [])
@@ -4948,6 +5015,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   return (
     <ConceptsCtx.Provider value={{ usedCustomConceptIds: customConceptsById }}>
+    <UnitRouteSuggestionsContext.Provider value={unitRouteFill.suggestions}>
     <WizardLayout
       project={project}
       currentSlug="concepts"
@@ -4998,6 +5066,13 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
                   : `Matching ${matchTargets.length} variables…`
                 : `Load concepts${totalTargets > 0 ? ` (${totalTargets})` : ''}`}
             </button>
+            <ConceptAutoFillButton
+              autoFill={unitRouteFill}
+              targets={unitRouteTargets}
+              fields="unit and route"
+              label="Auto-fill units & routes"
+              className="h-auto px-3 py-1.5 text-xs gap-1.5 flex-shrink-0 [&_svg]:size-3.5"
+            />
             <button
               onClick={() => setDictOpen(o => !o)}
               className={clsx(
@@ -5031,6 +5106,11 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             </button>
           </div>
         </div>
+
+        <ConceptAutoFillSummary
+          autoFill={unitRouteFill}
+          note={'Values already set were left as they were. Units are looked up by their UCUM code (mg, mL, [iU]), routes matched in the Route domain. Suggestions wait on each value\'s row under the variable\'s Unit / Route card; "Use" sets one.'}
+        />
 
         {/* Data dictionary */}
         {dictOpen && (
@@ -5669,6 +5749,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         </div>
       </div>
     </WizardLayout>
+    </UnitRouteSuggestionsContext.Provider>
     </ConceptsCtx.Provider>
   )
 }

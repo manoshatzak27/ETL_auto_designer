@@ -263,6 +263,27 @@ have been looked up. So such a column is matched in two passes, per column:
    was off-domain therefore gets the best *in-domain* one instead of being
    dropped, and candidates outside the domain are stripped from the shortlists.
 
+Each value is sent **on its own**, without the column's name or description.
+The matcher folds a description into the query, which helps a column but drowns
+a value: next to `PAT_MED_ARD_NAME_1`, "Prednison" fell from auto-accept 97.0 to
+unmapped 57.8, and even a written description pulled in wrong concepts. The
+domain vote already supplies the context a value needs.
+
+A **yes/no column** — every value is a yes/no word (`yes`/`y`/`true`/`present`,
+`no`/`n`/`false`/`absent`) or a missing-data marker, with at least one yes — is
+the exception. "Yes" alone only finds the answer concept *Yes*; its meaning is in
+the column ("Are there any swollen joints?"). So the **column** (name +
+description) is matched once instead, restricted to the five stem domains; every
+"Yes" takes that concept, every "No" is set to 0 (not mapped), missing markers
+are left open. The column's domain is recorded only when a value actually got a
+concept, so a column of unresolved answers keeps the domain it had.
+
+Measured on 647 hand-mapped values of the PsA study (`benchmarks/
+compare_value_mappings.py` in the matcher's repo), the share of values that are
+right or one click away went from 48.1% (value + column name) to **73.3%**
+(value alone + yes/no handling), and 64 of the 99 values deliberately left at 0
+are now set to 0 automatically.
+
 The per-value verdicts are then handled exactly like the per-column ones:
 auto-accept sets the concept, review leaves the value's own 5-candidate shortlist
 on its row, unmapped leaves it alone. A value you had already decided is never
@@ -569,12 +590,42 @@ Gender concept), so every request is confined to it.
 | Visit | visit type | Type Concept | — |
 | Visit | admitted from, discharged to | Visit | CMS Place of Service |
 | Obs. period, Death | period type, cause of death | Type Concept, Condition | search only (single fields, no value table) |
+| Concepts | unit, route (per variable) | Unit, Route | units by UCUM code (below) |
 
 Where a field wants one vocabulary of its domain, the request carries a `prefer`
 (vocabularies and/or concept classes): the best-scoring preferred candidate wins,
 and with none in the shortlist the match is only offered, never filled. An exact
 name tie the matcher collapses (*Canada* returned as the OSM place *Canadá*) is
 resolved by an exact-name lookup restricted to the preference.
+
+### Units and routes (Concepts step)
+
+The Concepts step's **Auto-fill units & routes** button runs the same procedure
+for every included variable whose Unit or Route card is in *From column* mode:
+each distinct value of the unit / route column is matched in the `Unit` /
+`Route` domain, confident matches are set, weaker ones wait on the value's row
+under *Suggested … Use*, and values already set are never sent. Only the selected
+file's values are loaded in that step, so a column of another file is filled
+when that file is selected. Suggestions live until the page is reloaded.
+
+Two kinds of value are resolved before the matcher is asked:
+
+- **Units by UCUM code.** The matcher searches concept *names* ("milligram"); a
+  unit column holds *codes* ("mg"), and searched as text "mg" landed on
+  *nanomole per minute per mg of protein*. So units are looked up by
+  `concept_code` among standard UCUM concepts: exact code first, then
+  case-insensitively when only one concept fits (`mg/ml` → mg/mL); common
+  non-UCUM spellings are translated first (mcg → ug, IU → [iU], cc → mL,
+  tablets → {tbl}, puffs → {actuat}). A value with an amount in it ("2,5mg") is
+  only offered; a number or a date is skipped.
+- **"None" values.** In unit and route columns, unknown / not applicable / other /
+  n/a / none / missing are set to 0 (not mapped).
+
+Routes otherwise go to the matcher after the normalizer's synonyms (PO, IV, IM,
+SC, PR, SL, eye drops, patch, "Sub cut injection", "injection (unspecified)" →
+*Injectable*) and two phrase patterns (a joint injection → *Intra-articular*; a
+cream / ointment / gel → *Topical*). Inhaled drugs go to *Respiratory tract*,
+the OHDSI convention — the Route domain has no "Inhalation".
 
 ### Why values are rewritten before matching
 

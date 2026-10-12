@@ -881,6 +881,81 @@ def _suggestion(value: str, term: str, result: dict[str, Any] | None) -> dict[st
     }
 
 
+# Values of a unit or route column that say there is none to record. Set to 0
+# (not mapped) by auto-fill rather than searched for.
+NOT_MAPPED_FIELD_VALUES = MISSING_VALUES | {"other", "none", "-", "?"}
+
+
+@lru_cache(maxsize=1)
+def _ucum_units() -> tuple[dict[str, tuple[int, str]], dict[str, list[tuple[str, int, str]]]]:
+    """Standard UCUM unit concepts by code: (exact code → concept, lower-cased
+    code → every concept sharing it). UCUM is case-sensitive — "G" is gauss,
+    "g" gram — so the folded index is only consulted when the exact code isn't
+    found. Raises when the vocabulary isn't loaded, so the failure isn't cached."""
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_code, concept_id, concept_name FROM {s}.concept "
+                    "WHERE domain_id = 'Unit' AND vocabulary_id = 'UCUM' "
+                    "AND standard_concept = 'S' AND invalid_reason IS NULL"
+                ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab")),
+            )
+            rows = cur.fetchall()
+    exact: dict[str, tuple[int, str]] = {}
+    folded: dict[str, list[tuple[str, int, str]]] = {}
+    for code, concept_id, name in rows:
+        exact[code] = (int(concept_id), name)
+        folded.setdefault(code.lower(), []).append((code, int(concept_id), name))
+    return exact, folded
+
+
+def _ucum_unit(value: str) -> dict[str, Any] | None:
+    """A unit value resolved by its UCUM code, or None to leave it to the matcher.
+
+    The matcher searches concept names ("milligram"), and a unit column holds
+    codes ("mg") — searched as text, "mg" lands on "nanomole per minute per mg of
+    protein". So units are looked up by code first, the way gender is resolved
+    by rule. Filled in outright only when the code is exact, or matches one
+    concept regardless of case ("mg/ml" → mg/mL); a case-ambiguous code ("MG")
+    or a value that also carries an amount ("2,5mg") is offered for review.
+    """
+    from app.services.concept_normalizer import unit_code
+
+    parsed = unit_code(value)
+    if parsed is None:
+        return None
+    code, had_amount = parsed
+    exact, folded = _ucum_units()
+    if code in exact:
+        hits, sure = [(code, *exact[code])], True
+    else:
+        hits = folded.get(code.lower(), [])
+        sure = len(hits) == 1
+        # Lower-case first: a shouted "MG" means milligram far more often than
+        # anything spelled with a capital.
+        hits = sorted(hits, key=lambda h: h[0] != h[0].lower())
+    if not hits:
+        return None
+    entry = _suggestion(value, code, None)
+    entry.update(
+        source="rule",
+        status="auto_accept" if sure and not had_amount else "review",
+        confidence=100.0,
+        concept_id=hits[0][1],
+        concept_name=hits[0][2],
+        candidates=[
+            {"concept_id": cid, "concept_name": name, "domain_id": "Unit", "vocabulary_id": "UCUM",
+             "concept_class_id": None, "concept_code": c, "score": 100.0}
+            for c, cid, name in hits
+        ],
+    )
+    return entry
+
+
 class ConceptPreference(BaseModel):
     """Which concepts in the domain the field wants, when the domain alone is
     too broad — e.g. visit_concept_id wants the Visit vocabulary (9201
@@ -1021,6 +1096,28 @@ async def suggest_value_concepts(
                     concept_name="MALE" if concept_id == GENDER_MALE else "FEMALE",
                 )
                 out[value] = entry
+                continue
+        if payload.domain.lower() in ("unit", "route") and value.strip().lower() in NOT_MAPPED_FIELD_VALUES:
+            # "Unknown" has no unit or route to find; recorded as not mapped
+            # (0), the row's convention for exactly this, instead of left open.
+            entry = _suggestion(value, value, None)
+            entry.update(source="rule", status="auto_accept", confidence=100.0,
+                         concept_id=0, concept_name="Not mapped")
+            out[value] = entry
+            continue
+        if payload.domain.lower() == "unit":
+            try:
+                entry = _ucum_unit(value)
+            except Exception as exc:
+                print(f"[suggest-value-concepts] UCUM lookup failed: {exc}")
+                entry = None
+            if entry is not None:
+                out[value] = entry
+                continue
+            if not re.search(r"[^\W\d_]", value):
+                # A number or a date in a unit column: no unit to find, and a
+                # text match would only offer something like "gram per 5 hours".
+                out[value] = _suggestion(value, value, None)
                 continue
         pending.setdefault(normalize_term(value, payload.domain), []).append(value)
 
