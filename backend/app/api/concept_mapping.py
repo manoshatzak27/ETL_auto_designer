@@ -474,8 +474,12 @@ def _value_domain(result: dict[str, Any]) -> str | None:
 # being one of these words (or a missing-data marker); "Yes" is then matched on
 # the column's name and description instead, and "No" is recorded as not mapped
 # (concept 0) — the absence of the finding produces no row.
-AFFIRMATIVE_VALUES = frozenset({"yes", "y", "true", "present"})
-NEGATIVE_VALUES = frozenset({"no", "n", "false", "absent"})
+# Flags are also often coded 1 / 0 (1.0 / 0.0 when exported from a numeric
+# column).
+NUMERIC_AFFIRMATIVE_VALUES = frozenset({"1", "1.0"})
+NUMERIC_NEGATIVE_VALUES = frozenset({"0", "0.0"})
+AFFIRMATIVE_VALUES = frozenset({"yes", "y", "true", "present"}) | NUMERIC_AFFIRMATIVE_VALUES
+NEGATIVE_VALUES = frozenset({"no", "n", "false", "absent"}) | NUMERIC_NEGATIVE_VALUES
 MISSING_VALUES = frozenset({
     "unknown", "unk", "not known", "don't know", "dont know",
     "n/a", "na", "missing", "not applicable",
@@ -485,7 +489,9 @@ MISSING_VALUES = frozenset({
 def _yes_no_split(values: list[str]) -> tuple[list[str], list[str], list[str]] | None:
     """(yes, no, missing) values of a yes/no column, or None if it isn't one.
     At least one affirmative value is required: a column of only "No" has
-    nothing for the column-name search to be applied to."""
+    nothing for the column-name search to be applied to. A column answered
+    only in digits must hold both a 1 and a 0: a lone "1" is as likely a count
+    or a constant as a flag."""
     yes, no, missing = [], [], []
     for value in values:
         key = value.strip().lower()
@@ -497,7 +503,12 @@ def _yes_no_split(values: list[str]) -> tuple[list[str], list[str], list[str]] |
             missing.append(value)
         else:
             return None
-    return (yes, no, missing) if yes else None
+    if not yes:
+        return None
+    numeric = NUMERIC_AFFIRMATIVE_VALUES | NUMERIC_NEGATIVE_VALUES
+    if not no and all(v.strip() in numeric for v in yes):
+        return None
+    return yes, no, missing
 
 
 def _fixed_value_result(value: str, concept_id: int | None, reason: str) -> dict[str, Any]:
