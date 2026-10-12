@@ -1471,7 +1471,9 @@ function ValueMappingTable({
         />
       )}
       <div className="border border-border rounded-lg overflow-hidden">
-        <table className="w-full text-xs">
+        {/* Fixed layout: with auto layout the search results' long concept
+            names widen the concept column past this box, which clips them. */}
+        <table className="w-full text-xs table-fixed">
           <thead className="bg-muted border-b border-border">
             <tr>
               <th className="text-left px-3 py-2 font-medium text-muted-foreground w-28">Source value</th>
@@ -1481,7 +1483,7 @@ function ValueMappingTable({
           <tbody>
             {filteredValues.map((val, i) => (
               <tr key={val} className={clsx(i % 2 === 0 ? 'bg-card' : 'bg-muted', 'border-b last:border-0 border-border')}>
-                <td className="px-3 py-2 font-mono text-foreground align-top pt-3">{val}</td>
+                <td className="px-3 py-2 font-mono text-foreground align-top pt-3 break-words">{val}</td>
                 <td className="px-3 py-2">
                   <LazyMount enabled={lazy}>
                     <ValueConceptRow
@@ -5019,6 +5021,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     <WizardLayout
       project={project}
       currentSlug="concepts"
+      // 10% wider than the other steps' max-w-4xl (56rem), for the variable panels
+      contentWidthClassName="max-w-[61.6rem]"
       onBack={prevSlug ? () => navigate(`/project/${project.id}/step/${prevSlug}`) : undefined}
       onNext={handleNext}
       onBeforeStepChange={saveConfig}

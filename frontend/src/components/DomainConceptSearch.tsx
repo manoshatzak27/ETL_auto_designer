@@ -265,6 +265,8 @@ export default function DomainConceptSearch({
                     <button
                       type="button"
                       onClick={() => onSelect(c)}
+                      // The name is truncated to fit the panel; the tooltip shows it whole.
+                      title={[c.concept_name, [c.domain_id, c.concept_id, c.vocabulary_id].filter(Boolean).join(' · ')].join('\n')}
                       className={`w-full text-left py-1.5 pr-2.5 hover:bg-accent border-b border-border flex items-center justify-between gap-2 ${
                         c.is_parent ? 'bg-primary/5' : ''
                       }`}
