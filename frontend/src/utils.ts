@@ -2,7 +2,11 @@ export function basename(path: string): string {
   return path.replace(/\\/g, '/').split('/').pop() || path
 }
 
-const STRUCTURAL_TABLES = ['observation_period', 'location', 'care_site', 'provider', 'death', 'person', 'visit_occurrence']
+// Columns configured in these steps are kept out of the Concepts and Stem table
+// steps. observation_period is deliberately absent: its start/end columns (e.g.
+// inclusion or last follow-up date) are usually clinical variables in their own
+// right and need concepts too.
+const STRUCTURAL_TABLES = ['location', 'care_site', 'provider', 'death', 'person', 'visit_occurrence']
 
 // Recursively walks a table config, following `file_configs` (a per-filename map,
 // as used by person/location/care_site/provider, or a per-filename array, as used
