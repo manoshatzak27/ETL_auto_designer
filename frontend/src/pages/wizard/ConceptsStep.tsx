@@ -4161,6 +4161,9 @@ const VariableRow = memo(function VariableRow({
                 projectId={projectId}
                 label={column}
                 defaultQuery={column}
+                // The description is prose the vocabulary can be searched
+                // with; the column name is only an identifier.
+                searchQuery={description.trim() || undefined}
                 value={decision.variable_concept}
                 onSelect={c => onChange({ ...decision, variable_concept: c, suggestions: undefined })}
                 onClear={() => onChange({ ...decision, variable_concept: null })}
