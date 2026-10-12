@@ -86,7 +86,7 @@ The emitted script's `main()`, per row, per mapped variable:
 
 1. **Resolves the visit** — one of three mutually exclusive modes:
    - an explicit `visit_source_col` value on the row,
-   - auto-numbered visits (`visit1`, `visit2`, … per person),
+   - auto-numbered visits (`visit1`, `visit2`, … per person, in visit-date order),
    - or a substring match against `VARIABLE_VISIT_MAP` (configured per-variable in the
      Stem Table step).
 

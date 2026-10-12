@@ -584,7 +584,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                 <p className="text-xs text-muted-foreground">
                   Each row for the same patient will be labelled{' '}
                   <code className="bg-muted px-1 rounded">visit1</code>,{' '}
-                  <code className="bg-muted px-1 rounded">visit2</code>, … in order of appearance.
+                  <code className="bg-muted px-1 rounded">visit2</code>, … in order of visit date (earliest first).
                 </p>
               </div>
             </div>
