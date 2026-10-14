@@ -7,6 +7,7 @@ from app.schemas.project import GenerateCodeRequest, ProjectResponse
 from app.services.code_generator import (
     generate_table_script,
     generate_all_table_scripts,
+    get_generation_progress,
     SUPPORTED_TABLES,
     _DOMAIN_TABLES,
 )
@@ -25,6 +26,20 @@ def _require_openai_key() -> None:
         )
 
 
+@router.get("/{project_id}/generate/{table}/progress")
+def generate_progress(project_id: str, table: str):
+    """Poll the live token count + partial code of an in-flight AI patch call for this table.
+
+    Returns {"active": false} when no AI patch is currently running for it
+    (either nothing is generating, or the current generation is the
+    deterministic-only path with no extra instructions to apply).
+    """
+    progress = get_generation_progress(project_id, table)
+    if progress is None:
+        return {"active": False, "used": 0, "limit": 0, "content": ""}
+    return {"active": True, **progress}
+
+
 @router.post("/{project_id}/generate/{table}", response_model=ProjectResponse)
 async def generate_single_table(
     project_id: str,
@@ -40,10 +55,18 @@ async def generate_single_table(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    code = await generate_table_script(project, table)
+    try:
+        code, usage = await generate_table_script(project, table)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     scripts: dict = dict(project.generated_scripts or {})
     scripts[table] = code
+    usage_by_table: dict = dict(project.generated_scripts_usage or {})
+    if usage:
+        usage_by_table[table] = usage
+    else:
+        usage_by_table.pop(table, None)
 
     # When stem_table is generated, also (re)generate its 5 domain-routing
     # scripts. They're deterministic templates that read stem_table.csv and
@@ -52,9 +75,15 @@ async def generate_single_table(
     # skip them (producing no measurement.csv, observation.csv, etc.).
     if table == "stem_table":
         for dt in _DOMAIN_TABLES:
-            scripts[dt] = await generate_table_script(project, dt)
+            dt_code, dt_usage = await generate_table_script(project, dt)
+            scripts[dt] = dt_code
+            if dt_usage:
+                usage_by_table[dt] = dt_usage
+            else:
+                usage_by_table.pop(dt, None)
 
     project.generated_scripts = scripts
+    project.generated_scripts_usage = usage_by_table
 
     project.last_execution_status = ""
     db.commit()
@@ -76,55 +105,27 @@ async def generate_all_tables(
 
     tables_to_gen = payload.tables or None
 
-    if tables_to_gen:
-        # Selective regeneration
-        scripts: dict = dict(project.generated_scripts or {})
-        for table in tables_to_gen:
-            if table in SUPPORTED_TABLES:
-                scripts[table] = await generate_table_script(project, table)
-    else:
-        scripts = await generate_all_table_scripts(project)
+    try:
+        if tables_to_gen:
+            # Selective regeneration
+            scripts: dict = dict(project.generated_scripts or {})
+            usage_by_table: dict = dict(project.generated_scripts_usage or {})
+            for table in tables_to_gen:
+                if table in SUPPORTED_TABLES:
+                    code, usage = await generate_table_script(project, table)
+                    scripts[table] = code
+                    if usage:
+                        usage_by_table[table] = usage
+                    else:
+                        usage_by_table.pop(table, None)
+        else:
+            scripts, usage_by_table = await generate_all_table_scripts(project)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     project.generated_scripts = scripts
+    project.generated_scripts_usage = usage_by_table
     project.last_execution_status = ""
     db.commit()
     db.refresh(project)
     return project
-
-
-@router.post("/{project_id}/concept-search")
-async def concept_search(
-    project_id: str,
-    query: str,
-    top_k: int = 20,
-    use_reranker: bool = False,
-):
-    """Proxy concept search to the EntityLinker service.
-
-    use_reranker=True asks EntityLinker to invoke its GPT reranker; that path
-    returns a model-generated `justification` per candidate but requires an
-    OPENAI_API_KEY on the EntityLinker side and is slower.
-    """
-    import httpx
-    from app.config import settings
-
-    if not settings.entitylinker_url:
-        raise HTTPException(status_code=503, detail="EntityLinker URL not configured")
-
-    if use_reranker and not settings.openai_api_key:
-        raise HTTPException(
-            status_code=400,
-            detail="Reranker requires OPENAI_API_KEY to be configured.",
-        )
-
-    try:
-        timeout = 90 if use_reranker else 30
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            resp = await client.post(
-                settings.entitylinker_url,
-                json={"query": query, "top_k": top_k, "use_reranker": use_reranker},
-            )
-            resp.raise_for_status()
-            return resp.json()
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"EntityLinker unavailable: {e}")

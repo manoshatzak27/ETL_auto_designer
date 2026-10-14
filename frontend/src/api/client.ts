@@ -1,4 +1,5 @@
 import axios from 'axios'
+import type { SourceFileContent, Project } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -8,12 +9,31 @@ export const createProject = (name: string, description = '') =>
   api.post('/projects/', { name, description }).then(r => r.data)
 export const getProject = (id: string) => api.get(`/projects/${id}`).then(r => r.data)
 export const deleteProject = (id: string) => api.delete(`/projects/${id}`)
+export const copyProject = (id: string) => api.post(`/projects/${id}/copy`).then(r => r.data)
 
 // ---- Source upload ----
-export const uploadSource = (projectId: string, file: File) => {
+export interface UploadConflict {
+  column: string
+  reason: string
+}
+
+export interface UploadSourcesResult {
+  project: Project
+  conflicts: UploadConflict[]
+}
+
+export const uploadSources = (projectId: string, files: File[], keepMappings = true) => {
   const fd = new FormData()
-  fd.append('file', file)
-  return api.post(`/projects/${projectId}/upload-source`, fd).then(r => r.data)
+  for (const f of files) fd.append('files', f)
+  fd.append('keep_mappings', String(keepMappings))
+  return api.post<UploadSourcesResult>(`/projects/${projectId}/upload-sources`, fd).then(r => r.data)
+}
+
+export const deleteSourceFile = (projectId: string, index: number) =>
+  api.delete(`/projects/${projectId}/source-files/${index}`).then(r => r.data)
+
+export const downloadSourceFile = (projectId: string, filename: string) => {
+  window.open(`/api/projects/${projectId}/source-files/${encodeURIComponent(filename)}/download`, '_blank')
 }
 
 export const uploadMappingCsv = (projectId: string, mappingType: string, file: File) => {
@@ -28,8 +48,8 @@ export const loadMappingsFromDir = (projectId: string, directory: string) =>
   api.post(`/projects/${projectId}/load-mappings-from-dir`, { directory }).then(r => r.data)
 
 // ---- Concept mapping (Concepts step) ----
-export const getColumnValues = (projectId: string) =>
-  api.get(`/projects/${projectId}/column-values`).then(r => r.data)
+export const getColumnValues = (projectId: string, filename?: string) =>
+  api.get(`/projects/${projectId}/column-values`, { params: { ...(filename ? { filename } : {}) } }).then(r => r.data)
 
 export const getConceptDecisions = (projectId: string) =>
   api.get(`/projects/${projectId}/concept-decisions`).then(r => r.data)
@@ -40,11 +60,45 @@ export const saveConceptDecisions = (projectId: string, decisions: Record<string
 export const generateMappingCsvs = (projectId: string) =>
   api.post(`/projects/${projectId}/generate-mapping-csvs`).then(r => r.data)
 
-export const lookupConceptDomain = (conceptId: number) =>
-  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; found: boolean })
+export const downloadMappingFiles = (projectId: string) => {
+  window.open(`/api/projects/${projectId}/download-mapping-files`, '_blank')
+}
 
-export const getSourcePreview = (projectId: string, rows = 5) =>
-  api.get(`/projects/${projectId}/source-preview?rows=${rows}`).then(r => r.data)
+export const downloadMappingSummary = (projectId: string) => {
+  window.open(`/api/projects/${projectId}/download-mapping-summary`, '_blank')
+}
+
+export const lookupConceptDomain = (conceptId: number) =>
+  api.get(`/projects/concept-lookup/domain?concept_id=${conceptId}`).then(r => r.data as { concept_id: number; domain_id: string | null; concept_name: string | null; standard_concept: string | null; invalid_reason: string | null; found: boolean; vocab_available: boolean })
+
+const INVALID_REASON_LABEL: Record<string, string> = { D: 'deleted', U: 'upgraded (replaced by another concept)' }
+
+// Human-readable form of an OMOP invalid_reason ('D' / 'U').
+export const invalidReasonLabel = (reason: string) => INVALID_REASON_LABEL[reason] ?? `invalid_reason '${reason}'`
+
+// Gate for the manual "Set" buttons: a typed concept id is only accepted when it
+// exists in the loaded vocabulary, is valid (invalid_reason null) and is standard.
+// Returns an error message to show (and block the set), or null when it's fine.
+export const standardConceptError = (
+  conceptId: number,
+  res: { found: boolean; standard_concept: string | null; invalid_reason: string | null; vocab_available: boolean },
+): string | null => {
+  if (!res.vocab_available) return "Couldn't verify this concept — load the OMOP vocabulary first, then try again."
+  if (!res.found) return `Concept ${conceptId} doesn't exist in the loaded vocabulary.`
+  if (res.invalid_reason) return `Concept ${conceptId} is invalid — ${invalidReasonLabel(res.invalid_reason)}.`
+  if (res.standard_concept !== 'S') return `Concept ${conceptId} is not a standard concept — use its standard equivalent.`
+  return null
+}
+
+export const getSourceFileContent = (projectId: string, filename: string, rows?: number) =>
+  api
+    .get<SourceFileContent>(`/projects/${projectId}/source-file-content`, { params: { filename, ...(rows ? { rows } : {}) } })
+    .then(r => r.data)
+
+export const updateSourceFileContent = (projectId: string, filename: string, columns: string[], rows: Record<string, string>[]) =>
+  api
+    .put(`/projects/${projectId}/source-file-content`, { columns, rows }, { params: { filename } })
+    .then(r => r.data)
 
 export interface OutputPreview {
   columns: string[]
@@ -56,9 +110,6 @@ export const getOutputPreview = (projectId: string, filename: string, rows = 20)
   api
     .get<OutputPreview>(`/projects/${projectId}/output-preview?filename=${encodeURIComponent(filename)}&rows=${rows}`)
     .then(r => r.data)
-
-export const detectColumnType = (projectId: string, column: string) =>
-  api.get(`/projects/${projectId}/detect-column-type?column=${encodeURIComponent(column)}`).then(r => r.data as { column: string; transform: string })
 
 // ---- ETL Config ----
 export const updateTableConfig = (projectId: string, table: string, config: unknown) =>
@@ -74,16 +125,250 @@ export const generateCode = (projectId: string) =>
 export const generateTableScript = (projectId: string, table: string) =>
   api.post(`/projects/${projectId}/generate/${table}`).then(r => r.data)
 
-export const conceptSearch = (
-  projectId: string,
-  query: string,
-  topK = 20,
-  useReranker = false,
+export const getGenerateProgress = (projectId: string, table: string) =>
+  api.get(`/projects/${projectId}/generate/${table}/progress`)
+    .then(r => r.data as { active: boolean; used: number; limit: number; content: string })
+
+// ---- Column descriptions (the project's data dictionary) ----
+
+export interface DescriptionUploadResult {
+  descriptions: Record<string, string>
+  matched: string[]
+  unmatched: { name: string; description: string; table: string }[]
+  headers: { name: string; description: string; table: string | null }
+  missing: string[]
+}
+
+export const getColumnDescriptions = (projectId: string) =>
+  api
+    .get<{ descriptions: Record<string, string> }>(`/projects/${projectId}/column-descriptions`)
+    .then(r => r.data.descriptions)
+
+export const putColumnDescriptions = (projectId: string, descriptions: Record<string, string>) =>
+  api
+    .put<{ descriptions: Record<string, string> }>(
+      `/projects/${projectId}/column-descriptions`, { descriptions },
+    )
+    .then(r => r.data.descriptions)
+
+export const uploadColumnDescriptions = (projectId: string, file: File, replace = false) => {
+  const fd = new FormData()
+  fd.append('file', file)
+  return api
+    .post<DescriptionUploadResult>(
+      `/projects/${projectId}/column-descriptions/upload?replace=${replace ? 'true' : 'false'}`, fd,
+    )
+    .then(r => r.data)
+}
+
+export const downloadDescriptionsTemplate = (projectId: string) => {
+  window.open(`/api/projects/${projectId}/column-descriptions/template`, '_blank')
+}
+
+// ---- Bulk concept matching (staged OMOP matching pipeline) ----
+
+export interface ConceptMatchRequestColumn {
+  name: string
+  description?: string | null
+  table?: string | null
+}
+
+/** One of the pipeline's ranked alternatives, best first. */
+export interface ConceptMatchCandidate {
+  concept_id: number
+  concept_name: string
+  domain_id: string | null
+  vocabulary_id: string | null
+  concept_class_id: string | null
+  concept_code: string | null
+  score: number
+}
+
+export interface ConceptMatchResult {
+  column_name: string
+  source_table: string | null
+  status: 'auto_accept' | 'review' | 'unmapped' | 'manual' | 'error'
+  confidence: number
+  concept_id: number | null
+  concept_name: string | null
+  domain_id: string | null
+  vocabulary_id: string | null
+  concept_class_id: string | null
+  concept_code: string | null
+  decision_reason: string
+  ambiguous: boolean
+  error: string | null
+  candidates: ConceptMatchCandidate[]
+}
+
+export const getConceptMatcherHealth = () =>
+  api
+    .get<{
+      available: boolean; detail?: string | null; vocabulary_version?: string; concepts?: number; embeddings?: boolean
+      /** Domains the matcher's vocabulary defines, most concepts first. */
+      domains?: string[] | null
+    }>(
+      '/projects/concept-matcher/health',
+    )
+    .then(r => r.data)
+
+export const matchConcepts = (projectId: string, columns: ConceptMatchRequestColumn[]) =>
+  api
+    .post<{ run_id: number; results: ConceptMatchResult[] }>(
+      `/projects/${projectId}/match-concepts`,
+      { columns },
+    )
+    .then(r => r.data)
+
+/** One column's value-level run: every distinct value matched, all of them
+ *  forced into the single domain the first pass voted for. */
+export interface ConceptValueMatchColumn {
+  column_name: string
+  source_table: string | null
+  values_requested: number
+  /** The OMOP domain every result below is restricted to, or null when the first
+   *  pass found no concept at all. */
+  domain: string | null
+  /** How many values voted for each domain in the first pass. */
+  domain_votes: Record<string, number>
+  /** How many values were searched again because the first pass put them outside
+   *  the chosen domain. */
+  rematched: number
+  /** Every value was a yes/no word: "Yes" was matched on the column's name and
+   *  description, "No" came back as concept 0 (not mapped). */
+  yes_no?: boolean
+  /** Keyed by the source value. */
+  results: Record<string, ConceptMatchResult>
+}
+
+export const matchColumnValues = (projectId: string, columns: ConceptMatchRequestColumn[]) =>
+  api
+    .post<{ columns: ConceptValueMatchColumn[] }>(
+      `/projects/${projectId}/match-values`,
+      { columns },
+    )
+    .then(r => r.data)
+
+/** A concept suggested for one source value within a known domain. `source` is
+ *  "rule" when the backend's normalizer resolved it without the matcher. */
+export interface ValueConceptSuggestion {
+  value: string
+  /** What was actually matched, after normalization ("greece" → "Greek"). */
+  term: string
+  source: 'rule' | 'matcher'
+  status: ConceptMatchResult['status']
+  confidence: number
+  concept_id: number | null
+  concept_name: string | null
+  /** Race only: the narrower concept matched before rolling up to its
+   *  top-level category (e.g. Black 38003598 → 8516). */
+  detailed?: { concept_id: number; concept_name: string | null }
+  candidates: ConceptMatchCandidate[]
+}
+
+/** Narrows a domain to the vocabularies / concept classes a field wants, e.g.
+ *  visit_concept_id → Visit, place of service → CMS Place of Service. */
+export interface ConceptPreference {
+  vocabularies?: string[]
+  concept_classes?: string[]
+}
+
+export const suggestValueConcepts = (projectId: string, domain: string, values: string[], prefer?: ConceptPreference) =>
+  api
+    .post<{ domain: string; results: Record<string, ValueConceptSuggestion> }>(
+      `/projects/${projectId}/suggest-value-concepts`,
+      { domain, values, ...(prefer ? { prefer } : {}) },
+    )
+    .then(r => r.data.results)
+
+/** A search result, in display order: trees of broader → narrower concepts
+ *  (`depth` 0 at the top, `parent_id` the row it sits under, `is_parent` when
+ *  rows sit under it), then the results with no relatives among them. */
+export interface DomainSearchResult extends Omit<ConceptMatchCandidate, 'score'> {
+  score: number | null
+  depth?: number
+  is_parent?: boolean
+  parent_id?: number
+}
+
+/** `domain` is the one domain a field fixes; an array is the user's domain
+ *  filter (any of them). Omitted or empty searches every domain; each result's
+ *  `domain_id` says which. */
+export const searchDomainConcepts = (
+  projectId: string, query: string, domain?: string | string[], limit = 15,
 ) =>
   api
-    .post(
-      `/projects/${projectId}/concept-search?query=${encodeURIComponent(query)}` +
-        `&top_k=${topK}&use_reranker=${useReranker ? 'true' : 'false'}`,
+    .get<{ term: string; results: DomainSearchResult[] }>(
+      `/projects/${projectId}/search-concepts`,
+      {
+        params: Array.isArray(domain)
+          ? { query, domains: domain, limit }
+          : { query, domain, limit },
+        // Repeated `domains=a&domains=b`, which FastAPI reads as a list —
+        // axios's default `domains[]=a` would arrive as an unknown parameter.
+        paramsSerializer: { indexes: null },
+      },
+    )
+    .then(r => r.data)
+
+// ---- Column auto-match (table steps) ----
+
+/** Whether the AI fallback of column auto-match can be used. */
+export interface LlmStatus {
+  status: 'ready' | 'not_configured' | 'error'
+  model: string
+  detail: string | null
+}
+
+export const getColumnMatcherHealth = (refresh = false) =>
+  api
+    .get<{ llm: LlmStatus }>('/projects/column-matcher/health', { params: refresh ? { refresh: 1 } : {} })
+    .then(r => r.data.llm)
+
+/** The source column picked for one step field. `auto` matches are confident
+ *  enough to fill in; `suggest` ones are offered for the user to accept. */
+export interface ColumnMatch {
+  column: string | null
+  filename: string | null
+  score: number
+  status: 'auto' | 'suggest' | 'none'
+  source: 'heuristic' | 'llm'
+  reason: string
+  alternatives: { column: string; filename: string; score: number }[]
+  /** Date fields: the format to set the step's date format to when applying
+   *  this match, or null to leave it as it is. */
+  date_format: string | null
+  /** Date fields: the format the column's values are written in. */
+  detected_format: string | null
+  /** Why a match was only suggested, or something to check about it. */
+  warning: string | null
+}
+
+export interface ColumnMatchField {
+  /** Unique within the request, e.g. "city_col" or "1:date_col". */
+  key: string
+  /** The backend field spec to match against, when it differs from `key`. */
+  spec?: string
+  /** What tells this field apart from its siblings, e.g. a visit's label. */
+  hint?: string
+  /** Files to look in for this field, when they differ from the request's. */
+  filenames?: string[]
+  /** Date fields: the step's current date format… */
+  date_format?: string
+  /** …the name shared by the fields that use that one format… */
+  format_group?: string
+  /** …and whether a column already mapped in the step relies on it. */
+  format_locked?: boolean
+}
+
+export const suggestColumnMapping = (
+  projectId: string,
+  body: { table: string; filenames: string[]; fields: ColumnMatchField[]; exclude_columns: string[]; use_llm: boolean },
+) =>
+  api
+    .post<{ matches: Record<string, ColumnMatch>; llm_available: boolean; llm_used: boolean; llm_error: string | null }>(
+      `/projects/${projectId}/suggest-column-mapping`,
+      body,
     )
     .then(r => r.data)
 
@@ -95,12 +380,73 @@ export const updateProjectSettings = (
   payload: { custom_vocabulary_id?: string; name?: string; description?: string },
 ) => api.patch(`/projects/${projectId}`, payload).then(r => r.data)
 
-// ---- Execution ----
-export const executeProject = (projectId: string, outputMode: 'basic' | 'detailed' = 'basic') =>
-  api.post(`/projects/${projectId}/execute`, { output_mode: outputMode }).then(r => r.data)
+export const renameProject = (projectId: string, name: string) =>
+  updateProjectSettings(projectId, { name })
 
-export const getExecutionLog = (projectId: string) =>
-  api.get(`/projects/${projectId}/execution-log`).then(r => r.data)
+// ---- Execution ----
+export const executeProject = (projectId: string) =>
+  api.post(`/projects/${projectId}/execute`).then(r => r.data)
+
+export interface ExecutionLogPreview {
+  log: string
+  total_lines: number
+  info_lines: number
+  truncated: boolean
+  size_bytes: number
+}
+
+// `table` limits the preview to that table's section of the log.
+export const getExecutionLogPreview = (projectId: string, limit: number, table?: string) =>
+  api.get(`/projects/${projectId}/execution-log`, { params: { limit, table: table || undefined } })
+    .then(r => r.data as ExecutionLogPreview)
+
+export interface ExecutionTableStats {
+  table: string
+  status: 'ok' | 'failed' | 'running' | 'not_run'
+  rows_written: number | null
+  dropped: number
+  warnings: number
+  info: number
+}
+
+// A row of the stats table before there are counts for it: the pipeline hasn't
+// run yet, is running, or ran before counts were recorded ('unknown').
+export type ExecutionTableRow =
+  | ExecutionTableStats
+  | { table: string; status: 'not_run' | 'running' | 'unknown'; rows_written: null; dropped: null; warnings: null; info: null }
+
+// `duringRun` reads the counts of a run still in progress (polled for progress).
+export const getExecutionStats = (projectId: string, duringRun = false) =>
+  api.get(`/projects/${projectId}/execution-stats`, { params: { during_run: duringRun || undefined } }).then(r => r.data as ExecutionTableStats[])
+
+export type LogView = 'basic' | 'detailed'
+// all: every line; dropped: lines reporting rows not written; notes: INFO lines
+// (empty/unmapped fields on written rows).
+export type LogKind = 'all' | 'dropped' | 'notes'
+
+export interface ExecutionLogLines {
+  lines: { n: number; text: string }[]
+  total: number
+  offset: number
+}
+
+export const getExecutionLogLines = (
+  projectId: string,
+  params: { view: LogView; table?: string; kind?: LogKind; q?: string; offset: number; limit: number },
+) =>
+  api.get(`/projects/${projectId}/execution-log/lines`, {
+    params: { ...params, table: params.table || undefined, q: params.q || undefined },
+  }).then(r => r.data as ExecutionLogLines)
+
+// Opens the log viewer page in a new window.
+export const openLogViewer = (projectId: string, view: LogView, table?: string) => {
+  const qs = new URLSearchParams({ view, ...(table ? { table } : {}) })
+  window.open(`/project/${projectId}/log?${qs}`, '_blank')
+}
+
+export const downloadExecutionLog =(projectId: string, view: 'basic' | 'detailed') => {
+  window.open(`/api/projects/${projectId}/execution-log/download?view=${view}`, '_blank')
+}
 
 export const downloadOutput = (projectId: string, filename: string) => {
   window.open(`/api/projects/${projectId}/download/${filename}`, '_blank')
@@ -158,6 +504,7 @@ export interface VocabFileStatus {
   table: string
   status: string
   rows: number
+  started_at: number
   elapsed: number
   error: string
 }

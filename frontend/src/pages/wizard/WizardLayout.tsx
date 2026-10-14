@@ -16,6 +16,8 @@ interface Props {
   nextLabel?: string
   nextDisabled?: boolean
   saving?: boolean
+  /** Overrides the content column's max-width class (default max-w-4xl). */
+  contentWidthClassName?: string
 }
 
 export default function WizardLayout({
@@ -28,6 +30,7 @@ export default function WizardLayout({
   nextLabel = 'Next',
   nextDisabled,
   saving,
+  contentWidthClassName = 'max-w-4xl',
 }: Props) {
   const navigate = useNavigate()
   const activeSteps = getActiveSteps(project)
@@ -92,13 +95,20 @@ export default function WizardLayout({
       </div>
 
       {/* Content */}
-      <main className="mx-auto w-full max-w-4xl flex-1 px-6 py-8">
+      <main className={clsx('mx-auto w-full flex-1 px-6 py-8', contentWidthClassName)}>
         {children}
       </main>
 
       {/* Footer navigation */}
       <footer className="flex items-center justify-between border-t border-border bg-card/60 px-6 py-4">
-        <Button variant="outline" onClick={onBack} disabled={!onBack}>
+        <Button
+          variant="outline"
+          onClick={async () => {
+            await onBeforeStepChange?.()
+            onBack?.()
+          }}
+          disabled={!onBack}
+        >
           Back
         </Button>
         {onNext && (

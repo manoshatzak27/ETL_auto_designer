@@ -28,23 +28,36 @@ class ProjectResponse(BaseModel):
     etl_config: dict[str, Any] = {}
     generated_code: str
     generated_scripts: dict[str, Any] = {}
+    generated_scripts_usage: dict[str, Any] = {}
     last_execution_status: str
+    last_execution_log: str = ""
     output_files: list[str] = []
     mapping_files: dict[str, Any] = {}
     custom_vocabulary_id: str = "CUSTOM"
+    source_files: list[dict[str, Any]] = []
 
     model_config = {"from_attributes": True}
 
     # Coerce NULL DB values to safe defaults so existing rows don't 500
-    @field_validator("etl_config", "generated_scripts", "mapping_files", mode="before")
+    @field_validator("etl_config", "generated_scripts", "generated_scripts_usage", "mapping_files", mode="before")
     @classmethod
     def _dict_or_empty(cls, v: Any) -> dict:
         return v if isinstance(v, dict) else {}
 
-    @field_validator("source_columns", "output_files", mode="before")
+    @field_validator("source_columns", "output_files", "source_files", mode="before")
     @classmethod
     def _list_or_empty(cls, v: Any) -> list:
         return v if isinstance(v, list) else []
+
+
+class UploadConflict(BaseModel):
+    column: str
+    reason: str
+
+
+class UploadSourcesResponse(BaseModel):
+    project: ProjectResponse
+    conflicts: list[UploadConflict] = []
 
 
 class ProjectSummary(BaseModel):
@@ -66,9 +79,3 @@ class ETLConfigUpdate(BaseModel):
 
 class GenerateCodeRequest(BaseModel):
     tables: list[str] | None = None
-
-
-class ConceptSearchRequest(BaseModel):
-    query: str
-    top_k: int = 20
-    use_reranker: bool = False

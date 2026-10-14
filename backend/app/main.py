@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from app.config import settings
 from app.database import create_tables
-from app.api import projects, sources, mappings, codegen, execution, concept_mapping, chat, dbload
+from app.api import projects, sources, mappings, codegen, execution, concept_mapping, chat, dbload, column_matching
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Ahead of the project routers: /projects/column-matcher/health is a fixed path.
+app.include_router(column_matching.router, prefix="/api")
 app.include_router(projects.router, prefix="/api")
 app.include_router(sources.router, prefix="/api")
 app.include_router(mappings.router, prefix="/api")

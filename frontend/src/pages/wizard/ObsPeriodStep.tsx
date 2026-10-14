@@ -1,20 +1,22 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { updateTableConfig, getTableConfig } from '../../api/client'
-import { extractMappedCols, getCrossStepUsedCols } from '../../utils/usedColumns'
-import type { Project, ObservationPeriodConfig } from '../../types'
+import { getCrossStepUsedCols } from '../../utils/usedColumns'
+import type { Project, ObservationPeriodConfig, ObsPeriodFallbackEntry } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs } from '../../wizard/steps'
-import FieldMapper from '../../components/FieldMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
-import DomainWarning from '../../components/DomainWarning'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
-import { useDomainValidation } from '../../hooks/useDomainValidation'
+import { useSourceFile } from '../../hooks/useSourceFile'
+import { ColumnAutoMatchControls, ColumnAutoMatchSummary, ColumnSuggestion } from '../../components/ColumnAutoMatch'
+import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
+import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { Plus, X } from 'lucide-react'
 
 interface Props {
   project: Project
@@ -25,59 +27,63 @@ const DEFAULTS: ObservationPeriodConfig = {
   enabled: true,
   start_date_col: '',
   end_date_col: '',
-  end_date_fallback: 'start_date',
+  end_date_fallbacks: [{ type: 'start_date' }],
   period_type_concept_id: 32879,
 }
 
+function migrateConfig(ex: ObservationPeriodConfig & { extra_instructions?: string }): ObservationPeriodConfig & { extra_instructions?: string } {
+  if (!ex.end_date_fallbacks && ex.end_date_fallback) {
+    ex.end_date_fallbacks = [{ type: ex.end_date_fallback }]
+  }
+  if (!ex.end_date_fallbacks) {
+    ex.end_date_fallbacks = [{ type: 'start_date' }]
+  }
+  return ex
+}
 
 export default function ObsPeriodStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
-  const cols = project.source_columns || []
+  const { cols: singleFileCols, files } = useSourceFile(project, 'obs-period')
+  const isMultiFile = files.length > 1
   const [cfg, setCfg] = useState<ObservationPeriodConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
-  const periodTypeViolations = useDomainValidation(
-    cfg.period_type_concept_id > 0 ? [cfg.period_type_concept_id] : [],
-    'Type Concept',
-  )
+  const [loaded, setLoaded] = useState(false)
   const crossUsed = useMemo(() => getCrossStepUsedCols(project.etl_config, 'observation_period', ['visit_occurrence']), [project.etl_config])
-  const stepUsed = useMemo(() => extractMappedCols(cfg), [cfg])
-  // Exclude non-date visit columns (date_col/end_date_col remain available for reuse in obs period)
-  const visitNonDateCols = useMemo(() => {
-    const excluded = new Set<string>()
-    const visitCfg = project.etl_config?.visit_occurrence as {
-      visit_source_col?: string
-      visit_definitions?: Array<Record<string, unknown>>
-    } | undefined
-    if (!visitCfg) return excluded
-    if (visitCfg.visit_source_col) excluded.add(visitCfg.visit_source_col)
-    const nonDateFields = ['time_col', 'end_time_col', 'visit_concept_source_col', 'visit_type_source_col', 'admitted_from_source_col', 'discharged_to_source_col']
-    for (const def of visitCfg.visit_definitions ?? []) {
-      for (const field of nonDateFields) {
-        if (typeof def[field] === 'string' && def[field]) excluded.add(def[field] as string)
-      }
-    }
-    return excluded
-  }, [project.etl_config])
-  const availCols = (currentValue: string) =>
-    cols.filter(c => {
-      if (c === currentValue) return true
-      if (crossUsed.has(c) || stepUsed.has(c)) return false
-      if (visitNonDateCols.has(c)) return false
-      return true
-    })
+  const autoMatch = useColumnAutoMatch(project.id, 'observation_period')
 
   useEffect(() => {
     getTableConfig(project.id, 'observation_period').then((ex: ObservationPeriodConfig & { extra_instructions?: string }) => {
       if (ex && Object.keys(ex).length > 0) {
         setExtraInstructions(ex.extra_instructions || '')
-        setCfg(ex)
+        setCfg(migrateConfig(ex))
       }
-    })
+    }).finally(() => setLoaded(true))
   }, [project.id])
 
+  // Columns for a specific file. In multi-file mode, returns [] when no file is selected.
+  const colsForFile = (filename?: string): string[] => {
+    if (!isMultiFile) return singleFileCols
+    if (!filename) return []
+    const f = files.find(f => f.filename === filename)
+    return f?.columns ?? []
+  }
+
+  // Columns available for a given field value, filtering cross-step used columns
+  const availCols = (filename: string | undefined, currentValue: string): string[] => {
+    return colsForFile(filename).filter(c => {
+      if (c === currentValue) return true
+      if (crossUsed.has(c)) return false
+      return true
+    })
+  }
+
   const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'observation_period', { ...cfg, extra_instructions: extraInstructions })
+    const p = await updateTableConfig(project.id, 'observation_period', {
+      ...cfg,
+      extra_instructions: extraInstructions,
+      source_filename: isMultiFile ? null : (files[0]?.filename ?? null),
+    })
     onUpdate(p)
   }
 
@@ -90,6 +96,85 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
+  // Fallback chain helpers
+  const fallbacks: ObsPeriodFallbackEntry[] = cfg.end_date_fallbacks ?? []
+  const lastFallbackIsTerminal = fallbacks.length > 0 &&
+    (fallbacks[fallbacks.length - 1].type === 'start_date' || fallbacks[fallbacks.length - 1].type === 'today')
+
+  const addFallback = () => {
+    const newEntry: ObsPeriodFallbackEntry = {
+      type: 'column',
+      col: '',
+      source_filename: files[0]?.filename ?? '',
+    }
+    setCfg(prev => ({ ...prev, end_date_fallbacks: [...(prev.end_date_fallbacks ?? []), newEntry] }))
+  }
+
+  const removeFallback = (idx: number) => {
+    setCfg(prev => ({
+      ...prev,
+      end_date_fallbacks: (prev.end_date_fallbacks ?? []).filter((_, i) => i !== idx),
+    }))
+  }
+
+  const updateFallback = (idx: number, patch: Partial<ObsPeriodFallbackEntry>) => {
+    setCfg(prev => {
+      const fbs = [...(prev.end_date_fallbacks ?? [])]
+      fbs[idx] = { ...fbs[idx], ...patch }
+      // Reset col when switching away from 'column' type
+      if (patch.type && patch.type !== 'column') {
+        fbs[idx] = { type: patch.type }
+      }
+      // Reset col when file changes
+      if (patch.source_filename !== undefined) {
+        fbs[idx].col = ''
+      }
+      return { ...prev, end_date_fallbacks: fbs }
+    })
+  }
+
+  // ── Column auto-match ───────────────────────────────────────────────────
+  // With several files each date picks its own; a date whose file is not yet
+  // chosen is looked for in every file, and the match sets the file too.
+  const allFilenames = files.map(f => f.filename)
+  // The one date format is shared by start, end and the fallback columns; a
+  // match brings its detected format along unless another of them relies on it.
+  const setStartDate = (col: string, filename: string, fmt: string | null) =>
+    setCfg(prev => ({
+      ...prev, start_date_col: col,
+      ...(isMultiFile && filename ? { start_date_file: filename } : {}),
+      ...(fmt ? { date_format: fmt } : {}),
+    }))
+  const setEndDate = (col: string, filename: string, fmt: string | null) =>
+    setCfg(prev => ({
+      ...prev, end_date_col: col,
+      ...(isMultiFile && filename ? { end_date_file: filename } : {}),
+      ...(fmt ? { date_format: fmt } : {}),
+    }))
+  const fallbackCols = fallbacks.some(fb => fb.type === 'column' && fb.col)
+  const dateFormat = cfg.date_format ?? '%Y-%m-%d'
+  const autoMatchTargets: ColumnTarget[] = [
+    { key: 'start_date_col', label: 'Start date', current: cfg.start_date_col, apply: setStartDate,
+      filenames: isMultiFile ? (cfg.start_date_file ? [cfg.start_date_file] : allFilenames) : undefined,
+      date_format: dateFormat, format_group: 'obs', format_locked: !!cfg.end_date_col || fallbackCols },
+    { key: 'end_date_col', label: 'End date', current: cfg.end_date_col, apply: setEndDate,
+      filenames: isMultiFile ? (cfg.end_date_file ? [cfg.end_date_file] : allFilenames) : undefined,
+      date_format: dateFormat, format_group: 'obs', format_locked: !!cfg.start_date_col || fallbackCols },
+  ]
+  autoMatch.setTargets(autoMatchTargets)
+  const startSuggestion = autoMatch.suggestions['start_date_col']
+  const endSuggestion = autoMatch.suggestions['end_date_col']
+
+  const startDateCols = availCols(cfg.start_date_file, cfg.start_date_col)
+  const endDateCols = availCols(cfg.end_date_file, cfg.end_date_col)
+
+  // ── Auto-map all steps (started from the Source step) ───────────────────
+  useAutoRunStep({
+    slug: 'obs-period', label: 'Obs. Period', ready: loaded, files: [], activeFile: '',
+    autoMatch, match: { filenames: isMultiFile ? allFilenames : allFilenames.slice(0, 1), targets: autoMatchTargets, exclude: [...crossUsed, cfg.start_date_col, cfg.end_date_col] },
+    save: saveConfig,
+  })
+
   return (
     <WizardLayout
       project={project}
@@ -101,7 +186,8 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
       saving={saving}
     >
       <div className="flex flex-col gap-6">
-        <div>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="flex-1 min-w-0">
           <h2 className="text-xl font-bold text-primary">Observation Period Mapping</h2>
           <p className="mt-1 text-sm text-muted-foreground">
             Define the time spans during which each patient was actively observed. Within these
@@ -110,37 +196,158 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
             Overlapping or adjacent periods are automatically merged.
           </p>
         </div>
+          <ColumnAutoMatchControls
+            autoMatch={autoMatch}
+            targets={autoMatchTargets}
+            filenames={isMultiFile ? allFilenames : allFilenames.slice(0, 1)}
+            exclude={[...crossUsed, cfg.start_date_col, cfg.end_date_col]}
+          />
+        </div>
+
+        <ColumnAutoMatchSummary autoMatch={autoMatch} />
 
         <Card className="flex flex-col gap-5 p-6">
-          <FieldMapper
-            label="Start date column"
-            sourceColumns={availCols(cfg.start_date_col)}
-            value={cfg.start_date_col}
-            onChange={v => setCfg(prev => ({ ...prev, start_date_col: v }))}
-            required
-            hint="Enrollment/study entry date. If absent in source, the earliest clinical event date per person will be used."
-          />
 
-          <FieldMapper
-            label="End date column"
-            sourceColumns={availCols(cfg.end_date_col)}
-            value={cfg.end_date_col}
-            onChange={v => setCfg(prev => ({ ...prev, end_date_col: v }))}
-            hint="Enrollment end / last follow-up date. If absent, the last clinical event date or fallback below is used."
-          />
-
-          <div>
-            <Label>If end date is missing, fallback to:</Label>
+          {/* Start date */}
+          <div className="flex flex-col gap-1">
+            <Label>
+              Start date column
+              <span className="ml-1 text-destructive text-base font-bold leading-none">*</span>
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              Enrollment/study entry date. If absent in source, the earliest clinical event date per person will be used.
+            </p>
+            {isMultiFile && (
+              <Select
+                value={cfg.start_date_file ?? ''}
+                onChange={e => setCfg(prev => ({ ...prev, start_date_file: e.target.value, start_date_col: '' }))}
+                className="mt-1"
+              >
+                <option value="">— select file —</option>
+                {files.map(f => <option key={f.filename} value={f.filename}>{f.filename}</option>)}
+              </Select>
+            )}
             <Select
-              value={cfg.end_date_fallback}
-              onChange={e => setCfg(prev => ({ ...prev, end_date_fallback: e.target.value as 'start_date' | 'today' }))}
+              value={startDateCols.includes(cfg.start_date_col) ? cfg.start_date_col : ''}
+              onChange={e => setCfg(prev => ({ ...prev, start_date_col: e.target.value }))}
               className="mt-1"
             >
-              <option value="start_date">Start date (observation period of 1 day)</option>
-              <option value="today">Today's date</option>
+              <option value="">— not mapped —</option>
+              {startDateCols.map(c => <option key={c} value={c}>{c}</option>)}
             </Select>
+            {startSuggestion?.column && !cfg.start_date_col && (
+              <ColumnSuggestion suggestion={startSuggestion} showFile={isMultiFile} onUse={() => autoMatch.accept('start_date_col')} />
+            )}
           </div>
 
+          {/* End date */}
+          <div className="flex flex-col gap-1">
+            <Label>End date column</Label>
+            <p className="text-xs text-muted-foreground">
+              Enrollment end / last follow-up date. If absent, the fallback chain below is used.
+            </p>
+            {isMultiFile && (
+              <Select
+                value={cfg.end_date_file ?? ''}
+                onChange={e => setCfg(prev => ({ ...prev, end_date_file: e.target.value, end_date_col: '' }))}
+                className="mt-1"
+              >
+                <option value="">— select file —</option>
+                {files.map(f => <option key={f.filename} value={f.filename}>{f.filename}</option>)}
+              </Select>
+            )}
+            <Select
+              value={endDateCols.includes(cfg.end_date_col) ? cfg.end_date_col : ''}
+              onChange={e => setCfg(prev => ({ ...prev, end_date_col: e.target.value }))}
+              className="mt-1"
+            >
+              <option value="">— not mapped —</option>
+              {endDateCols.map(c => <option key={c} value={c}>{c}</option>)}
+            </Select>
+            {endSuggestion?.column && !cfg.end_date_col && (
+              <ColumnSuggestion suggestion={endSuggestion} showFile={isMultiFile} onUse={() => autoMatch.accept('end_date_col')} />
+            )}
+          </div>
+
+          {/* Fallback chain */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center justify-between">
+              <Label>If end date is missing, fallback to:</Label>
+              <button
+                type="button"
+                disabled={lastFallbackIsTerminal}
+                onClick={addFallback}
+                className="flex items-center gap-1 rounded px-2 py-1 text-xs font-medium text-primary border border-primary/40 hover:bg-primary/10 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+              >
+                <Plus className="size-3" />
+                Add fallback
+              </button>
+            </div>
+
+            {fallbacks.length === 0 && (
+              <p className="text-xs text-muted-foreground">
+                No fallback configured — rows with missing end dates will use the start date.
+              </p>
+            )}
+
+            {fallbacks.map((fb, idx) => (
+              <div key={idx} className="flex flex-col gap-1">
+                {/* Type row */}
+                <div className="flex items-center gap-2">
+                  <span className="w-5 text-right text-xs text-muted-foreground shrink-0">{idx + 1}.</span>
+                  <Select
+                    value={fb.type}
+                    onChange={e => updateFallback(idx, { type: e.target.value as ObsPeriodFallbackEntry['type'] })}
+                    className="w-52 shrink-0"
+                  >
+                    <option value="column">Column from file</option>
+                    <option value="start_date">Start date (1-day period)</option>
+                    <option value="today">Today's date</option>
+                  </Select>
+                  {fb.type !== 'column' && (
+                    <span className="text-xs text-muted-foreground">
+                      {fb.type === 'start_date' ? 'observation period of 1 day' : "uses today's date"}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => removeFallback(idx)}
+                    className="ml-auto rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
+                  >
+                    <X className="size-3.5" />
+                  </button>
+                </div>
+
+                {/* Column selection row — indented, only shown for 'column' type */}
+                {fb.type === 'column' && (
+                  <div className="ml-7 flex gap-2">
+                    {isMultiFile && (
+                      <Select
+                        value={fb.source_filename ?? ''}
+                        onChange={e => updateFallback(idx, { source_filename: e.target.value })}
+                        className="w-44 shrink-0"
+                      >
+                        <option value="">— file —</option>
+                        {files.map(f => <option key={f.filename} value={f.filename}>{f.filename}</option>)}
+                      </Select>
+                    )}
+                    <Select
+                      value={availCols(fb.source_filename, fb.col ?? '').includes(fb.col ?? '') ? (fb.col ?? '') : ''}
+                      onChange={e => updateFallback(idx, { col: e.target.value })}
+                      className="flex-1"
+                    >
+                      <option value="">— not mapped —</option>
+                      {availCols(fb.source_filename, fb.col ?? '').map(c => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </Select>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+
+          {/* Date format */}
           <div>
             <Label>Date format</Label>
             <Input
@@ -151,10 +358,11 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
               className="mt-1 font-mono"
             />
             <p className="mt-1 text-xs text-muted-foreground">
-              Python strptime format applied to both start and end date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
+              Python strptime format applied to all date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
             </p>
           </div>
 
+          {/* Period type concept */}
           <div>
             <Label>
               period_type_concept_id
@@ -164,6 +372,8 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
               value={cfg.period_type_concept_id || null}
               onChange={v => setCfg(prev => ({ ...prev, period_type_concept_id: v ?? 0 }))}
               placeholder="e.g. 32879"
+              expectedDomain="Type Concept"
+              projectId={project.id}
             />
             <a
               href="https://athena.ohdsi.org/search-terms/terms?domain=Type+Concept&standardConcept=Standard&page=1&pageSize=15&query="
@@ -173,7 +383,6 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
             >
               Accepted Concepts (Athena)
             </a>
-            <DomainWarning violations={periodTypeViolations} expectedDomain="Type Concept" />
           </div>
         </Card>
 
