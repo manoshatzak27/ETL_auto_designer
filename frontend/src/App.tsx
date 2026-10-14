@@ -16,6 +16,7 @@ import ConceptsStep from './pages/wizard/ConceptsStep'
 import StemTableStep from './pages/wizard/StemTableStep'
 import DeathStep from './pages/wizard/DeathStep'
 import FinalizeStep from './pages/wizard/FinalizeStep'
+import LogViewer from './pages/LogViewer'
 import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
@@ -93,6 +94,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/project/:projectId/step/:step" element={<ProjectWizard />} />
+        <Route path="/project/:projectId/log" element={<LogViewer />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

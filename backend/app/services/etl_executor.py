@@ -45,6 +45,18 @@ _DROP_TOTAL_RE = re.compile(r"^WARNING: (\d+) row\(s\) dropped across")
 _DROP_ANNOUNCE_RE = re.compile(r"every row referencing it is dropped")
 
 
+def dropped_rows(line: str) -> int:
+    """Rows a log line reports as dropped (not written to the output): 1 for a
+    line about one row, N for a total line, 0 otherwise."""
+    if not line.startswith((WARNING_PREFIX, "ERROR:")):
+        return 0
+    if m := _DROP_TOTAL_RE.match(line):
+        return int(m.group(1))
+    if _DROP_RE.search(line) and not _DROP_ANNOUNCE_RE.search(line):
+        return 1
+    return 0
+
+
 def _warning_kind(line: str) -> str:
     """Collapse a WARNING line to its kind by masking the row-specific parts
     (quoted values, row numbers, ids), so repeats of the same problem group together."""
@@ -65,11 +77,7 @@ class _TableLog:
     def add(self, line: str) -> None:
         if line.startswith(WARNING_PREFIX):
             self.warnings[_warning_kind(line)] += 1
-        if line.startswith((WARNING_PREFIX, "ERROR:")):
-            if m := _DROP_TOTAL_RE.match(line):
-                self.dropped += int(m.group(1))
-            elif _DROP_RE.search(line) and not _DROP_ANNOUNCE_RE.search(line):
-                self.dropped += 1
+        self.dropped += dropped_rows(line)
         if len(self.kept) < _LINES_PER_TABLE:
             self.kept.append(line)
         else:

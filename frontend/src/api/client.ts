@@ -419,7 +419,32 @@ export type ExecutionTableRow =
 export const getExecutionStats = (projectId: string, duringRun = false) =>
   api.get(`/projects/${projectId}/execution-stats`, { params: { during_run: duringRun || undefined } }).then(r => r.data as ExecutionTableStats[])
 
-export const downloadExecutionLog = (projectId: string, view: 'basic' | 'detailed') => {
+export type LogView = 'basic' | 'detailed'
+// all: every line; dropped: lines reporting rows not written; notes: INFO lines
+// (empty/unmapped fields on written rows).
+export type LogKind = 'all' | 'dropped' | 'notes'
+
+export interface ExecutionLogLines {
+  lines: { n: number; text: string }[]
+  total: number
+  offset: number
+}
+
+export const getExecutionLogLines = (
+  projectId: string,
+  params: { view: LogView; table?: string; kind?: LogKind; q?: string; offset: number; limit: number },
+) =>
+  api.get(`/projects/${projectId}/execution-log/lines`, {
+    params: { ...params, table: params.table || undefined, q: params.q || undefined },
+  }).then(r => r.data as ExecutionLogLines)
+
+// Opens the log viewer page in a new window.
+export const openLogViewer = (projectId: string, view: LogView, table?: string) => {
+  const qs = new URLSearchParams({ view, ...(table ? { table } : {}) })
+  window.open(`/project/${projectId}/log?${qs}`, '_blank')
+}
+
+export const downloadExecutionLog =(projectId: string, view: 'basic' | 'detailed') => {
   window.open(`/api/projects/${projectId}/execution-log/download?view=${view}`, '_blank')
 }
 
