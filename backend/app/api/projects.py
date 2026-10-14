@@ -91,6 +91,15 @@ def copy_project(project_id: str, db: Session = Depends(get_db)):
     def _rewrite_path(path: str) -> str:
         return path.replace(f"/{project_id}/", f"/{slug}/") if path else path
 
+    # Generated scripts embed absolute source-file paths (source_path = r'...'),
+    # so they must point at the copy's own upload dir too — otherwise the copy
+    # keeps reading the original's files and breaks once that project is deleted.
+    old_upload_dir = f"{settings.get_upload_path() / project_id}/"
+    new_upload_dir = f"{settings.get_upload_path() / slug}/"
+
+    def _rewrite_script(code: str) -> str:
+        return code.replace(old_upload_dir, new_upload_dir) if code else code
+
     for base_path in (settings.get_upload_path(), settings.get_output_path()):
         src_dir = base_path / project_id
         if src_dir.exists():
@@ -114,7 +123,7 @@ def copy_project(project_id: str, db: Session = Depends(get_db)):
         source_columns=list(source.source_columns or []),
         source_row_count=source.source_row_count,
         etl_config=dict(source.etl_config or {}),
-        generated_code=source.generated_code,
+        generated_code=_rewrite_script(source.generated_code),
         last_execution_log=source.last_execution_log,
         last_execution_status=source.last_execution_status,
         output_files=[_rewrite_path(f) for f in (source.output_files or [])],
@@ -123,7 +132,7 @@ def copy_project(project_id: str, db: Session = Depends(get_db)):
         custom_vocabulary_id=source.custom_vocabulary_id,
         mapping_files={k: _rewrite_path(v) for k, v in (source.mapping_files or {}).items()},
         source_files=new_source_files,
-        generated_scripts=dict(source.generated_scripts or {}),
+        generated_scripts={t: _rewrite_script(code) for t, code in (source.generated_scripts or {}).items()},
         chat_history=list(source.chat_history or []),
     )
     db.add(project)
