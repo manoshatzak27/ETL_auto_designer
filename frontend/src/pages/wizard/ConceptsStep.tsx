@@ -1164,6 +1164,7 @@ function ValueConceptRow({
   onSelect,
   onClear,
   onDismissSuggestions,
+  valueAsConcept = false,
 }: {
   projectId: string
   val: string
@@ -1176,6 +1177,11 @@ function ValueConceptRow({
   onSelect: (c: ConceptRef) => void
   onClear: () => void
   onDismissSuggestions?: () => void
+  // "Map both": the value becomes value_as_concept_id on the variable's row and
+  // never routes a row of its own, so it may be any domain — typically a
+  // "Meas Value" answer concept. The stem-domain rules below only apply to
+  // "Map values", where each value IS the clinical event.
+  valueAsConcept?: boolean
 }) {
   const [domainMode, setDomainMode] = useState<'auto' | 'manual'>('auto')
   const [lookingUpDomain, setLookingUpDomain] = useState(false)
@@ -1234,10 +1240,10 @@ function ValueConceptRow({
   )?.[1].domain_id
   const siblingDomain = siblingDomainId != null ? SEARCH_DOMAIN_BY_ID[siblingDomainId] : undefined
   const lockedSearchDomain = useMemo<LockedSearchDomain | undefined>(
-    () => siblingDomain
+    () => siblingDomain && !valueAsConcept
       ? { domain: siblingDomain, reason: `Filtered to ${siblingDomain}: the other values of this variable are mapped to ${siblingDomain}.` }
       : undefined,
-    [siblingDomain],
+    [siblingDomain, valueAsConcept],
   )
 
   // Value mapping only ever routes through the stem_table, which only knows how to
@@ -1246,6 +1252,9 @@ function ValueConceptRow({
   // flagged after the fact.
   const validateStemDomain = (domainStr: string | null): string | null => {
     if (!domainStr) return "Concept not found in CONCEPT.csv — can't verify its domain."
+    // value_as_concept_id is not routed through the stem table's domain switch;
+    // the variable's own concept decides the table. Any existing concept is fine.
+    if (valueAsConcept) return null
     const numeric = DOMAIN_STRING_MAP[domainStr.toLowerCase()]
     if (numeric === undefined) {
       return `"${domainStr}" is not a valid domain for value mapping. Allowed: Measurement, Observation, Drug Exposure, Procedure Occurrence, Condition Occurrence.`
@@ -1289,7 +1298,9 @@ function ValueConceptRow({
         validateDomain={validateStemDomain}
         lockedSearchDomain={lockedSearchDomain}
       />
-      {concept && (
+      {/* The stem-domain badge is meaningless for value_as_concept_id, and would only
+          flag the usual "Meas Value" answer concepts as an unknown domain. */}
+      {concept && !valueAsConcept && (
         <div className="pl-1">
           {domainMode === 'auto' ? (
             <div className={clsx(
@@ -1384,6 +1395,7 @@ function ValueMappingTable({
   mapped,
   suggestions,
   onChange,
+  valueAsConcept = false,
 }: {
   projectId: string
   column: string
@@ -1393,6 +1405,8 @@ function ValueMappingTable({
   // Per-value shortlists from the value pass of "Load concepts", keyed by value.
   suggestions?: Record<string, ConceptRef[]>
   onChange: (updated: Record<string, ConceptRef>, suggestions?: Record<string, ConceptRef[]>) => void
+  // See ValueConceptRow: true under "Map both", where values are value_as_concept_id.
+  valueAsConcept?: boolean
 }) {
   const [filter, setFilter] = useState('')
   const lazy = values.length > VALUE_LAZY_THRESHOLD
@@ -1490,6 +1504,7 @@ function ValueMappingTable({
                       onSelect={c => set(val, c)}
                       onClear={() => set(val, null)}
                       onDismissSuggestions={() => onChange(mapped, withoutSuggestion(val))}
+                      valueAsConcept={valueAsConcept}
                     />
                   </LazyMount>
                 </td>
@@ -3912,6 +3927,7 @@ const VariableRow = memo(function VariableRow({
                   mapped={decision.value_concepts}
                   suggestions={decision.value_suggestions}
                   onChange={(vc, vs) => onChange({ ...decision, value_concepts: vc, value_suggestions: vs })}
+                  valueAsConcept={decision.strategy === 'map_both'}
                 />
               )}
             </div>

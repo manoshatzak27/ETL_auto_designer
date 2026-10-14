@@ -3824,8 +3824,9 @@ def _generate_stem_table_script(project) -> str:
     # In multi-row mode all variables on a row share one visit; use the first
     # visit definition's date column as the default for all stem rows.
     first_vd = visit_defs[0] if visit_defs else {}
-    default_date_col = first_vd.get("date_col", "") if visit_source_col else ""
-    default_date_format = (first_vd.get("date_format") or "%Y-%m-%d") if visit_source_col else "%Y-%m-%d"
+    _multi_row = bool(visit_source_col) or auto_number_visits
+    default_date_col = first_vd.get("date_col", "") if _multi_row else ""
+    default_date_format = (first_vd.get("date_format") or "%Y-%m-%d") if _multi_row else "%Y-%m-%d"
 
     # variable → visit label, as configured by the user in the Stem Table step.
     # Keys are normalised to lowercase to match the runtime _lc lookup.
@@ -4100,6 +4101,11 @@ def _generate_stem_table_script(project) -> str:
         "                        raw_value = row.get(variable)\n"
         "                        if pd.isnull(raw_value) or str(raw_value).strip() in ('', 'nan'):\n"
         "                            continue\n"
+        "                        # A coded column with blanks is read by pandas as float, so a code\n"
+        "                        # of 1 arrives as 1.0 and would miss the mapping key '1' (and be\n"
+        "                        # written as value_source_value '1.0'). Integral floats go back to int.\n"
+        "                        if isinstance(raw_value, float) and raw_value.is_integer():\n"
+        "                            raw_value = int(raw_value)\n"
         "\n"
         "                        start_date = None\n"
         "                        start_datetime = None\n"
