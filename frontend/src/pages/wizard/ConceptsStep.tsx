@@ -3839,9 +3839,9 @@ const VariableRow = memo(function VariableRow({
   }
 
   return (
-    <div className="relative">
+    <div className="flex items-start">
     <div className={clsx(
-      'border rounded-lg transition-colors',
+      'flex-1 min-w-0 border rounded-lg transition-colors',
       !open && 'overflow-hidden',
       checked && 'ring-2 ring-primary',
       decision.strategy === 'skip' ? 'border-border/50' : 'border-border',
@@ -4324,11 +4324,14 @@ const VariableRow = memo(function VariableRow({
       )}
     </div>
 
-    {/* Missing required field warning — absolutely positioned outside the panel's
-        border so it never takes horizontal space from the panel itself (which would
-        otherwise shrink every row, warning or not, to keep list widths consistent). */}
+    {/* Missing required field warning — a zero-width flex item whose content overflows
+        to the right of the panel, so it never takes horizontal space from the panel itself
+        (which would otherwise shrink every row, warning or not, to keep list widths
+        consistent), yet still counts toward the row's height so a tall stack of warnings
+        can't spill over the next row's warnings. */}
     {(missingRequiredFields.length > 0 || startDatetimeUnmapped || endDatetimeUnmapped) && (
-      <div className="absolute left-full top-0 ml-2 w-44 flex flex-col gap-1">
+      <div className="w-0 flex-shrink-0">
+      <div className="ml-2 w-60 flex flex-col gap-1">
         {startDatetimeUnmapped && (
           startDatetimeDropsRows ? (
             <div className="flex items-start gap-1 text-[11px] font-medium text-red-700 leading-snug">
@@ -4361,6 +4364,7 @@ const VariableRow = memo(function VariableRow({
             <span>{missingRequiredFields.join(', ')} required</span>
           </div>
         )}
+      </div>
       </div>
     )}
     </div>
