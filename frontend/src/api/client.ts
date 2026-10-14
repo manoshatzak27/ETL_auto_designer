@@ -384,8 +384,44 @@ export const renameProject = (projectId: string, name: string) =>
   updateProjectSettings(projectId, { name })
 
 // ---- Execution ----
-export const executeProject = (projectId: string, outputMode: 'basic' | 'detailed' = 'basic') =>
-  api.post(`/projects/${projectId}/execute`, { output_mode: outputMode }).then(r => r.data)
+export const executeProject = (projectId: string) =>
+  api.post(`/projects/${projectId}/execute`).then(r => r.data)
+
+export interface ExecutionLogPreview {
+  log: string
+  total_lines: number
+  info_lines: number
+  truncated: boolean
+  size_bytes: number
+}
+
+// `table` limits the preview to that table's section of the log.
+export const getExecutionLogPreview = (projectId: string, limit: number, table?: string) =>
+  api.get(`/projects/${projectId}/execution-log`, { params: { limit, table: table || undefined } })
+    .then(r => r.data as ExecutionLogPreview)
+
+export interface ExecutionTableStats {
+  table: string
+  status: 'ok' | 'failed' | 'running' | 'not_run'
+  rows_written: number | null
+  dropped: number
+  warnings: number
+  info: number
+}
+
+// A row of the stats table before there are counts for it: the pipeline hasn't
+// run yet, is running, or ran before counts were recorded ('unknown').
+export type ExecutionTableRow =
+  | ExecutionTableStats
+  | { table: string; status: 'not_run' | 'running' | 'unknown'; rows_written: null; dropped: null; warnings: null; info: null }
+
+// `duringRun` reads the counts of a run still in progress (polled for progress).
+export const getExecutionStats = (projectId: string, duringRun = false) =>
+  api.get(`/projects/${projectId}/execution-stats`, { params: { during_run: duringRun || undefined } }).then(r => r.data as ExecutionTableStats[])
+
+export const downloadExecutionLog = (projectId: string, view: 'basic' | 'detailed') => {
+  window.open(`/api/projects/${projectId}/execution-log/download?view=${view}`, '_blank')
+}
 
 export const downloadOutput = (projectId: string, filename: string) => {
   window.open(`/api/projects/${projectId}/download/${filename}`, '_blank')

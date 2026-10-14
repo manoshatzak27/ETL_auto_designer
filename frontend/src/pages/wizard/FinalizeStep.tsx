@@ -9,19 +9,26 @@ import { useNavigate } from 'react-router-dom'
 import {
   executeProject,
   downloadOutput,
+  downloadExecutionLog,
+  getExecutionLogPreview,
+  getExecutionStats,
   getDbHealth,
   getLoadStatus,
   getOutputPreview,
   loadDatabase,
   type DbHealth,
+  type ExecutionLogPreview,
+  type ExecutionTableStats,
+  type ExecutionTableRow,
   type LoadStatus,
   type OutputPreview,
 } from '../../api/client'
 import type { Project } from '../../types'
 import WizardLayout from './WizardLayout'
 import ScriptGenerator from '../../components/ScriptGenerator'
-import LogStream from '../../components/LogStream'
+import LogStream, { RunStatusBadge } from '../../components/LogStream'
 import ErrorBanner from '../../components/ErrorBanner'
+import ExecutionStatsTable from '../../components/ExecutionStatsTable'
 import OmopTablePreview from '../../components/OmopTablePreview'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
 import {
@@ -42,6 +49,44 @@ interface Props {
 // Universe of OMOP tables this page can generate. The visible subset is
 // computed at render time from the project's etl_config so optional tables
 // the user didn't tick on the Source step don't appear here either.
+// Split a run log into each table's section. A section opens with the
+// executor's banner (blank line, rule, "[TABLE: x] Starting...", rule); the
+// blank line and rule before "Starting" belong to the section they open.
+// Mirrors _sections in backend/app/api/execution.py.
+function splitLogByTable(log: string): { tables: string[]; byTable: Record<string, string> } {
+  const byTable: Record<string, string[]> = {}
+  const tables: string[] = []
+  let current = ''
+  let pending: string[] = []
+  for (const line of log.split(/(?<=\n)/)) {
+    const stripped = line.replace(/\n$/, '')
+    const m = /^\[TABLE: (\w+)\] Starting\.\.\.$/.exec(stripped)
+    if (m) {
+      current = m[1]
+      if (!byTable[current]) { byTable[current] = []; tables.push(current) }
+    } else if (stripped === '' || /^=+$/.test(stripped)) {
+      pending.push(line)
+      continue
+    }
+    if (current) byTable[current].push(...pending, line)
+    pending = []
+  }
+  if (current) byTable[current].push(...pending)
+  return { tables, byTable: Object.fromEntries(tables.map(t => [t, byTable[t].join('')])) }
+}
+
+// Order the pipeline runs tables in (etl_executor.EXECUTION_ORDER).
+const EXECUTION_ORDER = [
+  'location', 'care_site', 'provider', 'person', 'visit_occurrence', 'observation_period',
+  'stem_table', 'death',
+  'measurement', 'observation', 'drug_exposure', 'procedure_occurrence', 'condition_occurrence',
+]
+
+// Lines of the detailed log shown on the page; the full log is a download.
+const LOG_PREVIEW_LINES = 5000
+// Script output lines per table kept in the basic log (etl_executor._LINES_PER_TABLE).
+const BASIC_LINES_PER_TABLE = 500
+
 const ALL_TABLES = [
   { key: 'location',           label: 'location.py',           description: 'Physical address / location records' },
   { key: 'care_site',          label: 'care_site.py',          description: 'Institutional care site records' },
@@ -120,7 +165,48 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
       : null,
   )
   const [execError, setExecError] = useState('')
-  const [outputMode, setOutputMode] = useState<'basic' | 'detailed'>('basic')
+  // Every run captures both views: Basic is the log stored on the project,
+  // Detailed is a preview of the run's full log file, fetched on demand.
+  const [logView, setLogView] = useState<'basic' | 'detailed'>('basic')
+  // Which table's section of the log to show; '' = the whole run.
+  const [logTable, setLogTable] = useState('')
+  // Detailed previews keyed by logTable, fetched on demand.
+  const [detailedLogs, setDetailedLogs] = useState<Record<string, ExecutionLogPreview | { error: string } | null>>({})
+  const detailedLog = detailedLogs[logTable]
+
+  useEffect(() => {
+    if (logView !== 'detailed' || logTable in detailedLogs || executing || !execResult) return
+    setDetailedLogs(prev => ({ ...prev, [logTable]: null }))
+    getExecutionLogPreview(project.id, LOG_PREVIEW_LINES, logTable)
+      .then(preview => setDetailedLogs(prev => ({ ...prev, [logTable]: preview })))
+      .catch((e: unknown) => {
+        const err = e as { response?: { data?: { detail?: string } } }
+        const error = err?.response?.data?.detail || 'Could not load the detailed log.'
+        setDetailedLogs(prev => ({ ...prev, [logTable]: { error } }))
+      })
+  }, [logView, logTable, detailedLogs, executing, execResult, project.id])
+
+  const basicSections = useMemo(() => splitLogByTable(execResult?.log ?? ''), [execResult?.log])
+
+  // Per-table counts of the last run (or of the one in progress); null until
+  // fetched, [] when the run left none (a run from before stats were recorded,
+  // or a request that failed).
+  const [runStats, setRunStats] = useState<ExecutionTableStats[] | null>(null)
+
+  useEffect(() => {
+    if (runStats || executing || !execResult) return
+    getExecutionStats(project.id).then(setRunStats).catch(() => setRunStats([]))
+  }, [runStats, executing, execResult, project.id])
+
+  // While the pipeline runs, poll its counts so each table's row fills in as
+  // it finishes instead of all at once at the end.
+  useEffect(() => {
+    if (!executing) return
+    const id = setInterval(() => {
+      getExecutionStats(project.id, true).then(setRunStats).catch(() => {})
+    }, 1500)
+    return () => clearInterval(id)
+  }, [executing, project.id])
 
   // Only count / regenerate the tables the user enabled on the Source step.
   const activeTables = getActiveTables(project)
@@ -133,9 +219,12 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
   const handleExecute = async () => {
     setExecuting(true)
     setExecError('')
+    setRunStats(null)
     try {
-      const result = await executeProject(project.id, outputMode)
+      const result = await executeProject(project.id)
       setExecResult(result)
+      setDetailedLogs({})
+      setRunStats(result.stats ?? null)
       onUpdate({ ...project, last_execution_status: result.status, last_execution_log: result.log, output_files: result.output_files })
       // Bust cached previews so re-execution shows fresh data
       setPreviewCache({})
@@ -145,11 +234,25 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
       const msg = err?.response?.data?.detail || 'Execution failed.'
       setExecError(msg)
       setExecResult({ status: 'error', log: msg, output_files: [] })
+      setDetailedLogs({})
+      setRunStats(null)
       onUpdate({ ...project, last_execution_status: 'error', last_execution_log: msg })
     } finally {
       setExecuting(false)
     }
   }
+
+  // Rows of the stats table: the last run's counts, or — before a run, while
+  // one is in progress, or for a run from before counts were recorded — the
+  // tables the pipeline would run (same filter as the execute endpoint).
+  const statsRows: ExecutionTableRow[] = useMemo(() => {
+    if (runStats && runStats.length > 0) return runStats
+    const config = (project.etl_config || {}) as Record<string, { enabled?: boolean } | undefined>
+    const status = executing || !execResult ? 'not_run' : 'unknown'
+    return EXECUTION_ORDER
+      .filter(t => scripts[t] && config[t]?.enabled !== false)
+      .map(table => ({ table, status, rows_written: null, dropped: null, warnings: null, info: null }))
+  }, [executing, runStats, execResult, project.etl_config, scripts])
 
   // ── Preview state ────────────────────────────────────────────────────────
   // Cached output previews keyed by csv filename. `null` while in flight,
@@ -369,40 +472,6 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
                 </p>
               )}
 
-              <div className="flex flex-col gap-1">
-                <p className="text-xs font-medium text-foreground">Output verbosity</p>
-                <div className="flex items-center gap-4 text-sm">
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="outputMode"
-                      value="basic"
-                      checked={outputMode === 'basic'}
-                      onChange={() => setOutputMode('basic')}
-                      className="accent-blue-600"
-                    />
-                    <span>
-                      <span className="font-medium">Basic</span>
-                      <span className="text-muted-foreground ml-1">— only rows skipped entirely (WARNING)</span>
-                    </span>
-                  </label>
-                  <label className="flex items-center gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="outputMode"
-                      value="detailed"
-                      checked={outputMode === 'detailed'}
-                      onChange={() => setOutputMode('detailed')}
-                      className="accent-blue-600"
-                    />
-                    <span>
-                      <span className="font-medium">Detailed</span>
-                      <span className="text-muted-foreground ml-1">— also empty/unmapped fields on written rows (INFO)</span>
-                    </span>
-                  </label>
-                </div>
-              </div>
-
               <Button onClick={handleExecute} disabled={executing} size="lg" className="w-fit">
                 {executing
                   ? <><RefreshCw className="w-5 h-5 animate-spin" /> Running pipeline…</>
@@ -421,7 +490,110 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
             </div>
           )}
 
-          {execResult && <LogStream log={execResult.log} status={execResult.status} />}
+          {execResult && <RunStatusBadge status={execResult.status} />}
+
+          {statsRows.length > 0 && (
+            <ExecutionStatsTable
+              stats={statsRows}
+              executing={executing}
+              selected={logTable}
+              onSelect={t => setLogTable(prev => (prev === t ? '' : t))}
+            />
+          )}
+
+          {execResult && (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+                <span className="text-xs font-medium text-foreground">Log verbosity</span>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="logView"
+                    value="basic"
+                    checked={logView === 'basic'}
+                    onChange={() => setLogView('basic')}
+                    className="accent-blue-600"
+                  />
+                  <span>
+                    <span className="font-medium">Basic</span>
+                    <span className="text-muted-foreground ml-1">— only rows skipped entirely (WARNING)</span>
+                  </span>
+                </label>
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="logView"
+                    value="detailed"
+                    checked={logView === 'detailed'}
+                    onChange={() => setLogView('detailed')}
+                    className="accent-blue-600"
+                  />
+                  <span>
+                    <span className="font-medium">Detailed</span>
+                    <span className="text-muted-foreground ml-1">— also empty/unmapped fields on written rows (INFO)</span>
+                  </span>
+                </label>
+              </div>
+
+              {logView === 'detailed' && detailedLog && 'error' in detailedLog && (
+                <p className="text-xs text-destructive">{detailedLog.error}</p>
+              )}
+              {logView === 'detailed' && detailedLog && !('error' in detailedLog) && (
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>
+                    {detailedLog.truncated
+                      ? `Showing the first ${LOG_PREVIEW_LINES.toLocaleString()} of ${detailedLog.total_lines.toLocaleString()} lines`
+                      : `${detailedLog.total_lines.toLocaleString()} lines`}
+                    {' '}({detailedLog.info_lines.toLocaleString()} INFO, {(detailedLog.size_bytes / 1024 / 1024).toFixed(1)} MB)
+                  </span>
+                  <Button variant="outline" size="sm" onClick={() => downloadExecutionLog(project.id, 'detailed')}>
+                    <Download className="w-3.5 h-3.5" /> Download full log
+                  </Button>
+                </div>
+              )}
+              {logView === 'basic' && !execError && (
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>Up to {BASIC_LINES_PER_TABLE} lines per table, then a summary of its warnings by kind</span>
+                  <Button variant="outline" size="sm" onClick={() => downloadExecutionLog(project.id, 'basic')}>
+                    <Download className="w-3.5 h-3.5" /> Download full basic log
+                  </Button>
+                </div>
+              )}
+              {logView === 'detailed' && !detailedLog && (
+                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading detailed log…
+                </p>
+              )}
+
+              {basicSections.tables.length > 1 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-xs font-medium text-foreground mr-1">Table</span>
+                  {['', ...basicSections.tables].map(t => (
+                    <button
+                      key={t || 'all'}
+                      type="button"
+                      onClick={() => setLogTable(t)}
+                      className={clsx(
+                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
+                        logTable === t
+                          ? 'bg-primary text-primary-foreground border-primary'
+                          : 'bg-card text-foreground border-border hover:bg-muted',
+                        t && 'font-mono',
+                      )}
+                    >
+                      {t || 'All tables'}
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              <LogStream
+                log={logView === 'basic'
+                  ? (logTable ? basicSections.byTable[logTable] ?? '' : execResult.log)
+                  : (detailedLog && !('error' in detailedLog) ? detailedLog.log : '')}
+              />
+            </div>
+          )}
 
           {execResult?.output_files && execResult.output_files.length > 0 && (
             <Card className="p-5 flex flex-col gap-3">
