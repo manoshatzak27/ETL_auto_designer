@@ -23,7 +23,7 @@ interface Props {
  *  scores (0–100). Usually the best one scored below 90, but a tie or a field's
  *  vocabulary preference can hold back a higher score too. The suggested
  *  concept comes first. */
-function SuggestionList({ suggestion, onUse }: {
+export function SuggestionList({ suggestion, onUse }: {
   suggestion: ValueConceptSuggestion
   onUse: (conceptId: number) => void
 }) {

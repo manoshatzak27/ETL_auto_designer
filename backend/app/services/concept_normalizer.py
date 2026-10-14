@@ -12,6 +12,11 @@ has nothing to go on for the shapes demographic columns usually arrive in:
   geography  "GR", "USA"                   — country codes ("USA" alone is a village)
   visit      "ER", "ICU", "IP"             — abbreviations
   provider   "GP", "cardiologist"          — shorthand, the person for the field
+  route      "PO", "SC", "Sub cut injection" — abbreviations, phrasings
+
+Units are not here: they are written as UCUM codes ("mg/dL"), which a text
+matcher cannot read, and are looked up by code in the vocabulary instead
+(see unit_codes and concept_mapping._ucum_unit).
 
 So each value is normalized first, per domain. Gender has only two standard
 concepts and is resolved here outright; for every other domain the rewritten
@@ -316,6 +321,80 @@ _VISIT_SYNONYMS: dict[str, str] = {
 # Provider specialties: common shorthand, and people named for their field
 # ("cardiologist") rather than the field itself, which is how the specialty
 # vocabularies name them ("Cardiology").
+# Route abbreviations and phrasings. The matcher already resolves the plain
+# names ("Oral", "Subcutaneous", "sub cutaneously") on its own; these are the
+# shapes a text match has nothing to go on for — "PO" — or reads as a dose form
+# rather than a route — "Sub cut injection" scores "Injectable".
+_ROUTE_SYNONYMS: dict[str, str] = {
+    **{t: "Oral" for t in ("po", "p o", "per os", "by mouth", "orally", "oral tablet", "tablet", "tablets")},
+    **{t: "Intravenous" for t in ("iv", "i v", "intravenously", "iv infusion", "infusion")},
+    **{t: "Intramuscular" for t in ("im", "i m", "intramuscularly", "im injection")},
+    **{t: "Subcutaneous" for t in (
+        "sc", "s c", "sq", "s q", "subcut", "sub cut", "sub cutaneous", "sub cutaneously",
+        "sc injection", "subcut injection", "sub cut injection", "sub cut injections",
+        "subcutaneous injection", "subcutaneous injections",
+    )},
+    **{t: "Intra-articular" for t in ("ia", "intraarticular", "joint injection", "joint injections")},
+    # The Route domain has no "Inhalation"; OHDSI routes inhaled drugs here.
+    **{t: "Respiratory tract" for t in ("inh", "inhaled", "inhaler", "inhalation", "inhalations")},
+    **{t: "Topical" for t in ("cream", "ointment", "cream to skin", "topically", "on skin")},
+    **{t: "Nasal" for t in ("nasal spray", "intranasal", "nose spray", "nasal drops")},
+    # The Route domain's only concept for an injection of unstated route; a
+    # text match scores it in the 40s, since "injection" ≠ "injectable".
+    **{t: "Injectable" for t in (
+        "inj", "injection", "injections", "injectable", "injection unspecified",
+        "unspecified injection", "by injection",
+    )},
+    **{t: "Ophthalmic" for t in ("eye", "eye drops", "eyedrops", "eye drop", "eye ointment", "ocular")},
+    **{t: "Otic" for t in ("ear", "ear drops", "eardrops", "ear drop", "auricular")},
+    **{t: "Rectal" for t in ("pr", "per rectum", "rectally", "suppository", "suppositories", "enema")},
+    **{t: "Vaginal" for t in ("pv", "per vaginam", "vaginally", "pessary", "pessaries")},
+    **{t: "Sublingual" for t in ("sl", "under the tongue", "sublingually")},
+    **{t: "Transdermal" for t in ("td", "patch", "patches", "transdermal patch", "skin patch")},
+    **{t: "Intradermal" for t in ("id", "intracutaneous")},
+    **{t: "Intrathecal" for t in ("it", "intraspinal")},
+    **{t: "Nasogastric" for t in ("ng", "ng tube", "nasogastric tube")},
+    **{t: "Gastrostomy" for t in ("peg", "g tube", "peg tube", "gastrostomy tube")},
+    **{t: "Intravitreal" for t in ("ivt", "intravitreal injection")},
+}
+
+# Longer free-text phrasings no fixed key can list, matched on the lookup key:
+# "Injection in joint(s), for example knee, hip or shoulder", "Cream/ointment,
+# on scalp". Tried in order, after the exact synonyms.
+_ROUTE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bjoints?\b.*\binject|\binject\w*\b.*\bjoints?\b|\bintra ?articular"), "Intra-articular"),
+    (re.compile(r"\b(cream|ointment|gel|lotion|salve|zalf|crème|emollient)s?\b"), "Topical"),
+]
+
+# Unit spellings that are not UCUM codes → the UCUM code meaning the same thing.
+# Matched per part of a compound ("IU/ml" → "[iU]/ml"); the vocabulary lookup
+# then settles case ("ml" → "mL").
+_UNIT_SYNONYMS: dict[str, str] = {
+    "mcg": "ug", "µg": "ug", "μg": "ug",
+    "iu": "[iU]", "ui": "[iU]", "ie": "[iU]",
+    "cc": "mL",
+    "percent": "%",
+    **{t: "{tbl}" for t in ("tab", "tabs", "tablet", "tablets")},
+    **{t: "{actuat}" for t in ("puff", "puffs", "actuation", "actuations", "inhalation", "inhalations")},
+    **{t: "[drp]" for t in ("drop", "drops", "gtt")},
+    **{t: "[App]" for t in ("application", "applications")},
+}
+
+
+def unit_code(value: str) -> tuple[str, bool] | None:
+    """The UCUM code to look `value` up by, and whether the value also carried
+    an amount ("2,5mg" → ("mg", True)). None when there is no unit in it at all
+    — a number, a date — which no lookup or text match could turn into one."""
+    text = value.strip()
+    amount = re.match(r"^[\d.,\s]+(?=[^\d.,\s])", text)
+    if amount:
+        text = text[amount.end():].strip()
+    if not re.search(r"[A-Za-z%µμ\[{]", text):
+        return None
+    parts = [p.strip() for p in text.split("/")]
+    return "/".join(_UNIT_SYNONYMS.get(p.lower(), p) for p in parts), bool(amount)
+
+
 _PROVIDER_SYNONYMS: dict[str, str] = {
     "gp": "General Practice",
     "general practitioner": "General Practice",
@@ -353,6 +432,13 @@ def normalize_term(value: str, domain: str) -> str:
         return _GEOGRAPHY_COUNTRIES.get(key) or value.strip()
     if d == "visit":
         return _VISIT_SYNONYMS.get(key) or value.strip()
+    if d == "route":
+        if key in _ROUTE_SYNONYMS:
+            return _ROUTE_SYNONYMS[key]
+        for pattern, term in _ROUTE_PATTERNS:
+            if pattern.search(key):
+                return term
+        return value.strip()
     if d == "provider":
         if key in _PROVIDER_SYNONYMS:
             return _PROVIDER_SYNONYMS[key]

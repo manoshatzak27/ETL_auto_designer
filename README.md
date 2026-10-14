@@ -241,8 +241,17 @@ you pick takes one click and is right.
 
 Rows awaiting a choice are badged while collapsed and have their own **Review**
 filter in the toolbar, and the shortlists are saved with the rest of the step,
-so a run survives a reload. The panel at the top lists, by name, what needs a
-look and what came back unmapped.
+so a run survives a reload.
+
+A results panel at the top sums up the run: variable and value counts side by
+side as coloured bars (set, to pick, unsupported domain, unmapped, failed), then
+a **Needs your attention** list of the affected columns as chips, and a
+collapsible per-column table of the value results, columns needing work first.
+Clicking a column filters the list to it; it does so with a quoted search
+(`"PAT_MED_HIST"`), which matches that name exactly instead of every column
+containing it — the same works when typed into the filter box. The panel is kept
+in the browser per project, so it too survives a reload, until dismissed or
+replaced by the next run.
 
 ### Variables mapped by value: two passes, one domain
 
@@ -263,14 +272,36 @@ have been looked up. So such a column is matched in two passes, per column:
    was off-domain therefore gets the best *in-domain* one instead of being
    dropped, and candidates outside the domain are stripped from the shortlists.
 
+Each value is sent **on its own**, without the column's name or description.
+The matcher folds a description into the query, which helps a column but drowns
+a value: next to `PAT_MED_ARD_NAME_1`, "Prednison" fell from auto-accept 97.0 to
+unmapped 57.8, and even a written description pulled in wrong concepts. The
+domain vote already supplies the context a value needs.
+
+A **yes/no column** — every value is a yes/no word (`yes`/`y`/`true`/`present`,
+`no`/`n`/`false`/`absent`) or a missing-data marker, with at least one yes — is
+the exception. "Yes" alone only finds the answer concept *Yes*; its meaning is in
+the column ("Are there any swollen joints?"). So the **column** (name +
+description) is matched once instead, restricted to the five stem domains; every
+"Yes" takes that concept, every "No" is set to 0 (not mapped), missing markers
+are left open. The column's domain is recorded only when a value actually got a
+concept, so a column of unresolved answers keeps the domain it had.
+
+Measured on 647 hand-mapped values of the PsA study (`benchmarks/
+compare_value_mappings.py` in the matcher's repo), the share of values that are
+right or one click away went from 48.1% (value + column name) to **73.3%**
+(value alone + yes/no handling), and 64 of the 99 values deliberately left at 0
+are now set to 0 automatically.
+
 The per-value verdicts are then handled exactly like the per-column ones:
 auto-accept sets the concept, review leaves the value's own 5-candidate shortlist
 on its row, unmapped leaves it alone. A value you had already decided is never
 touched. If the domain the values agreed on is *not* one of the five — nothing
 stem-table-shaped can be built from it — nothing is set for that column at all,
-and the summary says so. The summary panel reports the value totals and which domain each
-variable's values were confined to, and the row badges how many of its values are
-waiting on a choice.
+and the results panel marks that domain as unsupported. The panel's value-columns
+table shows, per column, the domain its values were confined to and how many
+were set, left to pick, unmapped or failed; the row badges how many of its values
+are waiting on a choice.
 
 Values are read server-side from the source CSVs (up to 500 distinct values per
 column), so this works for columns of files other than the selected one. Columns
@@ -569,12 +600,42 @@ Gender concept), so every request is confined to it.
 | Visit | visit type | Type Concept | — |
 | Visit | admitted from, discharged to | Visit | CMS Place of Service |
 | Obs. period, Death | period type, cause of death | Type Concept, Condition | search only (single fields, no value table) |
+| Concepts | unit, route (per variable) | Unit, Route | units by UCUM code (below) |
 
 Where a field wants one vocabulary of its domain, the request carries a `prefer`
 (vocabularies and/or concept classes): the best-scoring preferred candidate wins,
 and with none in the shortlist the match is only offered, never filled. An exact
 name tie the matcher collapses (*Canada* returned as the OSM place *Canadá*) is
 resolved by an exact-name lookup restricted to the preference.
+
+### Units and routes (Concepts step)
+
+The Concepts step's **Auto-fill units & routes** button runs the same procedure
+for every included variable whose Unit or Route card is in *From column* mode:
+each distinct value of the unit / route column is matched in the `Unit` /
+`Route` domain, confident matches are set, weaker ones wait on the value's row
+under *Suggested … Use*, and values already set are never sent. Only the selected
+file's values are loaded in that step, so a column of another file is filled
+when that file is selected. Suggestions live until the page is reloaded.
+
+Two kinds of value are resolved before the matcher is asked:
+
+- **Units by UCUM code.** The matcher searches concept *names* ("milligram"); a
+  unit column holds *codes* ("mg"), and searched as text "mg" landed on
+  *nanomole per minute per mg of protein*. So units are looked up by
+  `concept_code` among standard UCUM concepts: exact code first, then
+  case-insensitively when only one concept fits (`mg/ml` → mg/mL); common
+  non-UCUM spellings are translated first (mcg → ug, IU → [iU], cc → mL,
+  tablets → {tbl}, puffs → {actuat}). A value with an amount in it ("2,5mg") is
+  only offered; a number or a date is skipped.
+- **"None" values.** In unit and route columns, unknown / not applicable / other /
+  n/a / none / missing are set to 0 (not mapped).
+
+Routes otherwise go to the matcher after the normalizer's synonyms (PO, IV, IM,
+SC, PR, SL, eye drops, patch, "Sub cut injection", "injection (unspecified)" →
+*Injectable*) and two phrase patterns (a joint injection → *Intra-articular*; a
+cream / ointment / gel → *Topical*). Inhaled drugs go to *Respiratory tract*,
+the OHDSI convention — the Route domain has no "Inhalation".
 
 ### Why values are rewritten before matching
 

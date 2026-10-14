@@ -2872,7 +2872,7 @@ def _generate_visit_occurrence_script(project) -> str:
         "from datetime import datetime, date\n"
         "\n"
         "\n"
-        "from etl_runtime import _info, _read_str, build_id_lookup, _write_omop_csv\n"
+        "from etl_runtime import _info, _read_str, build_id_lookup, number_visits_by_date, _write_omop_csv\n"
         "\n"
         "\n"
         "# --- Module-level constants ---\n"
@@ -2895,7 +2895,7 @@ def _generate_visit_occurrence_script(project) -> str:
         "    # --- Process rows ---\n"
         "    visit_id_counter = 1\n"
         "    rows = []\n"
-        "    _visit_counters = {}  # person_source_value -> int, used for auto-numbering\n"
+        "    _visit_counters = {}  # person_source_value -> highest auto-number used so far\n"
         "    _seen_visits = set()  # record_source_value dedup guard\n"
         "\n"
     )
@@ -2921,7 +2921,7 @@ def _generate_visit_occurrence_script(project) -> str:
         + "\n"
         "            # Iterate over visit definitions for this row\n"
         "            _defs_to_use = VISIT_DEFS[:1] if VISIT_SOURCE_COL else VISIT_DEFS\n"
-        "            for vd in _defs_to_use:\n"
+        "            for _vd_idx, vd in enumerate(_defs_to_use):\n"
         "                try:\n"
         "                    date_val = row.get(vd['date_col'])\n"
         "                    _date_str = str(date_val).strip() if pd.notnull(date_val) else ''\n"
@@ -3028,8 +3028,10 @@ def _generate_visit_occurrence_script(project) -> str:
         "                        # Multi-row dataset: the visit identifier column IS the verbatim kind-of-visit value\n"
         "                        visit_source_value = _vsv_raw\n"
         "                    elif AUTO_NUMBER_VISITS:\n"
-        "                        _visit_counters[person_source_value] = _visit_counters.get(person_source_value, 0) + 1\n"
-        "                        label_norm = f'visit{_visit_counters[person_source_value]}'\n"
+        "                        _visit_num = _visit_numbers.get((_src_idx, _vd_idx))\n"
+        "                        if _visit_num is None:\n"
+        "                            continue\n"
+        "                        label_norm = f'visit{_visit_num}'\n"
         "                    else:\n"
         "                        label_norm = vd['label'].lower().replace(' ', '_')\n"
         "                    # record_source_value: internal dedup/join key, independent of visit_source_value\n"
@@ -3177,6 +3179,12 @@ def _generate_visit_occurrence_script(project) -> str:
             + "        _CUR_PID_COL       = fc.get('pid_col', '')\n"
             + "        _CUR_FILE          = fc.get('filename', '')\n"
             + "        df = pd.read_csv(fc['path'], delimiter=fc['delimiter'], encoding=fc['encoding'])\n"
+            + "        # Auto-numbered visits follow visit-date order, not row order\n"
+            + "        _visit_numbers = number_visits_by_date(\n"
+            + "            df, _CUR_PID_COL,\n"
+            + "            [(vd['date_col'], vd.get('date_format')) for vd in VISIT_DEFS],\n"
+            + "            _visit_counters,\n"
+            + "        ) if AUTO_NUMBER_VISITS and not VISIT_SOURCE_COL else {}\n"
             + "\n"
             + indented_row_loop
             + output_section
@@ -3196,7 +3204,7 @@ def _generate_visit_occurrence_script(project) -> str:
         script_header
         + f"VISIT_DEFS      = {vd_repr}  # visit definitions from the Visit step\n"
         + f"\nVISIT_SOURCE_COL = {repr(visit_source_col)}  # column that carries visit label (multi-row mode)\n"
-        + f"AUTO_NUMBER_VISITS = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
+        + f"AUTO_NUMBER_VISITS = {repr(auto_number_visits)}  # number visits visit1/visit2/... by visit date when no identifier col\n"
         + "\n\n"
         + "def main():\n"
         + "    # Load environmental variables\n"
@@ -3209,6 +3217,13 @@ def _generate_visit_occurrence_script(project) -> str:
         + lookup_setup
         + "\n"
         + rows_init
+        + "    # Auto-numbered visits follow visit-date order, not row order\n"
+        + "    _visit_numbers = number_visits_by_date(\n"
+        + f"        df, {repr(pid_col)},\n"
+        + "        [(vd['date_col'], vd.get('date_format')) for vd in VISIT_DEFS],\n"
+        + "        _visit_counters,\n"
+        + "    ) if AUTO_NUMBER_VISITS and not VISIT_SOURCE_COL else {}\n"
+        + "\n"
         + row_loop_body
         + output_section
         + "\n\n"
@@ -3824,9 +3839,10 @@ def _generate_stem_table_script(project) -> str:
     # In multi-row mode all variables on a row share one visit; use the first
     # visit definition's date column as the default for all stem rows.
     first_vd = visit_defs[0] if visit_defs else {}
-    _multi_row = bool(visit_source_col) or auto_number_visits
-    default_date_col = first_vd.get("date_col", "") if _multi_row else ""
-    default_date_format = (first_vd.get("date_format") or "%Y-%m-%d") if _multi_row else "%Y-%m-%d"
+    # Auto-numbered visits are also one-per-row, dated by that same column.
+    row_visit = bool(visit_source_col) or auto_number_visits
+    default_date_col = first_vd.get("date_col", "") if row_visit else ""
+    default_date_format = (first_vd.get("date_format") or "%Y-%m-%d") if row_visit else "%Y-%m-%d"
 
     # variable → visit label, as configured by the user in the Stem Table step.
     # Keys are normalised to lowercase to match the runtime _lc lookup.
@@ -4066,8 +4082,8 @@ def _generate_stem_table_script(project) -> str:
         "                    _row_date_col = DEFAULT_DATE_COL\n"
         "                    _row_date_fmt = DEFAULT_DATE_FORMAT\n"
         "                elif AUTO_NUMBER_VISITS:\n"
-        "                    _stem_visit_counters[person_source_value] = _stem_visit_counters.get(person_source_value, 0) + 1\n"
-        "                    _row_visit_label = f'visit{_stem_visit_counters[person_source_value]}'\n"
+        "                    _visit_num = _visit_numbers.get((_src_idx, 0))\n"
+        "                    _row_visit_label = f'visit{_visit_num}' if _visit_num else None\n"
         "                    _row_date_col = DEFAULT_DATE_COL\n"
         "                    _row_date_fmt = DEFAULT_DATE_FORMAT\n"
         "                else:\n"
@@ -4376,7 +4392,7 @@ def _generate_stem_table_script(project) -> str:
         "from datetime import datetime\n"
         "\n"
         "\n"
-        "from etl_runtime import _info, build_id_lookup, _write_omop_csv\n"
+        "from etl_runtime import _info, build_id_lookup, number_visits_by_date, _write_omop_csv\n"
         "\n"
         "\n"
         "def _col_str(row, col_map, variable):\n"
@@ -4416,7 +4432,7 @@ def _generate_stem_table_script(project) -> str:
         "\n"
         "# --- Module-level constants ---\n"
         f"VISIT_SOURCE_COL     = {repr(visit_source_col)}   # column that carries visit label (multi-row mode)\n"
-        f"AUTO_NUMBER_VISITS   = {repr(auto_number_visits)}  # number visits visit1/visit2/... when no identifier col\n"
+        f"AUTO_NUMBER_VISITS   = {repr(auto_number_visits)}  # number visits visit1/visit2/... by visit date when no identifier col\n"
         f"DEFAULT_DATE_COL     = {repr(default_date_col)}\n"
         f"DEFAULT_DATE_FORMAT  = {repr(default_date_format)}\n"
         "\n"
@@ -4616,12 +4632,16 @@ def _generate_stem_table_script(project) -> str:
         "    # --- Process rows (one source file at a time) ---\n"
         "    stem_id = 1\n"
         "    rows    = []\n"
-        "    _stem_visit_counters = {}  # shared across files for consistent visit auto-numbering\n"
+        "    _stem_visit_counters = {}  # shared across files, mirroring the visit script's numbering\n"
         "\n"
         "    for _sf in SOURCE_FILES:\n"
         "        _sp = _sf['path']\n"
         "        STEM_VARIABLES = _sf['variables']\n"
         "        df = pd.read_csv(_sp, delimiter=_sf['delimiter'], encoding=_sf['encoding'])\n"
+        "        # Same date-ordered numbering as the visit script, so visit labels line up\n"
+        "        _visit_numbers = number_visits_by_date(\n"
+        f"            df, {repr(pid_col)}, [(DEFAULT_DATE_COL, DEFAULT_DATE_FORMAT)], _stem_visit_counters,\n"
+        "        ) if AUTO_NUMBER_VISITS and not VISIT_SOURCE_COL else {}\n"
         "\n"
         + inner_rows
         + "\n"
