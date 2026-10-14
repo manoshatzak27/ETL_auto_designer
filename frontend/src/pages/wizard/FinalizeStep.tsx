@@ -10,6 +10,7 @@ import {
   executeProject,
   downloadOutput,
   downloadExecutionLog,
+  openLogViewer,
   getExecutionLogPreview,
   getExecutionStats,
   getDbHealth,
@@ -33,12 +34,13 @@ import OmopTablePreview from '../../components/OmopTablePreview'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
 import {
   PlayCircle, Download, RefreshCw, CheckCircle, AlertCircle, AlertTriangle,
-  Database, Loader2, Server, Code2, Play, Eye,
+  Database, Loader2, Server, Code2, Play, Eye, ExternalLink,
 } from 'lucide-react'
 import { basename } from '../../utils'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Select } from '@/components/ui/select'
 import clsx from 'clsx'
 
 interface Props {
@@ -502,97 +504,102 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
           )}
 
           {execResult && (
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                <span className="text-xs font-medium text-foreground">Log verbosity</span>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="logView"
-                    value="basic"
-                    checked={logView === 'basic'}
-                    onChange={() => setLogView('basic')}
-                    className="accent-blue-600"
-                  />
-                  <span>
-                    <span className="font-medium">Basic</span>
-                    <span className="text-muted-foreground ml-1">— only rows skipped entirely (WARNING)</span>
-                  </span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="logView"
-                    value="detailed"
-                    checked={logView === 'detailed'}
-                    onChange={() => setLogView('detailed')}
-                    className="accent-blue-600"
-                  />
-                  <span>
-                    <span className="font-medium">Detailed</span>
-                    <span className="text-muted-foreground ml-1">— also empty/unmapped fields on written rows (INFO)</span>
-                  </span>
-                </label>
-              </div>
-
-              {logView === 'detailed' && detailedLog && 'error' in detailedLog && (
-                <p className="text-xs text-destructive">{detailedLog.error}</p>
-              )}
-              {logView === 'detailed' && detailedLog && !('error' in detailedLog) && (
-                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  <span>
-                    {detailedLog.truncated
-                      ? `Showing the first ${LOG_PREVIEW_LINES.toLocaleString()} of ${detailedLog.total_lines.toLocaleString()} lines`
-                      : `${detailedLog.total_lines.toLocaleString()} lines`}
-                    {' '}({detailedLog.info_lines.toLocaleString()} INFO, {(detailedLog.size_bytes / 1024 / 1024).toFixed(1)} MB)
-                  </span>
-                  <Button variant="outline" size="sm" onClick={() => downloadExecutionLog(project.id, 'detailed')}>
-                    <Download className="w-3.5 h-3.5" /> Download full log
-                  </Button>
+            <Card className="p-4 flex flex-col gap-3">
+              {/* Toolbar: which table, which verbosity, download the full log of that verbosity. */}
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="mr-auto">
+                  <h3 className="text-sm font-semibold text-foreground">Pipeline messages</h3>
+                  <p className="text-xs text-muted-foreground">
+                    What each table's script reported while running: dropped rows, unmapped values and errors.
+                  </p>
                 </div>
-              )}
-              {logView === 'basic' && !execError && (
-                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  <span>Up to {BASIC_LINES_PER_TABLE} lines per table, then a summary of its warnings by kind</span>
-                  <Button variant="outline" size="sm" onClick={() => downloadExecutionLog(project.id, 'basic')}>
-                    <Download className="w-3.5 h-3.5" /> Download full basic log
-                  </Button>
-                </div>
-              )}
-              {logView === 'detailed' && !detailedLog && (
-                <p className="text-xs text-muted-foreground flex items-center gap-1.5">
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading detailed log…
-                </p>
-              )}
 
-              {basicSections.tables.length > 1 && (
-                <div className="flex flex-wrap items-center gap-1.5">
-                  <span className="text-xs font-medium text-foreground mr-1">Table</span>
-                  {['', ...basicSections.tables].map(t => (
+                {basicSections.tables.length > 1 && (
+                  <Select
+                    value={logTable}
+                    onChange={e => setLogTable(e.target.value)}
+                    className="w-48"
+                  >
+                    <option value="">All tables</option>
+                    {basicSections.tables.map(t => <option key={t} value={t}>{t}</option>)}
+                  </Select>
+                )}
+
+                <div className="inline-flex rounded-lg border border-border p-0.5 bg-muted/50">
+                  {([
+                    ['basic', 'Basic', 'Dropped rows only'],
+                    ['detailed', 'Detailed', 'Dropped rows, plus written rows that have empty or unmapped fields'],
+                  ] as const).map(([value, label, hint]) => (
                     <button
-                      key={t || 'all'}
+                      key={value}
                       type="button"
-                      onClick={() => setLogTable(t)}
+                      title={hint}
+                      onClick={() => setLogView(value)}
                       className={clsx(
-                        'px-2.5 py-1 rounded-md text-xs border transition-colors',
-                        logTable === t
-                          ? 'bg-primary text-primary-foreground border-primary'
-                          : 'bg-card text-foreground border-border hover:bg-muted',
-                        t && 'font-mono',
+                        'px-3 py-1.5 rounded-md text-xs font-medium transition-colors',
+                        logView === value
+                          ? 'bg-card text-foreground shadow-sm'
+                          : 'text-muted-foreground hover:text-foreground',
                       )}
                     >
-                      {t || 'All tables'}
+                      {label}
                     </button>
                   ))}
                 </div>
-              )}
+
+                {!(logView === 'basic' && execError) && (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openLogViewer(project.id, logView, logTable)}
+                      title="Open the full log in a new window, with search and filters"
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" /> Open full log
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => downloadExecutionLog(project.id, logView)}
+                      title={`Download the full ${logView} log of every table`}
+                    >
+                      <Download className="w-3.5 h-3.5" /> Download
+                    </Button>
+                  </>
+                )}
+              </div>
+
+              {/* One line describing what the preview below shows. */}
+              <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+                {logView === 'basic' && (
+                  <>
+                    Rows that were dropped and not written to the output, with the reason.
+                    Shows up to {BASIC_LINES_PER_TABLE} per table, then a count of each reason.
+                  </>
+                )}
+                {logView === 'detailed' && !detailedLog && (
+                  <><Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading detailed log…</>
+                )}
+                {logView === 'detailed' && detailedLog && 'error' in detailedLog && (
+                  <span className="text-destructive">{detailedLog.error}</span>
+                )}
+                {logView === 'detailed' && detailedLog && !('error' in detailedLog) && (
+                  <>
+                    Dropped rows, plus rows that were written but have empty or unmapped fields.{' '}
+                    {detailedLog.truncated
+                      ? `First ${LOG_PREVIEW_LINES.toLocaleString()} of ${detailedLog.total_lines.toLocaleString()} lines`
+                      : `${detailedLog.total_lines.toLocaleString()} lines`}
+                    {' '}· {detailedLog.info_lines.toLocaleString()} empty/unmapped field notes · {(detailedLog.size_bytes / 1024 / 1024).toFixed(1)} MB
+                  </>
+                )}
+              </p>
 
               <LogStream
                 log={logView === 'basic'
                   ? (logTable ? basicSections.byTable[logTable] ?? '' : execResult.log)
                   : (detailedLog && !('error' in detailedLog) ? detailedLog.log : '')}
               />
-            </div>
+            </Card>
           )}
 
           {execResult?.output_files && execResult.output_files.length > 0 && (
