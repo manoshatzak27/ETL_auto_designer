@@ -17,7 +17,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY . .
 
-RUN mkdir -p /app/uploads /app/outputs /app/state
+RUN mkdir -p /app/uploads /app/outputs
 
 EXPOSE 8000
 

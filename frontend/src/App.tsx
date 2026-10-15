@@ -1,6 +1,9 @@
 import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { GenerationProvider } from './context/GenerationContext'
+import { StepFileSelectionContext } from './contexts/StepFileSelectionContext'
+import { AutoRunProvider } from './contexts/AutoRunContext'
+import AutoRunBanner from './components/AutoRunBanner'
 import Dashboard from './pages/Dashboard'
 import SourceStep from './pages/wizard/SourceStep'
 import LocationStep from './pages/wizard/LocationStep'
@@ -13,6 +16,7 @@ import ConceptsStep from './pages/wizard/ConceptsStep'
 import StemTableStep from './pages/wizard/StemTableStep'
 import DeathStep from './pages/wizard/DeathStep'
 import FinalizeStep from './pages/wizard/FinalizeStep'
+import LogViewer from './pages/LogViewer'
 import ChatPanel from './components/ChatPanel'
 import { getProject } from './api/client'
 import type { Project } from './types'
@@ -38,6 +42,7 @@ function ProjectWizard() {
   const { projectId, step } = useParams<{ projectId: string; step: string }>()
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
+  const fileSelections = useRef({ indices: {} as Record<string, number>, configs: {} as Record<string, Record<string, unknown>> })
 
   useEffect(() => {
     if (!projectId) return
@@ -71,10 +76,15 @@ function ProjectWizard() {
   const update = (p: Project) => setProject(p)
 
   return (
-    <GenerationProvider>
-      <Comp project={project} onUpdate={update} />
-      <ChatPanel project={project} onUpdate={update} />
-    </GenerationProvider>
+    <StepFileSelectionContext.Provider value={fileSelections}>
+      <GenerationProvider>
+        <AutoRunProvider projectId={project.id}>
+          <Comp project={project} onUpdate={update} />
+          <AutoRunBanner />
+          <ChatPanel project={project} onUpdate={update} />
+        </AutoRunProvider>
+      </GenerationProvider>
+    </StepFileSelectionContext.Provider>
   )
 }
 
@@ -84,6 +94,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<Dashboard />} />
         <Route path="/project/:projectId/step/:step" element={<ProjectWizard />} />
+        <Route path="/project/:projectId/log" element={<LogViewer />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>

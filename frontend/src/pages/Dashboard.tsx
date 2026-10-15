@@ -1,10 +1,12 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listProjects, createProject, deleteProject } from '../api/client'
+import { listProjects, createProject, deleteProject, copyProject, renameProject } from '../api/client'
 import type { ProjectSummary } from '../types'
 import {
   Plus,
   Trash2,
+  Copy,
+  Pencil,
   ChevronRight,
   Database,
   Clock,
@@ -37,6 +39,12 @@ export default function Dashboard() {
 
   const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
   const [deleting, setDeleting] = useState(false)
+  const [copyingId, setCopyingId] = useState<string | null>(null)
+
+  const [renameTarget, setRenameTarget] = useState<ProjectSummary | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameError, setRenameError] = useState('')
+  const [renaming, setRenaming] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -77,6 +85,44 @@ export default function Dashboard() {
       }
     } finally {
       setCreating(false)
+    }
+  }
+
+  const handleCopy = async (p: ProjectSummary) => {
+    setCopyingId(p.id)
+    try {
+      await copyProject(p.id)
+      load()
+    } finally {
+      setCopyingId(null)
+    }
+  }
+
+  const openRename = (p: ProjectSummary) => {
+    setRenameValue(p.name)
+    setRenameError('')
+    setRenameTarget(p)
+  }
+
+  const renameChanged =
+    !!renameTarget && !!renameValue.trim() && renameValue.trim() !== renameTarget.name
+
+  const handleRename = async () => {
+    if (!renameTarget || !renameChanged) return
+    setRenaming(true)
+    setRenameError('')
+    try {
+      await renameProject(renameTarget.id, renameValue.trim())
+      setRenameTarget(null)
+      load()
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        setRenameError('This project name is already taken')
+      } else {
+        setRenameError('Failed to rename project')
+      }
+    } finally {
+      setRenaming(false)
     }
   }
 
@@ -205,6 +251,32 @@ export default function Dashboard() {
                   <Button
                     variant="ghost"
                     size="icon"
+                    title="Rename project"
+                    onClick={e => {
+                      e.stopPropagation()
+                      openRename(p)
+                    }}
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                  >
+                    <Pencil />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Duplicate project"
+                    disabled={copyingId === p.id}
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleCopy(p)
+                    }}
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                  >
+                    {copyingId === p.id ? <Loader2 className="animate-spin" /> : <Copy />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Delete project"
                     onClick={e => {
                       e.stopPropagation()
                       setDeleteTarget(p)
@@ -253,6 +325,46 @@ export default function Dashboard() {
             <Button onClick={handleCreate} disabled={creating || !newName.trim()}>
               {creating && <Loader2 className="animate-spin" />}
               {creating ? 'Creating…' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename project dialog */}
+      <Dialog
+        open={!!renameTarget}
+        onOpenChange={open => !open && setRenameTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-primary">Rename Project</DialogTitle>
+            <DialogDescription>
+              Only the display name changes; the project's ID and links stay the same.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Input
+              autoFocus
+              value={renameValue}
+              onChange={e => {
+                setRenameValue(e.target.value)
+                setRenameError('')
+              }}
+              onKeyDown={e => e.key === 'Enter' && handleRename()}
+              placeholder="Project name…"
+              className={renameError ? 'border-destructive focus-visible:ring-destructive' : ''}
+            />
+            {renameError && (
+              <p className="mt-1.5 text-xs text-destructive">{renameError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRename} disabled={renaming || !renameChanged}>
+              {renaming && <Loader2 className="animate-spin" />}
+              {renaming ? 'Renaming…' : 'Rename'}
             </Button>
           </DialogFooter>
         </DialogContent>

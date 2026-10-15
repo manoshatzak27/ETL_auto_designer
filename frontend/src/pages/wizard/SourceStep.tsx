@@ -1,22 +1,32 @@
 import { useState, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { uploadSource, updateTableConfig } from '../../api/client'
-import type { Project } from '../../types'
+import { uploadSources, deleteSourceFile, downloadSourceFile, updateTableConfig, type UploadConflict } from '../../api/client'
+import type { Project, SourceFile } from '../../types'
 import WizardLayout from './WizardLayout'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
-import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3 } from 'lucide-react'
+import { UploadCloud, FileText, Loader2, Database, MapPin, Building2, UserCog, Skull, Rows3, Trash2, Table2, Download } from 'lucide-react'
 import { Card } from '@/components/ui/card'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog'
 import VocabLoaderCard from '../../components/VocabLoaderCard'
+import SourceFileGridEditor from '../../components/SourceFileGridEditor'
+import AutoMapAllCard from '../../components/AutoMapAllCard'
 import clsx from 'clsx'
+
+const WARN_ROW_THRESHOLD = 20
+const PREVIEW_ROW_LIMIT = 20
+const COLUMN_PREVIEW_LIMIT = 12
+
+function formatFileSize(bytes: number | undefined): string {
+  if (bytes == null) return 'unknown size'
+  const mb = bytes / (1024 * 1024)
+  return mb >= 0.1 ? `${mb.toFixed(2)} MB` : `${(bytes / 1024).toFixed(1)} KB`
+}
 
 interface Props {
   project: Project
   onUpdate: (p: Project) => void
 }
 
-// Picker entries — each maps to one of OPTIONAL_TABLES.
-// The dedicated step page fills in its own defaults on first visit, so we
-// only set `enabled` here. icon/description are UI-only.
 const PICKER_ENTRIES: { table: OptionalTable; label: string; description: string; icon: React.ComponentType<{ className?: string }> }[] = [
   {
     table: 'location',
@@ -49,10 +59,77 @@ export default function SourceStep({ project, onUpdate }: Props) {
   const [dragging, setDragging] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
+  const [conflicts, setConflicts] = useState<UploadConflict[]>([])
   const [togglingTable, setTogglingTable] = useState<string | null>(null)
   const [togglingMultiRow, setTogglingMultiRow] = useState(false)
+  const [deletingIndex, setDeletingIndex] = useState<number | null>(null)
+  const [openFile, setOpenFile] = useState<{ file: SourceFile; preview: boolean } | null>(null)
+  const [pendingEditFile, setPendingEditFile] = useState<SourceFile | null>(null)
+  const [pendingReplace, setPendingReplace] = useState<{ files: File[]; names: string[] } | null>(null)
 
   const isMultiRow = !!(project.etl_config?.dataset_options as Record<string, unknown> | undefined)?.multiple_rows_per_patient
+
+  const sourceFiles: SourceFile[] = project.source_files ?? []
+  const hasSource = sourceFiles.length > 0
+
+  const doUpload = useCallback(async (files: File[], keepMappings: boolean) => {
+    if (!files.length) return
+    setUploading(true)
+    setError('')
+    setConflicts([])
+    try {
+      const { project: updated, conflicts: newConflicts } = await uploadSources(project.id, files, keepMappings)
+      onUpdate(updated)
+      setConflicts(newConflicts)
+    } catch {
+      setError('Upload failed. Please try again.')
+    } finally {
+      setUploading(false)
+    }
+  }, [project.id, onUpdate])
+
+  const handleFiles = useCallback((files: File[]) => {
+    if (!files.length) return
+    const existingNames = new Set(sourceFiles.map(sf => sf.filename))
+    // ZIP contents aren't known until the backend extracts them, so only
+    // named CSV/TSV files can be checked for a same-filename update here.
+    const collidingNames = files.filter(f => existingNames.has(f.name)).map(f => f.name)
+    if (collidingNames.length > 0) {
+      setPendingReplace({ files, names: collidingNames })
+      return
+    }
+    doUpload(files, true)
+  }, [sourceFiles, doUpload])
+
+  const onDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    setDragging(false)
+    const files = Array.from(e.dataTransfer.files)
+    if (files.length) handleFiles(files)
+  }, [handleFiles])
+
+  const onInputChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? [])
+    if (files.length) handleFiles(files)
+    e.target.value = ''
+  }, [handleFiles])
+
+  const handleDelete = async (index: number) => {
+    setDeletingIndex(index)
+    try {
+      const updated = await deleteSourceFile(project.id, index)
+      onUpdate(updated)
+    } catch {
+      // ignore — file card stays
+    } finally {
+      setDeletingIndex(null)
+    }
+  }
+
+  const handleView = (file: SourceFile) => {
+    if (file.row_count > WARN_ROW_THRESHOLD) setPendingEditFile(file)
+    else setOpenFile({ file, preview: false })
+  }
 
   const toggleMultiRow = async (checked: boolean) => {
     setTogglingMultiRow(true)
@@ -67,43 +144,19 @@ export default function SourceStep({ project, onUpdate }: Props) {
     }
   }
 
-  const handleFile = async (file: File) => {
-    setUploading(true)
-    setError('')
-    try {
-      const updated = await uploadSource(project.id, file)
-      onUpdate(updated)
-    } catch {
-      setError('Upload failed. Please try again.')
-    } finally {
-      setUploading(false)
-    }
-  }
-
-  const onDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    setDragging(false)
-    const file = e.dataTransfer.files[0]
-    if (file) handleFile(file)
-  }, [project.id])
-
   const toggleTable = async (table: OptionalTable, checked: boolean) => {
     setTogglingTable(table)
     try {
       const existing = (project.etl_config?.[table] as Record<string, unknown> | undefined) || {}
-      // Toggle enabled flag, preserve everything else. When enabling for the
-      // first time, the dedicated step page will populate its own defaults
-      // (column names, value maps, etc.) on first visit.
       const updated = await updateTableConfig(project.id, table, { ...existing, enabled: checked })
       onUpdate(updated)
     } catch {
-      // ignore — the checkbox will revert visually since project state didn't change
+      // ignore
     } finally {
       setTogglingTable(null)
     }
   }
 
-  const hasSource = !!project.source_filename
   const { next } = getAdjacentSlugs(project, 'source')
 
   return (
@@ -118,7 +171,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
         <div>
           <h2 className="text-xl font-bold text-primary">Upload Source Dataset</h2>
           <p className="mt-1 text-sm text-muted-foreground">
-            Upload your flat source CSV file. The system will auto-detect the delimiter and encoding.
+            Upload one or more CSV files, or a ZIP archive containing CSVs. The system will auto-detect delimiters and encoding for each file.
           </p>
         </div>
 
@@ -136,14 +189,19 @@ export default function SourceStep({ project, onUpdate }: Props) {
           onClick={() => document.getElementById('file-input')?.click()}
         >
           <UploadCloud className="mx-auto mb-3 size-10 text-muted-foreground" />
-          <p className="font-medium text-foreground">Drop your CSV file here or click to browse</p>
-          <p className="mt-1 text-xs text-muted-foreground">Supports CSV, TSV, TXT with any delimiter</p>
+          <p className="font-medium text-foreground">
+            {hasSource ? 'Drop more files here to add them' : 'Drop CSV files or a ZIP here, or click to browse'}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Accepts multiple CSV / TSV files or a single ZIP archive
+          </p>
           <input
             id="file-input"
             type="file"
-            accept=".csv,.tsv,.txt"
+            accept=".csv,.tsv,.txt,.zip"
+            multiple
             className="hidden"
-            onChange={e => e.target.files?.[0] && handleFile(e.target.files[0])}
+            onChange={onInputChange}
           />
         </div>
 
@@ -156,41 +214,45 @@ export default function SourceStep({ project, onUpdate }: Props) {
 
         {error && <p className="text-sm text-destructive">{error}</p>}
 
-        {/* Schema preview */}
-        {hasSource && (
-          <Card className="flex flex-col gap-4 p-6">
-            <div className="flex items-center gap-2">
-              <FileText className="size-5 text-primary" />
-              <span className="font-semibold text-foreground">{project.source_filename}</span>
-            </div>
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div className="rounded-lg border border-border bg-secondary/70 p-3">
-                <p className="text-xs text-muted-foreground">Delimiter</p>
-                <p className="font-mono font-semibold text-foreground">{project.source_delimiter === '\t' ? 'TAB' : project.source_delimiter || 'auto'}</p>
-              </div>
-              <div className="rounded-lg border border-border bg-secondary/70 p-3">
-                <p className="text-xs text-muted-foreground">Encoding</p>
-                <p className="font-mono font-semibold text-foreground">{project.source_encoding}</p>
-              </div>
-              <div className="rounded-lg border border-border bg-secondary/70 p-3">
-                <p className="text-xs text-muted-foreground">Rows</p>
-                <p className="font-semibold text-foreground">{project.source_row_count.toLocaleString()}</p>
-              </div>
-            </div>
-            <div>
-              <p className="mb-2 text-xs text-muted-foreground">Detected columns ({project.source_columns.length})</p>
-              <div className="flex flex-wrap gap-1.5">
-                {project.source_columns.map(col => (
-                  <span key={col} className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-secondary-foreground">
-                    {col}
-                  </span>
-                ))}
-              </div>
-            </div>
-          </Card>
+        {conflicts.length > 0 && (
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-400">
+            <p className="font-semibold">
+              The updated file changed {conflicts.length === 1 ? 'a column' : 'some columns'} used in previous mapping choices — please review and remap:
+            </p>
+            <ul className="mt-1.5 list-disc pl-5">
+              {conflicts.map(c => (
+                <li key={c.column}>
+                  <span className="font-mono">{c.column}</span> — {c.reason}
+                </li>
+              ))}
+            </ul>
+          </div>
         )}
 
-        {/* OMOP table picker — controls which optional steps appear in the wizard */}
+        {/* Per-file cards */}
+        {hasSource && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm font-semibold text-foreground">
+              {sourceFiles.length === 1 ? '1 source file' : `${sourceFiles.length} source files`}
+              <span className="ml-2 text-xs font-normal text-muted-foreground">
+                — give each file a short logical name; downstream steps use these names to reference columns
+              </span>
+            </p>
+            {sourceFiles.map((sf, idx) => (
+              <SourceFileCard
+                key={sf.filename + idx}
+                file={sf}
+                index={idx}
+                deleting={deletingIndex === idx}
+                onDelete={handleDelete}
+                onView={handleView}
+                onDownload={file => downloadSourceFile(project.id, file.filename)}
+              />
+            ))}
+          </div>
+        )}
+
+        {/* OMOP table picker */}
         <Card className="flex flex-col gap-4 p-6">
           <div className="flex items-start gap-3">
             <Database className="size-5 text-primary flex-shrink-0 mt-0.5" />
@@ -241,7 +303,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
           </p>
         </Card>
 
-        {/* Dataset structure — one row vs. multiple rows per patient */}
+        {/* Dataset structure */}
         <Card className="flex flex-col gap-4 p-6">
           <div className="flex items-start gap-3">
             <Rows3 className="size-5 text-primary flex-shrink-0 mt-0.5" />
@@ -254,7 +316,6 @@ export default function SourceStep({ project, onUpdate }: Props) {
           </div>
 
           <div className="flex flex-col gap-2">
-            {/* One row per patient */}
             <label
               className={clsx(
                 'flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
@@ -278,7 +339,6 @@ export default function SourceStep({ project, onUpdate }: Props) {
               </div>
             </label>
 
-            {/* Multiple rows per patient */}
             <label
               className={clsx(
                 'flex items-start gap-3 rounded-lg border p-3 cursor-pointer transition-colors',
@@ -305,8 +365,9 @@ export default function SourceStep({ project, onUpdate }: Props) {
           </div>
         </Card>
 
-        {/* OMOP vocabulary — one-time shared setup. Started here so it can run
-            in the background while the user configures the rest of the wizard. */}
+        <AutoMapAllCard project={project} disabled={!hasSource} />
+
+        {/* OMOP vocabulary */}
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
             <h3 className="font-semibold text-foreground">OMOP vocabulary <span className="font-normal text-muted-foreground">(one-time setup)</span></h3>
@@ -318,6 +379,181 @@ export default function SourceStep({ project, onUpdate }: Props) {
           <VocabLoaderCard />
         </div>
       </div>
+
+      {/* Updated-file detected: ask whether to keep or discard existing mapping choices */}
+      <Dialog open={!!pendingReplace} onOpenChange={open => { if (!open) setPendingReplace(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Updated file{pendingReplace && pendingReplace.names.length > 1 ? 's' : ''} detected</DialogTitle>
+            <DialogDescription>
+              {pendingReplace?.names.length === 1
+                ? <>You're uploading a new version of <span className="font-mono">{pendingReplace.names[0]}</span>.</>
+                : <>You're uploading new versions of {pendingReplace?.names.length} files: <span className="font-mono">{pendingReplace?.names.join(', ')}</span>.</>}
+              {' '}Keep the mapping choices already made for the previous version, or discard them and start fresh for this file.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              onClick={() => setPendingReplace(null)}
+              className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => { if (pendingReplace) doUpload(pendingReplace.files, false); setPendingReplace(null) }}
+              className="px-3 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-secondary"
+            >
+              Discard current mapping choices
+            </button>
+            <button
+              onClick={() => { if (pendingReplace) doUpload(pendingReplace.files, true); setPendingReplace(null) }}
+              className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            >
+              Keep current mapping choices
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Large-file warning before opening the grid editor */}
+      <Dialog open={!!pendingEditFile} onOpenChange={open => { if (!open) setPendingEditFile(null) }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Large file</DialogTitle>
+            <DialogDescription>
+              This file has {pendingEditFile?.row_count.toLocaleString()} rows
+              ({formatFileSize(pendingEditFile?.size_bytes)}). Loading the whole thing into the editable
+              grid may be slow and use significant memory. Preview the first {PREVIEW_ROW_LIMIT} rows instead,
+              or open the whole file to edit it.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <button
+              onClick={() => setPendingEditFile(null)}
+              className="px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => { if (pendingEditFile) setOpenFile({ file: pendingEditFile, preview: true }); setPendingEditFile(null) }}
+              className="px-3 py-1.5 text-xs border border-border rounded-md text-foreground hover:bg-secondary"
+            >
+              Preview first {PREVIEW_ROW_LIMIT} rows
+            </button>
+            <button
+              onClick={() => { if (pendingEditFile) setOpenFile({ file: pendingEditFile, preview: false }); setPendingEditFile(null) }}
+              className="px-3 py-1.5 text-xs bg-primary text-primary-foreground rounded-md hover:bg-primary/90"
+            >
+              Open whole file
+            </button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Grid editor */}
+      <Dialog open={!!openFile} onOpenChange={open => { if (!open) setOpenFile(null) }}>
+        <DialogContent className="max-w-6xl w-[95vw] h-[85vh] overflow-hidden flex flex-col">
+          {openFile && (
+            <SourceFileGridEditor
+              projectId={project.id}
+              filename={openFile.file.filename}
+              previewRowLimit={openFile.preview ? PREVIEW_ROW_LIMIT : undefined}
+              onClose={() => setOpenFile(null)}
+              onSaved={onUpdate}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
     </WizardLayout>
+  )
+}
+
+interface SourceFileCardProps {
+  file: SourceFile
+  index: number
+  deleting: boolean
+  onDelete: (index: number) => void
+  onView: (file: SourceFile) => void
+  onDownload: (file: SourceFile) => void
+}
+
+function SourceFileCard({ file, index, deleting, onDelete, onView, onDownload }: SourceFileCardProps) {
+  const [columnsExpanded, setColumnsExpanded] = useState(false)
+  const hasMoreColumns = file.columns.length > COLUMN_PREVIEW_LIMIT
+  const visibleColumns = columnsExpanded || !hasMoreColumns ? file.columns : file.columns.slice(0, COLUMN_PREVIEW_LIMIT)
+
+  return (
+    <Card className={clsx('flex flex-col gap-3 p-4 transition-opacity', deleting && 'opacity-50 pointer-events-none')}>
+      <div className="flex items-center gap-2">
+        <FileText className="size-4 text-primary flex-shrink-0" />
+        <span className="text-sm font-medium text-foreground truncate flex-1">{file.filename}</span>
+        <button
+          onClick={() => onView(file)}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          title="View / edit data"
+        >
+          <Table2 className="size-3.5" />
+        </button>
+        <button
+          onClick={() => onDownload(file)}
+          className="rounded p-1 text-muted-foreground hover:bg-secondary hover:text-foreground transition-colors"
+          title="Download file"
+        >
+          <Download className="size-3.5" />
+        </button>
+        <button
+          onClick={() => onDelete(index)}
+          disabled={deleting}
+          className="ml-1 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+          title="Remove file"
+        >
+          {deleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+        </button>
+      </div>
+
+      {/* Stats */}
+      <div className="grid grid-cols-3 gap-3 text-sm">
+        <div className="rounded-md border border-border bg-secondary/70 p-2">
+          <p className="text-xs text-muted-foreground">Delimiter</p>
+          <p className="font-mono font-semibold text-foreground">{file.delimiter === '\t' ? 'TAB' : file.delimiter || 'auto'}</p>
+        </div>
+        <div className="rounded-md border border-border bg-secondary/70 p-2">
+          <p className="text-xs text-muted-foreground">Encoding</p>
+          <p className="font-mono font-semibold text-foreground">{file.encoding}</p>
+        </div>
+        <div className="rounded-md border border-border bg-secondary/70 p-2">
+          <p className="text-xs text-muted-foreground">Rows</p>
+          <p className="font-semibold text-foreground">{file.row_count.toLocaleString()}</p>
+        </div>
+      </div>
+
+      {/* Columns */}
+      <div>
+        <p className="mb-1.5 text-xs text-muted-foreground">Columns ({file.columns.length})</p>
+        <div className="flex flex-wrap gap-1.5">
+          {visibleColumns.map(col => (
+            <span key={col} className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-secondary-foreground">
+              {col}
+            </span>
+          ))}
+          {hasMoreColumns && !columnsExpanded && (
+            <button
+              onClick={() => setColumnsExpanded(true)}
+              className="rounded bg-secondary px-2 py-0.5 font-mono text-xs text-primary hover:underline"
+            >
+              +{file.columns.length - COLUMN_PREVIEW_LIMIT} more
+            </button>
+          )}
+        </div>
+        {hasMoreColumns && columnsExpanded && (
+          <button
+            onClick={() => setColumnsExpanded(false)}
+            className="mt-1.5 text-xs text-primary hover:underline"
+          >
+            Show less
+          </button>
+        )}
+      </div>
+    </Card>
   )
 }
