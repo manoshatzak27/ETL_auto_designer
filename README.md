@@ -48,12 +48,11 @@ ETL_auto_designer/
 │   │   └── types/
 │   └── Dockerfile
 │
+├── conceptmatcher/         The staged concept matcher (see below), built as the
+│                           `conceptmatcher` service. Its own README covers the pipeline.
 ├── scripts/init-omop.sh    Calls python -m app.services.ddl_applier bootstrap to split vocab/clinical DDL into separate schemas
 ├── docker-compose.yml      Postgres + omop-init + conceptmatcher + backend + frontend
 └── .env.example            Stack-wide environment variables
-
-../new concept finding/     Sibling checkout — the staged concept matcher (see below).
-                            Built here as the `conceptmatcher` service; not vendored in.
 ```
 
 ---
@@ -119,7 +118,6 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 | `ATHENA_BUNDLE_ROOT`    | *(empty)*                              | Allow-list root for `/load-vocabulary` (security guard)       |
 | `MAPPINGS_BUNDLE_ROOT`  | *(empty → uploads dir)*                | Allow-list root for `/load-mappings-from-dir`                 |
 | `CONCEPT_MATCHER_URL`   | (inside Docker: `http://conceptmatcher:8000`) | Concept matcher behind every concept search and the Concepts step's "Load concepts" button. Empty disables them. |
-| `CONCEPT_PIPELINE_PATH` | `../new concept finding`               | Docker build context for that service — the sibling checkout  |
 | `CONCEPT_MATCHER_PORT`  | `8002`                                 | Host port the matcher is published on                         |
 | `CONCEPT_MATCHER_EMBEDDINGS` | `1`                               | Build arg. `0` drops Stage 5 and shrinks the image ~2GB → ~310MB; the remaining stages' weights are renormalized rather than scored zero |
 | `VOCAB_DB_HOST` / `VOCAB_DB_PORT` | `host.docker.internal` / `5433` | Where the matcher finds the standard-only Athena vocabulary   |
@@ -130,7 +128,7 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 ## Automatic concept matching (Concepts step → "Load concepts")
 
 Every concept finder in the app goes through one service, `conceptmatcher` —
-the staged pipeline in `../new concept finding` — over that project's own
+the staged pipeline in `conceptmatcher/` — over that project's own
 Postgres: **standard + valid concepts only**. It is used two ways:
 
 | | **Search** (per row / per field) | **Load concepts** (whole project) |
@@ -374,7 +372,7 @@ on host port 5433. That stack is not duplicated here; the container reaches the
 running one through the host gateway, so the two stay independently startable.
 
 ```bash
-cd "../new concept finding"
+cd conceptmatcher
 ./load_vocab.sh          # the vocabulary (10-20 min, once)
 ./setup_pipeline.sh      # the pipeline's database objects (~2 min, once)
 
@@ -416,7 +414,7 @@ shows a score and a shortlist, not the arithmetic. Take the question to the
 sibling project's CLI, which prints the full per-stage breakdown:
 
 ```bash
-cd "../new concept finding"
+cd conceptmatcher
 ./pipeline.sh match --name creat_mgdl --description "Serum creatinine mg/dL" --explain
 ```
 

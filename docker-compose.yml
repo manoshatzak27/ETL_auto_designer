@@ -61,8 +61,8 @@ services:
     entrypoint: ["/bin/sh", "/init-omop.sh"]
 
   # ────────────────────────────────────────────────────────────────────────
-  # The multi-stage concept matcher from the sibling "new concept finding"
-  # project, run as `serve` (pipeline/service.py) instead of as a one-shot CLI.
+  # The multi-stage concept matcher in ./conceptmatcher, run as `serve`
+  # (pipeline/service.py) instead of as a one-shot CLI.
   #
   # It needs that project's *own* Postgres — the standard-only Athena vocabulary
   # plus the `pipeline` schema — which is a separate ~9GB stack on host port
@@ -71,12 +71,11 @@ services:
   # host gateway, so both stacks stay independently startable. Point
   # VOCAB_DB_HOST/PORT elsewhere in .env if that database lives on another host.
   #
-  # Build context is the sibling checkout. `image:` names the same tag that
-  # project's own compose builds, so whichever stack builds it first, the other
-  # reuses it instead of building ~2GB of CPU torch twice.
+  # `image:` keeps the tag the matcher's standalone compose used, so an image
+  # built there is reused instead of building ~2GB of CPU torch again.
   conceptmatcher:
     build:
-      context: ${CONCEPT_PIPELINE_PATH:-../new concept finding}
+      context: ./conceptmatcher
       args:
         WITH_EMBEDDINGS: ${CONCEPT_MATCHER_EMBEDDINGS:-1}
     image: vocab-pipeline:latest
@@ -92,29 +91,27 @@ services:
       POSTGRES_DB: ${VOCAB_DB_NAME:-athena_vocab}
       POSTGRES_USER: ${VOCAB_DB_USER:-vocab}
       POSTGRES_PASSWORD: ${VOCAB_DB_PASSWORD:-vocab_pwd}
-      # Tuning overrides live in that project's data/pipeline.json (copied from
-      # its pipeline.example.json). config.py tolerates the file being absent.
+      # Tuning overrides live in conceptmatcher/data/pipeline.json (copied from
+      # conceptmatcher/pipeline.example.json). config.py tolerates it being absent.
       PIPELINE_CONFIG: /app/data/pipeline.json
     extra_hosts:
       # Linux has no built-in host.docker.internal; without this the vocabulary
       # database on the host's port 5433 is unreachable from in here.
       - "host.docker.internal:host-gateway"
     volumes:
-      # The pipeline source, mounted read-only over the image's own copy —
-      # exactly what that project's compose does for its `pipeline` service, and
-      # for the same reason: a changed threshold, stopword list or scoring stage
-      # takes effect without rebuilding ~2GB of image. Without this the service
-      # runs whatever was baked in whenever the image was last built, which is
-      # silently stale the moment the matcher is worked on.
+      # The pipeline source, mounted read-only over the image's own copy, so a
+      # changed threshold, stopword list or scoring stage takes effect without
+      # rebuilding ~2GB of image. Without this the service runs whatever was
+      # baked in whenever the image was last built, which is silently stale the
+      # moment the matcher is worked on.
       #
-      # Note the difference from that project's CLI: this one is a long-running
-      # process, so an edit needs `docker compose restart conceptmatcher` to be
-      # picked up, not just the next invocation. Dependency changes
-      # (requirements.txt) still need a rebuild.
-      - ${CONCEPT_PIPELINE_PATH:-../new concept finding}/pipeline:/app/pipeline:ro
-      - ${CONCEPT_PIPELINE_PATH:-../new concept finding}/data:/app/data:ro
+      # This is a long-running process, so an edit needs
+      # `docker compose restart conceptmatcher` to be picked up. Dependency
+      # changes (requirements.txt) still need a rebuild.
+      - ./conceptmatcher/pipeline:/app/pipeline:ro
+      - ./conceptmatcher/data:/app/data:ro
       # ~90MB for the default MiniLM, downloaded once rather than on every
-      # container recreate. Same role as the sibling stack's hf_cache volume.
+      # container recreate.
       - conceptmatcher_hf_cache:/cache/huggingface
     ports:
       - "${CONCEPT_MATCHER_PORT:-8002}:8000"
