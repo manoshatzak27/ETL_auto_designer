@@ -1,0 +1,74 @@
+# Gold set for benchmarking. Graded by NAME RULE, not by concept_id.
+#
+# Pinning one correct concept_id per column does not work in OMOP: "Glucose
+# measurement", "Glucose measurement, serum" and the LOINC "Glucose
+# [Mass/volume] in Serum or Plasma" are all defensible answers for one column,
+# they live in different vocabularies, and concept_ancestor does not reliably
+# link across vocabularies (the SNOMED ALT concept has 15 LOINC descendants and
+# the obvious one is not among them). An id list therefore grades a working
+# pipeline as wrong.
+#
+# So each row states what the chosen concept's NAME must and must not contain:
+#   require  semicolon-separated alternatives; ANY one matching passes
+#   forbid   semicolon-separated; NONE may appear
+# Both are matched case-insensitively against the selected concept name.
+#
+# kind:
+#   literal   realistic clinical column text, lexically close to the concept.
+#             Stage 2 will find the right concept; the question is whether it
+#             is ranked first. This is what Stage 5 can actually influence.
+#   semantic  lay paraphrase sharing no vocabulary with the concept name.
+#             Reported separately because Stage 5 only reranks Stage 2's
+#             shortlist — if the concept never enters the shortlist, no
+#             embedding model can retrieve it.
+name,description,require,forbid,kind
+alt_serum,ALT alanine aminotransferase in serum,alanine aminotransferase;alanine transaminase;alt,ratio;aspartate;gene,literal
+ast_serum,AST aspartate aminotransferase in serum,aspartate aminotransferase;aspartate transaminase;ast,ratio;alanine;gene,literal
+alp_serum,Alkaline phosphatase serum level,alkaline phosphatase,bone specific;gene,literal
+ggt_serum,Gamma glutamyl transferase serum,glutamyl transferase;glutamyltransferase;ggt,,literal
+tbili,Total bilirubin serum,bilirubin,direct;conjugated;unconjugated,literal
+albumin_serum,Serum albumin concentration,albumin,globulin;ratio;urine;glycated,literal
+crp_serum,C-reactive protein serum level,c-reactive protein;c reactive protein,,literal
+esr,Erythrocyte sedimentation rate,sedimentation rate;esr,,literal
+tsh_serum,Thyroid stimulating hormone level,thyroid stimulating hormone;thyrotropin;tsh,receptor;antibod,literal
+ft4,Free thyroxine level,thyroxine;t4,triiodothyronine;binding,literal
+hgb_blood,Hemoglobin concentration in blood,hemoglobin;haemoglobin;hgb,a1c;a2;f/;fetal;glycated;oxyhem,literal
+hct_blood,Hematocrit percentage,hematocrit;haematocrit;packed cell volume;hct,,literal
+plt_count,Platelet count in blood,platelet count;platelets,mean;large;antibod;aggregation,literal
+wbc_count,White blood cell count,white blood cell count;leukocyte;leucocyte,differential;esterase;urine,literal
+rbc_count,Red blood cell count,red blood cell count;erythrocyte count;erythrocytes,nucleated;urine;antibod,literal
+neut_abs,Absolute neutrophil count,neutrophil,band;hypersegmented;urine,literal
+inr_value,International normalized ratio for prothrombin time,international normalized ratio;inr,,literal
+ptt_sec,Activated partial thromboplastin time,thromboplastin time,prothrombin,literal
+creat_serum,Serum creatinine concentration,creatinine,clearance;urine;ratio;phosphokinase;kinase,literal
+bun_serum,Blood urea nitrogen,urea nitrogen;urea;bun,ratio;urine;breath,literal
+egfr_calc,Estimated glomerular filtration rate,glomerular filtration;egfr;gfr,epidermal;receptor;gene,literal
+na_serum,Serum sodium concentration,sodium,urine;fractional;bicarbonate;chloride,literal
+k_serum,Serum potassium concentration,potassium,urine;fractional,literal
+cl_serum,Serum chloride concentration,chloride,sweat;urine;sodium,literal
+co2_serum,Serum bicarbonate carbon dioxide,bicarbonate;carbon dioxide,partial pressure;end tidal,literal
+ca_serum,Serum calcium concentration,calcium,ionized;urine;channel;oxalate;score,literal
+mg_serum,Serum magnesium concentration,magnesium,urine,literal
+phos_serum,Serum phosphate level,phosphate;phosphorus,alkaline;acid;creatine,literal
+glucose_serum,Serum glucose concentration,glucose,tolerance;urine;csf;galactose;dehydrogenase,literal
+hba1c_pct,Hemoglobin A1c percentage,hemoglobin a1c;a1c;glycated hemoglobin;hba1c,,literal
+ldl_serum,LDL cholesterol serum,low density lipoprotein;ldl,high density;very low,literal
+hdl_serum,HDL cholesterol serum,high density lipoprotein;hdl,low density,literal
+trig_serum,Serum triglycerides,triglyceride,,literal
+trop_i,Cardiac troponin I,troponin,,literal
+bnp_serum,B-type natriuretic peptide,natriuretic peptide;bnp,,literal
+lactate_serum,Serum lactate level,lactate,dehydrogenase;ringer,literal
+sbp_mmhg,Systolic blood pressure,systolic blood pressure,diastolic;mean;pulmonary;target;family,literal
+dbp_mmhg,Diastolic blood pressure,diastolic blood pressure,systolic;mean;pulmonary;target;family,literal
+hr_bpm,Heart rate in beats per minute,heart rate;pulse rate,fetal;variability;target;maximum;recovery,literal
+rr_bpm,Respiratory rate breaths per minute,respiratory rate,fetal;target,literal
+temp_body,Body temperature,body temperature;temperature,room;ambient;sensation;water,literal
+spo2_pct,Oxygen saturation by pulse oximetry,oxygen saturation,partial pressure;venous;fetal,literal
+weight_kg,Body weight in kilograms,body weight;weight,birth;ideal;dry;loss;gain;molecular;heavy,literal
+height_cm,Body height in centimetres,body height;height,fundal;waist;tall;chair,literal
+bmi_calc,Body mass index,body mass index,percentile;z score,literal
+sugar_lvl,Blood sugar level,glucose,tolerance;urine;csf,semantic
+bad_cholesterol,The bad cholesterol fraction,low density lipoprotein;ldl,high density,semantic
+kidney_waste,Waste product cleared by the kidneys used to assess renal function,creatinine;urea,clearance;ratio,semantic
+clotting_time,How long blood takes to clot,prothrombin time;thromboplastin time;clotting time,,semantic
+heart_attack,Heart attack,myocardial infarction;heart attack,family;history;risk,semantic
