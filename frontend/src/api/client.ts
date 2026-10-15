@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { SourceFileContent, Project } from '../types'
+import type { SourceFileContent, SourceFileEdits, Project } from '../types'
 
 const api = axios.create({ baseURL: '/api' })
 
@@ -90,14 +90,14 @@ export const standardConceptError = (
   return null
 }
 
-export const getSourceFileContent = (projectId: string, filename: string, rows?: number) =>
+export const getSourceFileContent = (projectId: string, filename: string, offset: number, limit: number) =>
   api
-    .get<SourceFileContent>(`/projects/${projectId}/source-file-content`, { params: { filename, ...(rows ? { rows } : {}) } })
+    .get<SourceFileContent>(`/projects/${projectId}/source-file-content`, { params: { filename, offset, limit } })
     .then(r => r.data)
 
-export const updateSourceFileContent = (projectId: string, filename: string, columns: string[], rows: Record<string, string>[]) =>
+export const patchSourceFileContent = (projectId: string, filename: string, edits: SourceFileEdits) =>
   api
-    .put(`/projects/${projectId}/source-file-content`, { columns, rows }, { params: { filename } })
+    .patch<Project>(`/projects/${projectId}/source-file-content`, edits, { params: { filename } })
     .then(r => r.data)
 
 export interface OutputPreview {

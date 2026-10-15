@@ -4,7 +4,7 @@ import shutil
 import zipfile
 from pathlib import Path
 from typing import Any, List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -16,10 +16,6 @@ from app.services.schema_inferrer import infer_schema, detect_pid_transform
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["sources"])
-
-# Informational only — the frontend uses this (mirrored) to warn before
-# loading a file into the non-virtualized editable grid. Not enforced here.
-SOURCE_CONTENT_WARN_THRESHOLD = 20
 
 MAPPING_FILENAMES = {
     "variable_mapping": "variable_mapping.csv",
@@ -449,25 +445,37 @@ def download_source_file(project_id: str, filename: str, db: Session = Depends(g
     return FileResponse(entry["path"], filename=entry["filename"], media_type="text/csv")
 
 
+SOURCE_CONTENT_MAX_PAGE = 5000
+# Rows held in memory at once while a PATCH streams through the original file.
+SOURCE_PATCH_CHUNK_ROWS = 50_000
+
+
 class SourceFileContentResponse(BaseModel):
     filename: str
     delimiter: str
     encoding: str
     columns: List[str]
     rows: List[dict]
+    offset: int
     row_count: int
 
 
 @router.get("/{project_id}/source-file-content", response_model=SourceFileContentResponse)
-def get_source_file_content(project_id: str, filename: str, rows: int | None = None, db: Session = Depends(get_db)):
-    """`rows`, when given, caps how many data rows are read — used for the
-    20-row preview so opening a huge file doesn't load it all into memory."""
+def get_source_file_content(
+    project_id: str,
+    filename: str,
+    offset: int = Query(0, ge=0),
+    limit: int = Query(500, ge=1, le=SOURCE_CONTENT_MAX_PAGE),
+    db: Session = Depends(get_db),
+):
+    """One page of data rows (`offset`..`offset + limit - 1`, 0-based, header
+    excluded). Only that slice is parsed, so the grid editor can page through
+    files of any size."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     entry = _find_source_file_entry(project, filename)
 
-    import pandas as pd
     try:
         df = pd.read_csv(
             entry["path"],
@@ -476,8 +484,14 @@ def get_source_file_content(project_id: str, filename: str, rows: int | None = N
             dtype=str,
             keep_default_na=False,
             on_bad_lines="skip",
-            nrows=rows,
+            # A callable rather than range(1, offset + 1): pandas turns a
+            # list-like skiprows into a set, which for deep pages of a large
+            # file would itself cost hundreds of MB.
+            skiprows=(lambda i: 0 < i <= offset) if offset else None,
+            nrows=limit,
         )
+    except pd.errors.EmptyDataError:
+        df = pd.DataFrame(columns=entry.get("columns") or [])
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to parse file: {exc}")
 
@@ -487,45 +501,127 @@ def get_source_file_content(project_id: str, filename: str, rows: int | None = N
         "encoding": entry.get("encoding", "utf-8"),
         "columns": list(df.columns),
         "rows": df.to_dict(orient="records"),
+        "offset": offset,
         "row_count": entry.get("row_count", len(df)),
     }
 
 
-class SourceFileContentPayload(BaseModel):
-    columns: List[str]
-    rows: List[dict[str, Any]]
+class SourceColumnSpec(BaseModel):
+    # Column in the current file this one is read from; None for a new column.
+    source: str | None = None
+    name: str
 
 
-@router.put("/{project_id}/source-file-content", response_model=ProjectResponse)
-def update_source_file_content(
+class SourceFileEditsPayload(BaseModel):
+    # The output columns in order. Existing columns left out are deleted;
+    # `source != name` is a rename.
+    columns: List[SourceColumnSpec]
+    # Data-row index (0-based, as served by GET) -> {output column name: value}.
+    cell_edits: dict[int, dict[str, str]] = {}
+    deleted_rows: List[int] = []
+    # Appended after the last existing row, keyed by output column name.
+    added_rows: List[dict[str, str]] = []
+
+
+@router.patch("/{project_id}/source-file-content", response_model=ProjectResponse)
+def patch_source_file_content(
     project_id: str,
     filename: str,
-    payload: SourceFileContentPayload,
+    payload: SourceFileEditsPayload,
     db: Session = Depends(get_db),
 ):
+    """Apply a set of edits made in the paged grid editor. The original file is
+    streamed in chunks into a new file with the edits applied, so memory stays
+    bounded however large the file is; the client only ever sends what changed."""
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
     entry = _find_source_file_entry(project, filename)
 
-    columns = [c.strip() for c in payload.columns]
-    if not columns or any(not c for c in columns):
+    names = [c.name.strip() for c in payload.columns]
+    if not names or any(not n for n in names):
         raise HTTPException(status_code=400, detail="Column names must be non-empty")
-    seen = set()
-    for c in columns:
-        if c in seen:
-            raise HTTPException(status_code=400, detail=f"Duplicate column name: {c}")
-        seen.add(c)
-
-    import pandas as pd
-    df = pd.DataFrame(payload.rows, columns=columns).fillna("")
+    dupes = sorted({n for n in names if names.count(n) > 1})
+    if dupes:
+        raise HTTPException(status_code=400, detail=f"Duplicate column name: {', '.join(dupes)}")
+    name_set = set(names)
+    for row_values in [*payload.cell_edits.values(), *payload.added_rows]:
+        unknown = set(row_values) - name_set
+        if unknown:
+            raise HTTPException(status_code=400, detail=f"Edits reference unknown column(s): {', '.join(sorted(unknown))}")
+    if any(r < 0 for r in [*payload.cell_edits, *payload.deleted_rows]):
+        raise HTTPException(status_code=400, detail="Row indexes must be non-negative")
 
     path = Path(entry["path"])
-    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    sep = entry.get("delimiter", ",")
+    encoding = entry.get("encoding", "utf-8")
+    read_kwargs = dict(sep=sep, encoding=encoding, dtype=str, keep_default_na=False)
+
     try:
-        df.to_csv(tmp_path, sep=entry.get("delimiter", ","), encoding=entry.get("encoding", "utf-8"), index=False)
+        header = list(pd.read_csv(path, nrows=0, **read_kwargs).columns)
+    except pd.errors.EmptyDataError:
+        header = []
+    missing_sources = [c.source for c in payload.columns if c.source is not None and c.source not in header]
+    if missing_sources:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Column(s) no longer in the file: {', '.join(missing_sources)}. Reload the editor and try again.",
+        )
+
+    sources = [c.source for c in payload.columns]
+    deleted = set(payload.deleted_rows)
+    edit_rows = sorted(payload.cell_edits)
+    edit_pos = 0
+    rows_seen = 0
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+
+    def project_columns(chunk: pd.DataFrame) -> pd.DataFrame:
+        return pd.DataFrame(
+            {name: (chunk[src] if src is not None else "") for name, src in zip(names, sources)},
+            index=chunk.index,
+        )
+
+    try:
+        with open(tmp_path, "w", encoding=encoding, newline="") as out:
+            pd.DataFrame(columns=names).to_csv(out, sep=sep, index=False)
+            if header:
+                # on_bad_lines="error": silently dropping a malformed line would
+                # shift every later row by one, so edits made against the row
+                # indexes the client saw would land on the wrong rows.
+                reader = pd.read_csv(path, chunksize=SOURCE_PATCH_CHUNK_ROWS, on_bad_lines="error", **read_kwargs)
+                for chunk in reader:
+                    chunk.index = pd.RangeIndex(rows_seen, rows_seen + len(chunk))
+                    rows_seen += len(chunk)
+                    result = project_columns(chunk)
+                    while edit_pos < len(edit_rows) and edit_rows[edit_pos] < rows_seen:
+                        row = edit_rows[edit_pos]
+                        for name, value in payload.cell_edits[row].items():
+                            result.at[row, name] = value
+                        edit_pos += 1
+                    if deleted:
+                        result = result[~result.index.isin(deleted)]
+                    result.to_csv(out, sep=sep, index=False, header=False)
+            if payload.added_rows:
+                added = pd.DataFrame(payload.added_rows, columns=names).fillna("")
+                added.to_csv(out, sep=sep, index=False, header=False)
+
+        out_of_range = [r for r in [*edit_rows, *deleted] if r >= rows_seen]
+        if out_of_range:
+            raise HTTPException(
+                status_code=409,
+                detail=f"Row(s) {', '.join(map(str, sorted(out_of_range)[:5]))} no longer exist in the file. Reload the editor and try again.",
+            )
         schema = infer_schema(str(tmp_path))
         os.replace(tmp_path, path)
+    except HTTPException:
+        tmp_path.unlink(missing_ok=True)
+        raise
+    except pd.errors.ParserError as exc:
+        tmp_path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=422,
+            detail=f"The file has a malformed row, so edits can't be matched to rows safely: {exc}",
+        )
     except Exception as exc:
         tmp_path.unlink(missing_ok=True)
         raise HTTPException(status_code=500, detail=f"Failed to save file: {exc}")
