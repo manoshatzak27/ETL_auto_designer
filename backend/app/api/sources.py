@@ -1,10 +1,10 @@
-import io
 import os
 import shutil
 import zipfile
 from pathlib import Path
 from typing import Any, List
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -26,6 +26,8 @@ MAPPING_FILENAMES = {
 
 
 _SOURCE_EXTENSIONS = {".csv", ".tsv", ".txt"}
+# Buffer size when copying an uploaded file to disk; bounds upload memory use.
+_UPLOAD_COPY_CHUNK = 1024 * 1024
 
 
 def _reset_project_state(project: Project) -> None:
@@ -324,26 +326,41 @@ async def upload_sources(
         if cols:
             old_value_snapshots[filename] = _snapshot_column_values(old_entry, cols)
 
-    # Collect raw paths to process (extracts from ZIP when needed)
-    raw_paths: list[Path] = []
-    for upload in files:
+    # Collect raw paths to process (extracts from ZIP when needed). Uploads are
+    # already spooled to a temp file by Starlette, so copy from that file in
+    # chunks rather than reading it into memory — a multi-GB CSV would
+    # otherwise need that much RAM. Runs in a worker thread so a long copy
+    # doesn't block the event loop.
+    def _store_upload(upload: UploadFile) -> list[Path]:
         safe_name = Path(upload.filename).name if upload.filename else "source.csv"
-        contents = await upload.read()
+        suffix = Path(safe_name).suffix.lower()
+        stored: list[Path] = []
+        upload.file.seek(0)
 
-        if Path(safe_name).suffix.lower() == ".zip":
-            with zipfile.ZipFile(io.BytesIO(contents)) as zf:
-                for member in zf.namelist():
-                    member_path = Path(member)
-                    if member_path.suffix.lower() in _SOURCE_EXTENSIONS and not member_path.name.startswith("__"):
-                        _snapshot_if_value_mapped(member_path.name)
-                        dest = project_upload_dir / member_path.name
-                        dest.write_bytes(zf.read(member))
-                        raw_paths.append(dest)
-        elif Path(safe_name).suffix.lower() in _SOURCE_EXTENSIONS:
+        if suffix == ".zip":
+            # zipfile reads the seekable spooled file directly, and each member
+            # is decompressed as a stream.
+            with zipfile.ZipFile(upload.file) as zf:
+                for info in zf.infolist():
+                    member_path = Path(info.filename)
+                    if info.is_dir() or member_path.suffix.lower() not in _SOURCE_EXTENSIONS or member_path.name.startswith("__"):
+                        continue
+                    _snapshot_if_value_mapped(member_path.name)
+                    dest = project_upload_dir / member_path.name
+                    with zf.open(info) as src, dest.open("wb") as out:
+                        shutil.copyfileobj(src, out, _UPLOAD_COPY_CHUNK)
+                    stored.append(dest)
+        elif suffix in _SOURCE_EXTENSIONS:
             _snapshot_if_value_mapped(safe_name)
             dest = project_upload_dir / safe_name
-            dest.write_bytes(contents)
-            raw_paths.append(dest)
+            with dest.open("wb") as out:
+                shutil.copyfileobj(upload.file, out, _UPLOAD_COPY_CHUNK)
+            stored.append(dest)
+        return stored
+
+    raw_paths: list[Path] = []
+    for upload in files:
+        raw_paths.extend(await run_in_threadpool(_store_upload, upload))
 
     if not raw_paths:
         raise HTTPException(status_code=400, detail="No CSV/TSV files found in the uploaded content.")
@@ -662,8 +679,12 @@ async def upload_mapping_csv(
     project_mapping_dir.mkdir(parents=True, exist_ok=True)
     dest = project_mapping_dir / f"{mapping_type}.csv"
 
-    contents = await file.read()
-    dest.write_bytes(contents)
+    def _store() -> None:
+        file.file.seek(0)
+        with dest.open("wb") as out:
+            shutil.copyfileobj(file.file, out, _UPLOAD_COPY_CHUNK)
+
+    await run_in_threadpool(_store)
 
     mapping_files = dict(project.mapping_files or {})
     mapping_files[mapping_type] = str(dest)
