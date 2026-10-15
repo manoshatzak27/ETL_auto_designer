@@ -190,6 +190,10 @@ def _table_columns(conn: "PGConnection", schema: str, table: str) -> list[str]:
         return [r[0] for r in cur.fetchall()]
 
 
+# Rows sent per COPY statement when loading an output table.
+_COPY_BATCH_ROWS = 100_000
+
+
 def _copy_csv_into_table(
     conn: "PGConnection",
     schema: str,
@@ -215,40 +219,51 @@ def _copy_csv_into_table(
         if not usable:
             return 0, f"no overlapping columns between {csv_path.name} and {schema}.{table} (skipped)"
 
-        rows = list(reader)
-
-    if truncate:
-        with conn.cursor() as cur:
-            cur.execute(
-                sql.SQL("TRUNCATE TABLE {schema}.{table} CASCADE").format(
-                    schema=sql.Identifier(schema),
-                    table=sql.Identifier(table),
+        if truncate:
+            with conn.cursor() as cur:
+                cur.execute(
+                    sql.SQL("TRUNCATE TABLE {schema}.{table} CASCADE").format(
+                        schema=sql.Identifier(schema),
+                        table=sql.Identifier(table),
+                    )
                 )
-            )
 
-    # Build an in-memory CSV with only the columns the target table wants
-    buf = io.StringIO()
-    writer = csv.writer(buf, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
-    for row in rows:
-        out_row = []
-        for col in usable:
-            idx = csv_idx[col]
-            out_row.append(row[idx] if idx < len(row) else "")
-        writer.writerow(out_row)
-    buf.seek(0)
+        copy_sql = sql.SQL(
+            "COPY {schema}.{table} ({cols}) FROM STDIN "
+            "WITH (FORMAT csv, DELIMITER ';', NULL '', QUOTE '\"', ENCODING 'UTF8')"
+        ).format(
+            schema=sql.Identifier(schema),
+            table=sql.Identifier(table),
+            cols=sql.SQL(", ").join(sql.Identifier(c) for c in usable),
+        ).as_string(conn)
 
-    copy_sql = sql.SQL(
-        "COPY {schema}.{table} ({cols}) FROM STDIN "
-        "WITH (FORMAT csv, DELIMITER ';', NULL '', QUOTE '\"', ENCODING 'UTF8')"
-    ).format(
-        schema=sql.Identifier(schema),
-        table=sql.Identifier(table),
-        cols=sql.SQL(", ").join(sql.Identifier(c) for c in usable),
-    )
-    with conn.cursor() as cur:
-        cur.copy_expert(copy_sql.as_string(conn), buf)
+        # Re-encode only the columns the target table wants and COPY them in
+        # batches, so memory stays bounded however large the output table is
+        # (measurement/observation can run to millions of rows). All batches
+        # share the caller's transaction, so a failure still rolls back the
+        # whole table.
+        idxs = [csv_idx[col] for col in usable]
+        buf = io.StringIO()
+        writer = csv.writer(buf, delimiter=";", quotechar='"', quoting=csv.QUOTE_MINIMAL)
+        total = 0
+        pending = 0
+        with conn.cursor() as cur:
+            for row in reader:
+                writer.writerow([row[i] if i < len(row) else "" for i in idxs])
+                pending += 1
+                if pending >= _COPY_BATCH_ROWS:
+                    buf.seek(0)
+                    cur.copy_expert(copy_sql, buf)
+                    total += pending
+                    pending = 0
+                    buf.seek(0)
+                    buf.truncate()
+            if pending:
+                buf.seek(0)
+                cur.copy_expert(copy_sql, buf)
+                total += pending
 
-    return len(rows), f"loaded {len(rows)} rows into {schema}.{table} (cols: {len(usable)}/{len(target_cols)})"
+    return total, f"loaded {total} rows into {schema}.{table} (cols: {len(usable)}/{len(target_cols)})"
 
 
 INDICES_TABLE = "__indices__"

@@ -675,16 +675,37 @@ async def upload_mapping_csv(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
+    if Path(file.filename or "").suffix.lower() != ".csv":
+        raise HTTPException(status_code=400, detail="Mapping file must be a .csv file.")
+
     project_mapping_dir = settings.get_upload_path() / project_id / "mappings"
     project_mapping_dir.mkdir(parents=True, exist_ok=True)
     dest = project_mapping_dir / f"{mapping_type}.csv"
+    tmp = dest.with_name(dest.name + ".tmp")
 
-    def _store() -> None:
+    # Copy to a temp file and check it parses as CSV before replacing the
+    # existing mapping, so a bad upload doesn't clobber a good one.
+    def _store() -> str | None:
         file.file.seek(0)
-        with dest.open("wb") as out:
+        with tmp.open("wb") as out:
             shutil.copyfileobj(file.file, out, _UPLOAD_COPY_CHUNK)
+        try:
+            pd.read_csv(tmp, nrows=100, dtype=str, encoding="utf-8-sig")
+        except UnicodeDecodeError:
+            return "Mapping file must be UTF-8 encoded text."
+        except pd.errors.EmptyDataError:
+            return "Mapping file is empty."
+        except pd.errors.ParserError as exc:
+            return f"Mapping file is not a valid CSV: {exc}"
+        os.replace(tmp, dest)
+        return None
 
-    await run_in_threadpool(_store)
+    try:
+        error = await run_in_threadpool(_store)
+    finally:
+        tmp.unlink(missing_ok=True)
+    if error:
+        raise HTTPException(status_code=400, detail=error)
 
     mapping_files = dict(project.mapping_files or {})
     mapping_files[mapping_type] = str(dest)
