@@ -14,23 +14,25 @@ Order of attempts:
 A note on which codes can be resolved
 ------------------------------------
 Step 1.1 asks that an invalid code be redirected through
-``concept_relationship / 'Maps to'``. Against this database that only partly
-works, and the reason is structural rather than a gap in the implementation.
+``concept_relationship / 'Maps to'``. Whether that works depends on which
+vocabulary this runs against.
 
-This vocabulary holds standard, valid concepts exclusively. A *source*
-vocabulary is by definition non-standard — its whole role in OMOP is to be
-mapped away from — so filtering removed every one of its concepts, and with
-them every outgoing 'Maps to' edge. Concretely, the vocabularies present here
-with standard concepts are SNOMED, LOINC, RxNorm, NDC and HCPCS; ICD10CM,
-ICD9CM, CPT4, ICD10 and ATC have **zero** rows.
+``vocab`` may be the full Athena export (shared with the ETL Auto-Designer) or
+the standard-only one ./load_vocab.sh builds, so every query here filters to
+standard, valid concepts itself rather than relying on the database to.
 
-So a LOINC or SNOMED code resolves normally, and an ICD-10 or CPT-4 code
-cannot resolve at all. The 'Maps to' query below still runs — it costs one
-indexed lookup and it does resolve a standard concept carrying an explicit
-'Maps to' — but when it comes back empty for a source-vocabulary code, the
-stage says so explicitly rather than silently falling through to a name match
-and presenting the result as deterministic. See the README section
-"Source-vocabulary codes" for the options.
+Against the full vocabulary a *source* code — ICD10CM, ICD9CM, CPT4, ATC, all
+non-standard by definition — resolves through its 'Maps to' edge to the
+standard concept OHDSI curated for it. That path is only taken for a code the
+input *labeled* ("ICD-10: E11.9"): an inferred, bare ICD-10-shaped token is
+far more often a questionnaire item number ("Q14"), and a hit here exits at
+100.
+
+Against the standard-only vocabulary filtering removed every source concept and
+with it every outgoing 'Maps to' edge, so an ICD-10 or CPT-4 code cannot resolve
+at all. When that happens the stage says so explicitly rather than silently
+falling through to a name match and presenting the result as deterministic.
+See the README section "Source-vocabulary codes" for the options.
 """
 
 from __future__ import annotations
@@ -165,7 +167,8 @@ class ExactMatcher:
         if cached is None:
             cached = bool(self.db.fetch_value(
                 "SELECT EXISTS (SELECT 1 FROM vocab.concept "
-                "WHERE vocabulary_id = %s LIMIT 1)",
+                "WHERE vocabulary_id = %s AND standard_concept = 'S' "
+                "AND invalid_reason IS NULL LIMIT 1)",
                 (vocabulary_id,),
             ))
             self._vocab_present[vocabulary_id] = cached
@@ -202,6 +205,7 @@ class ExactMatcher:
             FROM vocab.concept c
             WHERE c.concept_code = %(code)s
               AND c.vocabulary_id = ANY(%(vocabs)s)
+              AND c.standard_concept = 'S' AND c.invalid_reason IS NULL
             {_TIEBREAK}
             """,
             {"code": code.code, "vocabs": list(vocabularies),
@@ -209,6 +213,13 @@ class ExactMatcher:
         )
         if row:
             return _to_candidate(row, "stage1_code")
+
+        # A source-vocabulary code is only followed through 'Maps to' when the
+        # input labeled it ("ICD-10: E11.9"). An inferred one is usually a
+        # questionnaire item number ("Q14") that happens to be ICD-10-shaped,
+        # and a hit here would exit at 100.
+        if not code.labeled:
+            return None
 
         # The code did not name a concept that survived filtering. Try the
         # 'Maps to' edge anyway — see the module docstring for why this only
@@ -221,9 +232,11 @@ class ExactMatcher:
             JOIN vocab.concept_relationship r
                  ON r.concept_id_1 = src.concept_id
                 AND r.relationship_id = 'Maps to'
+                AND r.invalid_reason IS NULL
             JOIN vocab.concept c ON c.concept_id = r.concept_id_2
             WHERE src.concept_code = %(code)s
               AND src.vocabulary_id = ANY(%(vocabs)s)
+              AND c.standard_concept = 'S' AND c.invalid_reason IS NULL
             {_TIEBREAK}
             """,
             {"code": code.code, "vocabs": list(vocabularies),

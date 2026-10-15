@@ -114,11 +114,13 @@ class CompositeScorer:
             return {}
         rows = self.db.fetch_all(
             """
-            SELECT descendant_concept_id AS concept_id,
-                   max(min_levels_of_separation) AS depth
-            FROM vocab.concept_ancestor
-            WHERE descendant_concept_id = ANY(%s)
-            GROUP BY descendant_concept_id
+            SELECT a.descendant_concept_id AS concept_id,
+                   max(a.min_levels_of_separation) AS depth
+            FROM vocab.concept_ancestor a
+            JOIN vocab.concept p ON p.concept_id = a.ancestor_concept_id
+            WHERE a.descendant_concept_id = ANY(%s)
+              AND p.standard_concept = 'S' AND p.invalid_reason IS NULL
+            GROUP BY a.descendant_concept_id
             """,
             (concept_ids,),
         )
@@ -128,12 +130,11 @@ class CompositeScorer:
     def check_replacement(self, cand: Candidate) -> tuple[Candidate, int | None]:
         """Redirect a deprecated concept to its replacement.
 
-        In this database the check can only ever pass: ``vocab.concept`` carries
-        a CHECK constraint that ``invalid_reason IS NULL``, so a deprecated
-        concept cannot be selected because it is not present to be selected.
-        The lookup is kept because it is cheap, because it is the assertion that
-        the invariant still holds, and because the same code runs unchanged if
-        this pipeline is ever pointed at an unfiltered vocabulary.
+        In practice the check always passes: candidates come from
+        ``pipeline.concept_search``, which holds only standard, valid concepts
+        even when ``vocab`` is the full Athena export, so a deprecated concept
+        is never there to be selected. The lookup is kept because it is cheap
+        and because it is the assertion that the invariant still holds.
         """
         row = self.db.fetch_one(
             """
@@ -143,6 +144,7 @@ class CompositeScorer:
             LEFT JOIN vocab.concept_relationship r
                    ON r.concept_id_1 = c.concept_id
                   AND r.relationship_id = 'Maps to'
+                  AND r.invalid_reason IS NULL
                   AND r.concept_id_2 <> c.concept_id
             WHERE c.concept_id = %s
             LIMIT 1
@@ -160,6 +162,7 @@ class CompositeScorer:
             SELECT concept_id, concept_name, domain_id, vocabulary_id,
                    concept_class_id, concept_code
             FROM vocab.concept WHERE concept_id = %s
+              AND standard_concept = 'S' AND invalid_reason IS NULL
             """,
             (row["replacement_id"],),
         )

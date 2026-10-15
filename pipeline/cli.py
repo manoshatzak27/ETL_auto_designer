@@ -444,7 +444,8 @@ def cmd_feedback(config: PipelineConfig, args: argparse.Namespace) -> int:
     try:
         concept = db.fetch_one(
             "SELECT concept_id, concept_name, domain_id, vocabulary_id "
-            "FROM vocab.concept WHERE concept_id = %s", (args.concept,))
+            "FROM vocab.concept WHERE concept_id = %s "
+            "AND standard_concept = 'S' AND invalid_reason IS NULL", (args.concept,))
         if not concept:
             print(f"concept_id {args.concept} is not a standard, valid concept "
                   "in this database", file=sys.stderr)

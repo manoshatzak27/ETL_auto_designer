@@ -71,6 +71,7 @@ def classify_targets(db: Database, rows: list[dict]) -> None:
             """
             SELECT concept_id, concept_name, domain_id, vocabulary_id, concept_class_id
             FROM vocab.concept WHERE concept_id = ANY(%s)
+              AND standard_concept = 'S' AND invalid_reason IS NULL
             """,
             (ids,),
         ):

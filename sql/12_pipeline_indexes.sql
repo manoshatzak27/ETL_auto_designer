@@ -50,6 +50,12 @@ CREATE INDEX IF NOT EXISTS idx_concept_rel_maps_to
 CREATE INDEX IF NOT EXISTS idx_concept_search_name_trgm
     ON pipeline.concept_search USING gin (concept_name_norm gin_trgm_ops);
 
+-- Synonym similarity looks synonyms up per candidate concept. 05_indexes.sql
+-- creates this under the same name; a vocabulary loaded by something else
+-- (the ETL Auto-Designer's full one) may not have it.
+CREATE INDEX IF NOT EXISTS idx_concept_syn_concept
+    ON vocab.concept_synonym (concept_id);
+
 -- ── Logging / feedback lookups ──────────────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_mapping_log_run     ON pipeline.mapping_log (run_id);
 CREATE INDEX IF NOT EXISTS idx_mapping_log_status  ON pipeline.mapping_log (status);

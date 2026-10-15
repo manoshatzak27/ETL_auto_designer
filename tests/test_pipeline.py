@@ -631,11 +631,29 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(result.selected.concept_code, "2160-0")
         self.assertEqual(result.selected.vocabulary_id, "LOINC")
 
-    def test_source_vocabulary_code_is_flagged_not_silently_dropped(self):
+    def test_source_vocabulary_code_is_mapped_or_flagged(self):
+        # Against the full vocabulary the code resolves through 'Maps to';
+        # against the standard-only one it cannot, and must say so rather
+        # than be silently dropped.
         result = self.match("dx", "ICD10: E11.9")
-        self.assertTrue(any("source vocabulary" in f
-                            for f in result.validation_flags),
-                        result.validation_flags)
+        if self._has_source_concepts():
+            self.assertEqual(result.decided_at_stage, "stage1")
+            self.assertEqual(result.selected.concept_id, 201826)  # Type 2 DM
+        else:
+            self.assertTrue(any("source vocabulary" in f
+                                for f in result.validation_flags),
+                            result.validation_flags)
+
+    def test_inferred_code_is_not_followed_through_maps_to(self):
+        # "Q14" is ICD-10-shaped, but here it is a questionnaire item number.
+        # Followed, it resolves to a congenital eye anomaly at confidence 100.
+        result = self.match("Q14", "Q14. 9a. Cream/ointment:")
+        self.assertNotIn("code", result.decision_reason)
+
+    def _has_source_concepts(self) -> bool:
+        return bool(self.matcher.db.fetch_value(
+            "SELECT EXISTS (SELECT 1 FROM vocab.concept "
+            "WHERE vocabulary_id = 'ICD10CM' LIMIT 1)"))
 
     def test_short_acronym_does_not_win_over_description(self):
         # "EGFR" is an exact synonym of a genomics concept; the description wins.

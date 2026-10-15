@@ -48,7 +48,7 @@ SELECT
         (SELECT max(vocabulary_version) FROM vocab.vocabulary
          WHERE vocabulary_version IS NOT NULL),
         'unknown'),
-    (SELECT count(*) FROM vocab.concept),
+    (SELECT count(*) FROM pipeline.concept_search),
     'concept_search + token_idf rebuilt';
 
 \echo '--- pipeline corpus stats ---'

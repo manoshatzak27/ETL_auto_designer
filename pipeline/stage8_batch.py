@@ -267,7 +267,7 @@ def refresh_derived_structures(matcher: ConceptMatcher,
         """
         INSERT INTO pipeline.vocabulary_version
                (vocabulary_version, concept_count, note)
-        VALUES (%s, (SELECT count(*) FROM vocab.concept), %s)
+        VALUES (%s, (SELECT count(*) FROM pipeline.concept_search), %s)
         """,
         (version, "refreshed via stage8_batch.refresh_derived_structures"),
     )

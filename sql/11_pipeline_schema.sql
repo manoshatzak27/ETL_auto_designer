@@ -1,6 +1,7 @@
 -- 11_pipeline_schema.sql
 --
--- Everything the matching pipeline needs on top of the filtered vocabulary:
+-- Everything the matching pipeline needs on top of the vocabulary — either the
+-- standard-only one ./load_vocab.sh builds or the full Athena export:
 --   * pipeline.concept_search   - materialized search view (Stage 2)
 --   * pipeline.token_idf        - corpus token frequencies (Stage 3)
 --   * pipeline.concept_embedding- embedding cache (Stage 5 / 8.2)
@@ -62,7 +63,10 @@ LEFT JOIN LATERAL (
       -- LOINC's search-keyword dumps are not names; see
       -- public.pipeline_is_keyword_dump in 10_pipeline_extensions.sql.
       AND NOT public.pipeline_is_keyword_dump(cs.concept_synonym_name)
-) s ON TRUE;
+) s ON TRUE
+-- A no-op against the standard-only vocabulary; required against the full one.
+WHERE c.standard_concept = 'S'
+  AND c.invalid_reason IS NULL;
 
 -- ─────────────────────────────────────────────────────────────────────────
 -- Stage 3: IDF weights
