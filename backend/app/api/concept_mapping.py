@@ -22,6 +22,7 @@ Endpoints:
 import csv
 import re
 import io
+import os
 import shutil
 import tempfile
 import zipfile
@@ -30,7 +31,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
+from starlette.background import BackgroundTask
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import pandas as pd
@@ -1411,17 +1413,23 @@ def download_mapping_files(project_id: str, db: Session = Depends(get_db)):
             detail="No mapping files generated yet. Generate them first.",
         )
 
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-        for path in existing:
-            zf.write(path, arcname=path.name)
-    buf.seek(0)
+    # Build the zip in a temp file rather than memory (variable_value_mapping.csv
+    # can get large) and delete it once the response has been sent.
+    fd, tmp_name = tempfile.mkstemp(suffix=".zip")
+    os.close(fd)
+    try:
+        with zipfile.ZipFile(tmp_name, "w", zipfile.ZIP_DEFLATED) as zf:
+            for path in existing:
+                zf.write(path, arcname=path.name)
+    except BaseException:
+        os.unlink(tmp_name)
+        raise
 
-    zip_name = f"{project_id}_mapping_files.zip"
-    return StreamingResponse(
-        buf,
+    return FileResponse(
+        tmp_name,
         media_type="application/zip",
-        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+        filename=f"{project_id}_mapping_files.zip",
+        background=BackgroundTask(os.unlink, tmp_name),
     )
 
 

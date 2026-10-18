@@ -13,7 +13,20 @@ export interface SourceFileContent {
   encoding: string
   columns: string[]
   rows: Record<string, string>[]
+  offset: number
   row_count: number
+}
+
+// Only what changed in the grid editor — the backend streams the original
+// file and applies these, so the client never holds or sends the whole file.
+export interface SourceFileEdits {
+  // Output columns in order; `source` is the existing column read from
+  // (null for a new column). Existing columns left out are deleted.
+  columns: { source: string | null; name: string }[]
+  // Data-row index -> { output column name: value }
+  cell_edits: Record<number, Record<string, string>>
+  deleted_rows: number[]
+  added_rows: Record<string, string>[]
 }
 
 export interface ProjectSummary {
