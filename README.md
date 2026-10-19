@@ -307,8 +307,8 @@ run.
 
 Measured on the matcher's two benchmarks — 50 lab/vitals columns graded by name
 rule, and 206 real curated columns from a rheumatology study graded by
-concept_id (only 117 of which are reachable at all, the rest being custom ids
-≥ 2e9 or non-standard):
+concept_id (117 of them with a standard Athena answer, the rest custom ids
+≥ 2e9 and one non-standard concept):
 
 | | value |
 |---|---|
@@ -318,6 +318,13 @@ concept_id (only 117 of which are reachable at all, the rest being custom ids
 | curated columns, agreed on meaning | 60.7% (heuristic; over-counts by ~7) |
 | curated columns, correct concept in top-5 | 58.1% |
 | throughput | ~700 ms/column, 4 workers |
+
+Custom concepts are searchable too: the matcher reads the same vocabulary the
+Finalize step writes them into, once `scripts/setup-conceptmatcher.sh` has run
+again. On the same study, with its 158 custom concepts loaded, it found 44 of
+the 88 custom answers (24 auto-accepted) and returned none of the other 8 as
+anything but unmapped. They are shared, though: a custom concept loaded for one
+project is offered to every project.
 
 Read that as: **auto-accepts have been reliable, and the review queue is where
 the real work is.** On a 32-column synthetic EHR schema the split was 18
@@ -334,13 +341,15 @@ a reworded term is the right follow-up.
 
 ### Three limits that will bite
 
-**Source-vocabulary codes cannot resolve.** The matcher's vocabulary is
-standard-and-valid only, which means **ICD10CM, ICD9CM, CPT4, ICD10 and ATC
-have zero rows** in it — source vocabularies are non-standard by definition.
-SNOMED, LOINC, RxNorm, NDC and HCPCS codes resolve normally. A column carrying
-an ICD-10 code gets an explicit validation flag rather than a quiet fall-through
-to a name match. Note this is a *different* vocabulary from the one Card 1 of
-the Finalize step loads into Postgres, which is the unfiltered bundle.
+**Source-vocabulary codes resolve only when labeled.** The matcher returns
+standard concepts only, but it reads the full vocabulary Card 1 of the
+Finalize step loads, so a source code is followed through its `Maps to` edge to
+the standard concept OHDSI curated for it: "ICD-10: E11.9" gives Type 2
+diabetes mellitus. Only a code the text labels is followed — a bare
+ICD-10-shaped token is usually a questionnaire item number (`Q14`) and is left
+alone. CPT-4, ATC and ICD-9 codes still do not resolve (see the matcher's
+README, Limitations); an unresolved code gets an explicit validation flag
+rather than a quiet fall-through to a name match.
 
 **Variables versus values is the largest open defect.** OMOP holds both the
 concept naming a variable and many concepts naming statements *about* it, and
@@ -385,9 +394,32 @@ The script also adds four indexes the matcher needs to the vocab tables
 2 GB on a full export. A vocabulary reload keeps them up to date as it copies,
 which makes the reload slower than without them.
 
-The service is `conceptmatcher/pipeline/service.py`, run as `serve`. Without a
-built `pipeline` schema the Concepts step's button is disabled and says why —
-the step works exactly as before, by hand.
+The service is `conceptmatcher/pipeline/service.py`, run as `serve`. Until it
+is ready, "Load concepts", "Auto-fill concept IDs" and concept search are
+disabled — every step still works by hand.
+
+### Checking on it
+
+Every wizard step's header shows **Concept matcher: ready / starting /
+unavailable** (green / amber / red). Click it for the reason, the fix as
+copyable commands, the raw error under *Details*, the time of the last check,
+and a **Re-check** button; when ready it shows the vocabulary version and
+concept count. The status is re-checked every 30 s until the matcher is ready
+(every 5 min after) and whenever the tab regains focus, so "Load concepts"
+turns itself on once a fix lands — no page reload.
+
+The backend's `GET /api/projects/concept-matcher/health` does the diagnosis and
+returns `{status, reason, hint, commands, raw}`:
+
+| What the backend sees | Status | Fix |
+|---|---|---|
+| `CONCEPT_MATCHER_URL` empty | not configured | set it, restart the backend |
+| connection refused / host not found | unavailable | `docker compose up -d conceptmatcher` |
+| no answer within 10 s | starting | wait — it loads the embedding model at startup |
+| 503 "pool … already closed" | unavailable | `docker compose restart conceptmatcher` (older matchers only; the pool now reopens by itself) |
+| 503 connection error to Postgres | unavailable | `docker compose up -d postgres`, then restart the matcher |
+| `missing: vocab.concept` | unavailable | load the vocabulary (Finalize step), then run the setup script |
+| `missing: pipeline.…` / empty IDF table | unavailable | `./scripts/setup-conceptmatcher.sh`, then restart the matcher |
 
 ### Keeping it current
 

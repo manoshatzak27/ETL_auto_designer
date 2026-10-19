@@ -208,7 +208,7 @@ out per column:
 
 | endpoint | |
 |---|---|
-| `GET /health` | readiness, vocabulary version, concept count, whether Stage 5 is available, the domains it will accept |
+| `GET /health` | readiness, vocabulary version, concept count, whether Stage 5 is available, the domains it will accept. Not ready: only `{"ready": false, "problems": [...]}`, naming what is missing. 503 `{"detail": ...}` when the database can't be reached |
 | `POST /match` | `{"columns": [{"name", "description"?, "table"?}, ...], "domains"?, "shortlist"?, "source_system"?, "note"?, "candidates"?}` |
 
 `/match` is Stage 8 — the same path `pipeline.cli batch` takes, logging to the
@@ -909,6 +909,31 @@ nonsense column and "Length of stay", which has no standard concept.
 Per-stage cost, once the embedding model is warm: FTS ~90ms, Jaccard ~45ms,
 Stage 1 ~40ms, fuzzy ~18ms, embeddings ~30ms, preprocessing <1ms.
 
+
+### On the full vocabulary
+
+Moving from a standard-only copy of Athena to the full export (filtering in
+the queries instead) was measured on a copy of the ETL Auto-Designer's
+vocabulary, same release, against the standard-only database:
+
+| | standard-only DB | full vocabulary |
+|---|---|---|
+| gold set overall / literal / top-5 | 92.0 / 97.8 / 96.0% | identical |
+| user mappings, exact / agreed (117) | 35 / 69 | identical, all 206 picks the same |
+| value mappings, right or one click away (449) | 73.3% | identical |
+| typo set, top-1 (480) | 97.9% | identical |
+| ms/column, user mappings | 365 | 375 |
+
+That is with custom concepts excluded. With the 158 the Auto-Designer had
+inserted for this study searchable as well, the user mappings found 44 of the
+88 custom answers (24 auto-accepted, 15 review, 5 unmapped); the 8 custom
+picks that were wrong were all unmapped, and nothing previously right was
+lost. Those custom concepts were defined for this same study, so read 44 as
+an upper bound for other projects.
+
+None of the benchmarks contain a coded column, so the one gain — labeled
+source codes resolving through `Maps to` — shows only in spot checks (see
+Limitations).
 ## Limitations
 
 **Source-vocabulary codes resolve only when labeled.** ICD-10, ICD-9, CPT-4
