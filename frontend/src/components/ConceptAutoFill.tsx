@@ -11,7 +11,9 @@ export function ConceptAutoFillButton({ autoFill, targets, fields, label = 'Auto
   label?: string
   className?: string
 }) {
-  const unavailable = autoFill.health?.available === false
+  const { status, reason } = autoFill.matcher
+  // Still "checking" leaves it enabled, as before the first answer arrived.
+  const unavailable = status !== 'ready' && status !== 'checking'
   return (
     <Button
       className={className}
@@ -20,7 +22,7 @@ export function ConceptAutoFillButton({ autoFill, targets, fields, label = 'Auto
       disabled={autoFill.running || targets.length === 0 || unavailable}
       title={
         unavailable
-          ? `Concept matcher unavailable — ${autoFill.health?.detail || 'the service is not running'}`
+          ? `Concept matcher ${status === 'starting' ? 'starting' : 'unavailable'} — ${reason} Click the status in the header for how to fix it.`
           : targets.length === 0
             ? `Map a column for ${fields} first`
             : `Fill in standard concept IDs for the ${fields} values`

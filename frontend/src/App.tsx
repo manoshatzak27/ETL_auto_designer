@@ -3,6 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { GenerationProvider } from './context/GenerationContext'
 import { StepFileSelectionContext } from './contexts/StepFileSelectionContext'
 import { AutoRunProvider } from './contexts/AutoRunContext'
+import { ConceptMatcherProvider } from './contexts/ConceptMatcherContext'
 import AutoRunBanner from './components/AutoRunBanner'
 import Dashboard from './pages/Dashboard'
 import SourceStep from './pages/wizard/SourceStep'
@@ -79,9 +80,11 @@ function ProjectWizard() {
     <StepFileSelectionContext.Provider value={fileSelections}>
       <GenerationProvider>
         <AutoRunProvider projectId={project.id}>
-          <Comp project={project} onUpdate={update} />
-          <AutoRunBanner />
-          <ChatPanel project={project} onUpdate={update} />
+          <ConceptMatcherProvider>
+            <Comp project={project} onUpdate={update} />
+            <AutoRunBanner />
+            <ChatPanel project={project} onUpdate={update} />
+          </ConceptMatcherProvider>
         </AutoRunProvider>
       </GenerationProvider>
     </StepFileSelectionContext.Provider>
