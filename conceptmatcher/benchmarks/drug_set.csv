@@ -1,0 +1,48 @@
+# Drug names for the typo benchmark. Same format and grading as gold_set.csv:
+# the selected concept's NAME must contain one `require` alternative and no
+# `forbid` term, matched case-insensitively and word-bounded.
+#
+# A clinical drug or branded product containing the ingredient passes, not only
+# the bare RxNorm Ingredient: the question this set asks is whether a misspelt
+# drug is still recognised at all, and a product of the right ingredient is a
+# defensible answer for a free-text medication column.
+#
+# Weighted towards rheumatology because that is what the curated user mappings
+# come from, and because biologic names (-mab, -cept, -nib) are long, rare and
+# exactly the words people misspell. Everything is Drug domain.
+name,description,require,forbid,kind
+,Methotrexate,methotrexate,,drug
+,Hydroxychloroquine,hydroxychloroquine,,drug
+,Sulfasalazine,sulfasalazine,,drug
+,Leflunomide,leflunomide,,drug
+,Prednisolone,prednisolone,,drug
+,Prednisone,prednisone,,drug
+,Azathioprine,azathioprine,,drug
+,Mycophenolate mofetil,mycophenolate,,drug
+,Cyclophosphamide,cyclophosphamide,,drug
+,Colchicine,colchicine,,drug
+,Allopurinol,allopurinol,,drug
+,Febuxostat,febuxostat,,drug
+,Adalimumab,adalimumab,,drug
+,Etanercept,etanercept,,drug
+,Infliximab,infliximab,,drug
+,Certolizumab,certolizumab,,drug
+,Golimumab,golimumab,,drug
+,Tocilizumab,tocilizumab,,drug
+,Sarilumab,sarilumab,,drug
+,Rituximab,rituximab,,drug
+,Abatacept,abatacept,,drug
+,Anakinra,anakinra,,drug
+,Secukinumab,secukinumab,,drug
+,Ixekizumab,ixekizumab,,drug
+,Ustekinumab,ustekinumab,,drug
+,Tofacitinib,tofacitinib,,drug
+,Baricitinib,baricitinib,,drug
+,Upadacitinib,upadacitinib,,drug
+,Apremilast,apremilast,,drug
+,Ibuprofen,ibuprofen,,drug
+,Naproxen,naproxen,,drug
+,Diclofenac,diclofenac,,drug
+,Celecoxib,celecoxib,,drug
+,Acetaminophen,acetaminophen,,drug
+,Omeprazole,omeprazole,,drug

@@ -17,7 +17,7 @@ flowchart LR
   Backend --> SQLite[(SQLite wizard state)]
   Backend --> OpenAI
   Backend --> ConceptMatcher[Concept matcher / staged pipeline]
-  ConceptMatcher --> VocabDb[(Athena vocabulary, standard-only)]
+  ConceptMatcher --> Postgres
   Backend --> Executor[etl_executor]
   Executor --> Outputs[outputs/PROJECT_ID/*.csv]
   Outputs --> Loader[omop_loader]
@@ -48,12 +48,11 @@ ETL_auto_designer/
 │   │   └── types/
 │   └── Dockerfile
 │
+├── conceptmatcher/         The staged concept matcher (see below), built as the
+│                           `conceptmatcher` service. Its own README covers the pipeline.
 ├── scripts/init-omop.sh    Calls python -m app.services.ddl_applier bootstrap to split vocab/clinical DDL into separate schemas
 ├── docker-compose.yml      Postgres + omop-init + conceptmatcher + backend + frontend
 └── .env.example            Stack-wide environment variables
-
-../new concept finding/     Sibling checkout — the staged concept matcher (see below).
-                            Built here as the `conceptmatcher` service; not vendored in.
 ```
 
 ---
@@ -119,19 +118,16 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 | `ATHENA_BUNDLE_ROOT`    | *(empty)*                              | Allow-list root for `/load-vocabulary` (security guard)       |
 | `MAPPINGS_BUNDLE_ROOT`  | *(empty → uploads dir)*                | Allow-list root for `/load-mappings-from-dir`                 |
 | `CONCEPT_MATCHER_URL`   | (inside Docker: `http://conceptmatcher:8000`) | Concept matcher behind every concept search and the Concepts step's "Load concepts" button. Empty disables them. |
-| `CONCEPT_PIPELINE_PATH` | `../new concept finding`               | Docker build context for that service — the sibling checkout  |
 | `CONCEPT_MATCHER_PORT`  | `8002`                                 | Host port the matcher is published on                         |
 | `CONCEPT_MATCHER_EMBEDDINGS` | `1`                               | Build arg. `0` drops Stage 5 and shrinks the image ~2GB → ~310MB; the remaining stages' weights are renormalized rather than scored zero |
-| `VOCAB_DB_HOST` / `VOCAB_DB_PORT` | `host.docker.internal` / `5433` | Where the matcher finds the standard-only Athena vocabulary   |
-| `VOCAB_DB_NAME` / `VOCAB_DB_USER` / `VOCAB_DB_PASSWORD` | `athena_vocab` / `vocab` / `vocab_pwd` | Credentials for that vocabulary database  |
 
 ---
 
 ## Automatic concept matching (Concepts step → "Load concepts")
 
 Every concept finder in the app goes through one service, `conceptmatcher` —
-the staged pipeline in `../new concept finding` — over that project's own
-Postgres: **standard + valid concepts only**. It is used two ways:
+the staged pipeline in `conceptmatcher/` — over the stack's own vocabulary
+(`vocab` schema), returning **standard + valid concepts only**. It is used two ways:
 
 | | **Search** (per row / per field) | **Load concepts** (whole project) |
 |---|---|---|
@@ -142,9 +138,9 @@ Postgres: **standard + valid concepts only**. It is used two ways:
 
 ### What the matcher actually is
 
-It is not a second embedding search. It is a ten-stage pipeline over a
-standard-only Athena vocabulary (3,518,557 concepts), one module per stage in
-that project's `pipeline/`, driven by its `runner.py`:
+It is not a second embedding search. It is a ten-stage pipeline over the
+standard, valid concepts of the Athena vocabulary (3,518,557 of them), one
+module per stage in `conceptmatcher/pipeline/`, driven by its `runner.py`:
 
 | stage | what survives |
 |---|---|
@@ -176,11 +172,9 @@ Two consequences are worth carrying in your head while using the step:
   with) and saves ~40 ms/column. They are on as insurance for inputs where the
   lexical stages have little to grip.
 
-Full documentation is that project's own [`README.md`](../new%20concept%20finding/README.md)
-(~990 lines, including every measured dead end) and its
-[`CLAUDE.md`](../new%20concept%20finding/CLAUDE.md) for the short version. Read
-those before changing anything matcher-side; nothing about the stages is
-configurable from this repo.
+Full documentation is the matcher's own [`README.md`](conceptmatcher/README.md)
+(~950 lines, including every measured dead end). Read it before changing
+anything matcher-side; nothing about the stages is configurable from the wizard.
 
 ### Give it descriptions first
 
@@ -311,10 +305,10 @@ run.
 
 ### What to expect from it
 
-Measured on that project's two benchmarks — 50 lab/vitals columns graded by name
+Measured on the matcher's two benchmarks — 50 lab/vitals columns graded by name
 rule, and 206 real curated columns from a rheumatology study graded by
-concept_id (only 117 of which are reachable at all, the rest being custom ids
-≥ 2e9 or non-standard):
+concept_id (117 of them with a standard Athena answer, the rest custom ids
+≥ 2e9 and one non-standard concept):
 
 | | value |
 |---|---|
@@ -324,6 +318,13 @@ concept_id (only 117 of which are reachable at all, the rest being custom ids
 | curated columns, agreed on meaning | 60.7% (heuristic; over-counts by ~7) |
 | curated columns, correct concept in top-5 | 58.1% |
 | throughput | ~700 ms/column, 4 workers |
+
+Custom concepts are searchable too: the matcher reads the same vocabulary the
+Finalize step writes them into, once `scripts/setup-conceptmatcher.sh` has run
+again. On the same study, with its 158 custom concepts loaded, it found 44 of
+the 88 custom answers (24 auto-accepted) and returned none of the other 8 as
+anything but unmapped. They are shared, though: a custom concept loaded for one
+project is offered to every project.
 
 Read that as: **auto-accepts have been reliable, and the review queue is where
 the real work is.** On a 32-column synthetic EHR schema the split was 18
@@ -340,13 +341,15 @@ a reworded term is the right follow-up.
 
 ### Three limits that will bite
 
-**Source-vocabulary codes cannot resolve.** The matcher's vocabulary is
-standard-and-valid only, which means **ICD10CM, ICD9CM, CPT4, ICD10 and ATC
-have zero rows** in it — source vocabularies are non-standard by definition.
-SNOMED, LOINC, RxNorm, NDC and HCPCS codes resolve normally. A column carrying
-an ICD-10 code gets an explicit validation flag rather than a quiet fall-through
-to a name match. Note this is a *different* vocabulary from the one Card 1 of
-the Finalize step loads into Postgres, which is the unfiltered bundle.
+**Source-vocabulary codes resolve only when labeled.** The matcher returns
+standard concepts only, but it reads the full vocabulary Card 1 of the
+Finalize step loads, so a source code is followed through its `Maps to` edge to
+the standard concept OHDSI curated for it: "ICD-10: E11.9" gives Type 2
+diabetes mellitus. Only a code the text labels is followed — a bare
+ICD-10-shaped token is usually a questionnaire item number (`Q14`) and is left
+alone. CPT-4, ATC and ICD-9 codes still do not resolve (see the matcher's
+README, Limitations); an unresolved code gets an explicit validation flag
+rather than a quiet fall-through to a name match.
 
 **Variables versus values is the largest open defect.** OMOP holds both the
 concept naming a variable and many concepts naming statements *about* it, and
@@ -354,7 +357,7 @@ the pipeline cannot reliably prefer the former: `height` returns
 `4203099 Normal height` (Clinical Finding) rather than `3036277 Body height`;
 "What is your profession?" returns `4076340 Employed` rather than
 `36203487 Occupation [Type]`. Four separate attempts to fix this by penalising
-extra words are recorded as measured failures in that project's README. This is
+extra words are recorded as measured failures in `conceptmatcher/README.md`. This is
 the main reason the review queue exists — skim it for this shape of error
 specifically.
 
@@ -368,33 +371,60 @@ single-domain — a study's lab panel, one questionnaire.
 
 ### Bringing the matcher up
 
-It needs the sibling project's **own** database — the standard-only Athena
-vocabulary plus its `pipeline` schema, roughly 9GB — which is a separate stack
-on host port 5433. That stack is not duplicated here; the container reaches the
-running one through the host gateway, so the two stay independently startable.
+The matcher reads the same Athena vocabulary as the rest of the stack — the
+`vocab` schema in `postgres` — and keeps its search structures (a search
+matview, IDF weights, a spelling dictionary, its logs and feedback) in a
+`pipeline` schema next to it. Build that once the vocabulary is loaded:
 
 ```bash
-cd "../new concept finding"
-./load_vocab.sh          # the vocabulary (10-20 min, once)
-./setup_pipeline.sh      # the pipeline's database objects (~2 min, once)
-
-cd -                     # back here
-docker compose up -d conceptmatcher
+# Finalize step, card 1: load the Athena bundle (once)
+./scripts/setup-conceptmatcher.sh        # ~5 min on a full Athena export
+docker compose restart conceptmatcher
 curl localhost:8002/health
 ```
 
-The service is `pipeline/service.py` in that project, run as `serve`. The
-`conceptmatcher` compose service and that project's own `pipeline` service share
-one image tag (`vocab-pipeline:latest`), so whichever stack builds it first, the
-other reuses it rather than building ~2GB of CPU torch twice.
+**Re-run the script after every vocabulary reload.** The search structures are
+derived from `vocab.concept` and do not follow it on their own; until the
+script runs again the matcher keeps answering from the previous release.
+Custom concepts the Finalize step inserts (ids ≥ 2,000,000,000) become
+searchable the same way, on the next run of the script.
 
-Without all that, the button is disabled and says why — the step works exactly
-as before, by hand.
+The script also adds four indexes the matcher needs to the vocab tables
+(synonyms by name and by concept, concepts by code, `Maps to` lookups), about
+2 GB on a full export. A vocabulary reload keeps them up to date as it copies,
+which makes the reload slower than without them.
+
+The service is `conceptmatcher/pipeline/service.py`, run as `serve`. Until it
+is ready, "Load concepts", "Auto-fill concept IDs" and concept search are
+disabled — every step still works by hand.
+
+### Checking on it
+
+Every wizard step's header shows **Concept matcher: ready / starting /
+unavailable** (green / amber / red). Click it for the reason, the fix as
+copyable commands, the raw error under *Details*, the time of the last check,
+and a **Re-check** button; when ready it shows the vocabulary version and
+concept count. The status is re-checked every 30 s until the matcher is ready
+(every 5 min after) and whenever the tab regains focus, so "Load concepts"
+turns itself on once a fix lands — no page reload.
+
+The backend's `GET /api/projects/concept-matcher/health` does the diagnosis and
+returns `{status, reason, hint, commands, raw}`:
+
+| What the backend sees | Status | Fix |
+|---|---|---|
+| `CONCEPT_MATCHER_URL` empty | not configured | set it, restart the backend |
+| connection refused / host not found | unavailable | `docker compose up -d conceptmatcher` |
+| no answer within 10 s | starting | wait — it loads the embedding model at startup |
+| 503 "pool … already closed" | unavailable | `docker compose restart conceptmatcher` (older matchers only; the pool now reopens by itself) |
+| 503 connection error to Postgres | unavailable | `docker compose up -d postgres`, then restart the matcher |
+| `missing: vocab.concept` | unavailable | load the vocabulary (Finalize step), then run the setup script |
+| `missing: pipeline.…` / empty IDF table | unavailable | `./scripts/setup-conceptmatcher.sh`, then restart the matcher |
 
 ### Keeping it current
 
-That project's `pipeline/` and `data/` are bind-mounted read-only over the
-image's own copies, the same way its own compose does it, so a changed
+`conceptmatcher/pipeline/` and `conceptmatcher/data/` are bind-mounted over the
+image's own copies, so a changed
 threshold, stopword list or scoring stage does **not** need a rebuild. What it
 does need is a restart, because unlike the CLI — one-shot, so it re-reads
 everything on each invocation — this is a long-running process that imported the
@@ -413,10 +443,10 @@ against the host file settles it.
 
 Nothing in this wizard explains *why* a column got the concept it got — the UI
 shows a score and a shortlist, not the arithmetic. Take the question to the
-sibling project's CLI, which prints the full per-stage breakdown:
+matcher's CLI, which prints the full per-stage breakdown:
 
 ```bash
-cd "../new concept finding"
+cd conceptmatcher
 ./pipeline.sh match --name creat_mgdl --description "Serum creatinine mg/dL" --explain
 ```
 
@@ -425,7 +455,7 @@ rather than a missing feature, and it shows which stage chose the winner.
 `./pipeline.sh shell` is the same thing interactively, with the embedding model
 loaded once (~250 ms/query instead of a ~10 s model load per invocation).
 
-Tuning lives entirely in that project, not here:
+Tuning lives entirely in `conceptmatcher/`:
 
 | what | where |
 |---|---|
@@ -791,8 +821,8 @@ need from it:
 `ATHENA_BUNDLE_PATH=/your/absolute/path` in `.env`, then `docker compose up --build`.
 Card 1 of the Finalize step auto-detects the bundle and shows "Detected 9 vocabulary files".
 
-The concept matcher does not read this directory — it has its own standard-only vocabulary
-database (see *Automatic concept matching*).
+The concept matcher does not read this directory either: it reads the vocabulary
+this loader puts in Postgres (see *Automatic concept matching*).
 
 ## Upgrading from a pre-vocab-schema dev DB
 

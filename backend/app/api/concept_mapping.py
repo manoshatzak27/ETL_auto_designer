@@ -373,30 +373,134 @@ async def _post_match(
         raise HTTPException(status_code=503, detail=f"Concept matcher unavailable: {exc}")
 
 
+_HEALTH_TIMEOUT = 10.0
+_RESTART_MATCHER = "docker compose restart conceptmatcher"
+_SETUP_MATCHER = "./scripts/setup-conceptmatcher.sh"
+
+
+def _matcher_status(status: str, reason: str, hint: str, commands: list[str], raw: str | None) -> dict:
+    return {"status": status, "reason": reason, "hint": hint, "commands": commands, "raw": raw}
+
+
+def _postgres_down(raw: str) -> dict:
+    return _matcher_status(
+        "unavailable", "The concept matcher cannot reach its database (omop-postgres).",
+        "Start Postgres, then re-check. If it still fails, restart the matcher.",
+        ["docker compose up -d postgres", _RESTART_MATCHER], raw)
+
+
+def _vocab_missing(raw: str) -> dict:
+    return _matcher_status(
+        "unavailable", "The vocabulary is not loaded.",
+        "Load the Athena vocabulary on the Finalize step, then build the matcher's tables and restart it.",
+        [_SETUP_MATCHER, _RESTART_MATCHER], raw)
+
+
+def _matcher_tables_missing(raw: str) -> dict:
+    return _matcher_status(
+        "unavailable", "The concept matcher's search tables have not been built.",
+        "Build them (about 5 minutes on a full vocabulary), then restart the matcher. "
+        "Needed again after every vocabulary reload.",
+        [_SETUP_MATCHER, _RESTART_MATCHER], raw)
+
+
+def classify_matcher_failure(exc: Exception) -> dict:
+    """Turn a failed GET /health into a status the user can act on.
+
+    Matched against what conceptmatcher/pipeline/service.py actually sends: any
+    exception while building its answer comes back as 503 {"detail": str(exc)}.
+    A check that times out is the matcher still loading its embedding model at
+    startup, or waiting (up to 30 s) for a database that isn't answering.
+    """
+    import httpx
+
+    raw = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, httpx.ConnectTimeout):
+        return _matcher_status(
+            "unavailable", "The concept matcher's host could not be reached.",
+            "Check that the conceptmatcher container is running.",
+            ["docker compose up -d conceptmatcher"], raw)
+    if isinstance(exc, httpx.TimeoutException):
+        return _matcher_status(
+            "starting", f"The concept matcher did not answer within {_HEALTH_TIMEOUT:.0f} s.",
+            "It loads its embedding model at startup, which takes a minute or so — wait, then re-check. "
+            "If it persists, check that omop-postgres is running and restart the matcher.",
+            [_RESTART_MATCHER], raw)
+    if isinstance(exc, httpx.ConnectError):
+        return _matcher_status(
+            "unavailable", "The concept matcher container is not running.",
+            "Start it from this project's directory.",
+            ["docker compose up -d conceptmatcher"], raw)
+    if isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+        detail = resp.text
+        try:
+            detail = resp.json().get("detail") or detail
+        except Exception:
+            pass
+        raw = f"HTTP {resp.status_code}: {detail}"
+        text = str(detail).lower()
+        # psycopg_pool closes the pool when the database isn't up within 30 s of
+        # the first connect. Older matchers kept the closed pool for good.
+        if "already closed" in text or "pool initialization incomplete" in text:
+            return _matcher_status(
+                "unavailable",
+                "The concept matcher started before its database was ready and gave up connecting.",
+                "Make sure omop-postgres is running, then restart the matcher.",
+                ["docker compose up -d postgres", _RESTART_MATCHER], raw)
+        if "does not exist" in text:
+            # A matcher that queried a missing table after check_ready().
+            return _vocab_missing(raw) if '"vocab.' in text else _matcher_tables_missing(raw)
+        if "connection refused" in text or "connection failed" in text \
+                or "couldn't get a connection" in text or "could not translate host" in text:
+            return _postgres_down(raw)
+        return _matcher_status(
+            "unavailable", f"The concept matcher answered HTTP {resp.status_code}.",
+            "Its logs say why.", ["docker compose logs --tail 50 conceptmatcher"], raw)
+    return _matcher_status(
+        "unavailable", "The concept matcher could not be checked.",
+        "Its logs say why.", ["docker compose logs --tail 50 conceptmatcher"], raw)
+
+
+def classify_matcher_problems(problems: list[str]) -> dict:
+    """A matcher that answered but isn't ready: what its check_ready() found."""
+    raw = "; ".join(problems) or "not ready"
+    if any(p.startswith("cannot connect") for p in problems):
+        return _postgres_down(raw)
+    if any("vocab.concept" in p for p in problems):
+        return _vocab_missing(raw)
+    return _matcher_tables_missing(raw)
+
+
 @router.get("/concept-matcher/health")
 async def concept_matcher_health():
     """Whether the bulk matcher is reachable and its vocabulary is loaded.
 
-    Never raises: the Concepts step calls this on mount purely to decide whether
-    to enable its "Load concepts" button, so an unreachable matcher is a normal
-    answer ("available": false), not an error.
+    Never raises: every wizard step polls this for its status indicator, so an
+    unreachable matcher is a normal answer, not an error. `status` is ready /
+    starting / unavailable / not_configured; `reason` and `hint` are for the
+    user, `commands` the copyable fix, `raw` the underlying error.
     """
     if not settings.concept_matcher_url:
-        return {"available": False, "detail": "CONCEPT_MATCHER_URL is not configured"}
+        return _matcher_status(
+            "not_configured", "CONCEPT_MATCHER_URL is not set.",
+            "Set CONCEPT_MATCHER_URL in the backend's environment and restart the backend.",
+            ["docker compose up -d backend"], None)
 
     import httpx
 
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT) as client:
             resp = await client.get(f"{settings.concept_matcher_url.rstrip('/')}/health")
             resp.raise_for_status()
             info = resp.json()
     except Exception as exc:
-        return {"available": False, "detail": f"Concept matcher unavailable: {exc}"}
+        return classify_matcher_failure(exc)
 
+    if not info.get("ready"):
+        return classify_matcher_problems(info.get("problems") or [])
     return {
-        "available": bool(info.get("ready")),
-        "detail": "; ".join(info.get("problems") or []) or None,
+        **_matcher_status("ready", "The concept matcher is running and its vocabulary is loaded.", "", [], None),
         **{k: info.get(k) for k in (
             "vocabulary_version", "concepts", "embeddings", "embedding_model",
             "auto_accept_threshold", "review_threshold",

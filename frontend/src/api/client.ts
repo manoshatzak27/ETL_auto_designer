@@ -201,15 +201,29 @@ export interface ConceptMatchResult {
   candidates: ConceptMatchCandidate[]
 }
 
+/** Whether the bulk concept matcher can be used, and if not, why and how to fix it. */
+export interface ConceptMatcherHealth {
+  status: 'ready' | 'starting' | 'unavailable' | 'not_configured'
+  /** What is wrong, for the user. */
+  reason: string
+  /** What to do about it; empty when ready. */
+  hint: string
+  /** Copyable shell commands that apply the fix, in order. */
+  commands: string[]
+  /** The underlying error, for the "Details" toggle. */
+  raw: string | null
+  // Only when ready:
+  vocabulary_version?: string
+  concepts?: number
+  embeddings?: boolean
+  embedding_model?: string | null
+  /** Domains the matcher's vocabulary defines, most concepts first. */
+  domains?: string[] | null
+}
+
 export const getConceptMatcherHealth = () =>
   api
-    .get<{
-      available: boolean; detail?: string | null; vocabulary_version?: string; concepts?: number; embeddings?: boolean
-      /** Domains the matcher's vocabulary defines, most concepts first. */
-      domains?: string[] | null
-    }>(
-      '/projects/concept-matcher/health',
-    )
+    .get<ConceptMatcherHealth>('/projects/concept-matcher/health')
     .then(r => r.data)
 
 export const matchConcepts = (projectId: string, columns: ConceptMatchRequestColumn[]) =>

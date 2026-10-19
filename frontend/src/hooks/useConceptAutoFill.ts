@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import {
-  getConceptMatcherHealth,
   suggestValueConcepts,
   type ConceptPreference,
   type ValueConceptSuggestion,
 } from '../api/client'
+import { useConceptMatcherStatus } from '../contexts/conceptMatcher'
 
 /** Country-level Geography concepts: SNOMED "Location" (Greece 4330430) and
  *  OSM "2nd level" (Germany 41970930). Neither vocabulary has every country,
@@ -42,17 +42,11 @@ export type AutoFillSuggestions = Record<string, Record<string, ValueConceptSugg
  * field's ValueConceptMapper), the rest stay empty.
  */
 export function useConceptAutoFill(projectId: string) {
-  const [health, setHealth] = useState<{ available: boolean; detail?: string | null } | null>(null)
+  const matcher = useConceptMatcherStatus()
   const [running, setRunning] = useState(false)
   const [summary, setSummary] = useState<string[] | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [suggestions, setSuggestions] = useState<AutoFillSuggestions>({})
-
-  useEffect(() => {
-    getConceptMatcherHealth()
-      .then(setHealth)
-      .catch(() => setHealth({ available: false, detail: 'Concept matcher unreachable' }))
-  }, [])
 
   const run = async (targets: AutoFillTarget[]): Promise<string[]> => {
     setRunning(true)
@@ -116,7 +110,7 @@ export function useConceptAutoFill(projectId: string) {
     }
   }, [])
 
-  return { health, running, summary, error, suggestions, run, clear }
+  return { matcher, running, summary, error, suggestions, run, clear }
 }
 
 export type ConceptAutoFill = ReturnType<typeof useConceptAutoFill>

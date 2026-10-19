@@ -126,9 +126,9 @@ export function useAutoRunStep(o: AutoRunStepOptions) {
     } else if (phase === 'fill') {
       const targets = o.fillTargets ?? []
       if (!o.autoFill || targets.length === 0) { save(); return }
-      if (!ready(o.autoFill.health !== null)) return
-      if (!o.autoFill.health?.available) {
-        p.lines.push(`${prefix()}concepts: skipped — ${o.autoFill.health?.detail || 'concept matcher unavailable'}`)
+      if (!ready(o.autoFill.matcher.status !== 'checking')) return
+      if (o.autoFill.matcher.status !== 'ready') {
+        p.lines.push(`${prefix()}concepts: skipped — ${o.autoFill.matcher.reason || 'concept matcher unavailable'}`)
         save()
         return
       }

@@ -9,7 +9,6 @@ import {
   downloadMappingSummary,
   lookupConceptDomain,
   standardConceptError,
-  getConceptMatcherHealth,
   matchConcepts,
   matchColumnValues,
   getColumnDescriptions,
@@ -39,6 +38,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { SuggestionList as ValueSuggestionList } from '../../components/ValueConceptMapper'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
+import { ConceptMatcherFix } from '../../components/ConceptMatcherIndicator'
+import { useConceptMatcherStatus } from '../../contexts/conceptMatcher'
 import { useConceptAutoFill, type AutoFillSuggestions, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import type { ValueConceptSuggestion } from '../../api/client'
 
@@ -415,14 +416,6 @@ function applyValueMatch(
     },
     stats,
   }
-}
-
-interface MatcherHealth {
-  available: boolean
-  detail?: string | null
-  vocabulary_version?: string
-  concepts?: number
-  embeddings?: boolean
 }
 
 // What one "Load concepts" run did, kept so the user can see which columns the
@@ -4549,7 +4542,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [editingConcept, setEditingConcept] = useState<CustomConceptEntry | null>(null)
 
   // Bulk matcher ("Load concepts")
-  const [matcherHealth, setMatcherHealth] = useState<MatcherHealth | null>(null)
+  const matcher = useConceptMatcherStatus()
+  const matcherReady = matcher.status === 'ready'
   const [matching, setMatching] = useState(false)
   // The last run's results outlive a reload: they are kept in this browser, per
   // project, until dismissed or replaced by the next run. Storage can be
@@ -4580,12 +4574,6 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [dictResult, setDictResult] = useState<DescriptionUploadResult | null>(null)
   const [dictError, setDictError] = useState('')
   const dictFileRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => {
-    getConceptMatcherHealth()
-      .then(h => setMatcherHealth(h))
-      .catch(() => setMatcherHealth({ available: false, detail: 'Concept matcher unreachable' }))
-  }, [])
 
   useEffect(() => {
     getColumnDescriptions(project.id)
@@ -5351,13 +5339,13 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
           <div className="flex items-center justify-end gap-2 flex-wrap">
             <button
               onClick={handleLoadConcepts}
-              disabled={matching || matcherHealth?.available === false || totalTargets === 0}
+              disabled={matching || !matcherReady || totalTargets === 0}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold border border-indigo-300 bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-40 disabled:hover:bg-indigo-600 flex-shrink-0"
               title={
-                matcherHealth === null
+                matcher.status === 'checking'
                   ? 'Checking whether the concept matcher is running…'
-                  : !matcherHealth.available
-                    ? `Concept matcher unavailable — ${matcherHealth.detail || 'the service is not running'}`
+                  : !matcherReady
+                    ? `Concept matcher ${matcher.status === 'starting' ? 'starting' : 'unavailable'} — ${matcher.reason}`
                     : totalTargets === 0
                       ? 'Every included variable already has a concept, and every value of every "map values" variable is decided.'
                       : `Map ${matchTargets.length} unmapped variable${matchTargets.length === 1 ? '' : 's'} across all source files through the staged OMOP matching pipeline `
@@ -5539,17 +5527,19 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         )}
 
         {/* Bulk matcher: unavailability notice, errors, and the last run's outcome */}
-        {matcherHealth && !matcherHealth.available && (
+        {!matcherReady && matcher.status !== 'checking' && (
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg border border-amber-200 bg-amber-50 text-xs text-amber-800">
             <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="font-semibold">Automatic concept loading is unavailable.</p>
-              <p className="mt-0.5">
-                {matcherHealth.detail || 'The concept matcher is not responding.'} Start the matching stack
-                (<code className="bg-amber-100 px-1 rounded font-mono">./load_vocab.sh</code> and{' '}
-                <code className="bg-amber-100 px-1 rounded font-mono">./setup_pipeline.sh</code> in the concept-matching
-                project, then <code className="bg-amber-100 px-1 rounded font-mono">docker compose up -d conceptmatcher</code> here)
-                to enable it. Mapping by hand works either way.
+            <div className="flex-1 space-y-1.5">
+              <p className="font-semibold">
+                Automatic concept loading is unavailable: {matcher.reason}
+              </p>
+              <ConceptMatcherFix hint={matcher.hint} commands={matcher.commands} />
+              <p>
+                "Load concepts" turns on by itself once the matcher is ready
+                {matcher.checking ? ' (checking…)' : (
+                  <> — or <button type="button" onClick={matcher.recheck} className="font-semibold underline">re-check now</button></>
+                )}. Mapping by hand works either way.
               </p>
             </div>
           </div>
@@ -5561,7 +5551,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
         {/* Nudge toward the dictionary while it would still change the outcome:
             only when there's something left to match and most of it is name-only. */}
-        {!dictOpen && matcherHealth?.available && matchTargets.length > 0
+        {!dictOpen && matcherReady && matchTargets.length > 0
           && describedTargets < matchTargets.length / 2 && (
           <div className="flex items-start gap-1.5 rounded-lg border border-border bg-secondary/40 px-3 py-2 text-xs text-muted-foreground">
             <Info className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />

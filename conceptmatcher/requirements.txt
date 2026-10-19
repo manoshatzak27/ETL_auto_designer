@@ -1,0 +1,15 @@
+# Core pipeline dependencies.
+#
+#   python -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+#
+# Stage 5 (embeddings) is optional and lives in requirements-embeddings.txt.
+# Without it the pipeline runs fine: Stage 5 is skipped and its 20% weight is
+# redistributed across the stages that did run.
+
+psycopg[binary]>=3.1
+psycopg_pool>=3.2
+numpy>=1.24
+# Stage 0 spelling correction. Optional in the same way as embeddings: without
+# it the checker reports itself unavailable and corrects nothing.
+symspellpy>=6.7

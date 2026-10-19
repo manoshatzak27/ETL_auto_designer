@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
 import { ArrowLeft, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import ConceptMatcherIndicator from '../../components/ConceptMatcherIndicator'
 import type { Project } from '../../types'
 import { getActiveSteps, type WizardSlug } from '../../wizard/steps'
 
@@ -54,6 +55,9 @@ export default function WizardLayout({
           <p className="text-xs text-muted-foreground">
             <span className="font-semibold text-primary">OMOP</span> ETL Designer
           </p>
+        </div>
+        <div className="ml-auto">
+          <ConceptMatcherIndicator />
         </div>
       </header>
 

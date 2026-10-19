@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react'
-import { getConceptMatcherHealth, searchDomainConcepts, type DomainSearchResult } from '../api/client'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { searchDomainConcepts, type DomainSearchResult } from '../api/client'
 import { Search, Loader2, X, ChevronDown, Check, Lock } from 'lucide-react'
+import { useConceptMatcherStatus } from '../contexts/conceptMatcher'
 
 interface Props {
   projectId: string
@@ -20,20 +21,6 @@ interface Props {
   /** Set when the parent has fixed `pickedDomains` and the user may not change
    *  them: the filter is shown locked, with this as the explanation. */
   domainsLockedReason?: string
-}
-
-// The domain filter's options: every domain the matcher's vocabulary defines,
-// fetched once per page load and shared by every open search box. An empty
-// list (matcher unreachable) hides the filter rather than offering guesses.
-let domainOptions: Promise<string[]> | null = null
-const loadDomainOptions = () => {
-  domainOptions ??= getConceptMatcherHealth()
-    .then(h => [...(h.domains ?? [])].sort((a, b) => a.localeCompare(b)))
-    .catch(() => {
-      domainOptions = null   // let the next search box try again
-      return []
-    })
-  return domainOptions
 }
 
 /** The domain filter: a checklist in a dropdown. None checked is every domain. */
@@ -138,7 +125,11 @@ export default function DomainConceptSearch({
   // narrows the search itself rather than filtering a shortlist afterwards.
   const [ownPicked, setOwnPicked] = useState<string[]>([])
   const picked = pickedDomains ?? ownPicked
-  const [options, setOptions] = useState<string[]>([])
+  // The domain filter's options: every domain the matcher's vocabulary defines,
+  // from the shared status check. An empty list (matcher not ready) hides the
+  // filter rather than offering guesses.
+  const domains = useConceptMatcherStatus().health?.domains
+  const options = useMemo(() => [...(domains ?? [])].sort((a, b) => a.localeCompare(b)), [domains])
   const inputRef = useRef<HTMLInputElement>(null)
   const effective: string | string[] | undefined = domain ?? (picked.length ? picked : undefined)
   // The one domain every result is in, if there is one.
@@ -173,7 +164,6 @@ export default function DomainConceptSearch({
   useEffect(() => {
     inputRef.current?.focus()
     if (initialQuery.trim()) search(initialQuery)
-    if (!domain) loadDomainOptions().then(setOptions)
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
