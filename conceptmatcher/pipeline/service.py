@@ -98,6 +98,11 @@ class MatchService:
         batch = self.batcher()
         db = batch.matcher.db
         problems = db.check_ready()
+        if problems:
+            # The queries below read the very tables check_ready() found
+            # missing; running them would turn this answer into a 503
+            # "relation … does not exist" and lose the list of what to fix.
+            return {"ready": False, "problems": list(problems)}
         stage5 = batch.matcher.stage5
         return {
             "ready": not problems,

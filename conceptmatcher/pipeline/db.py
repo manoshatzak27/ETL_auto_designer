@@ -33,10 +33,13 @@ class Database:
     # ── lifecycle ───────────────────────────────────────────────────────
     @property
     def pool(self) -> ConnectionPool:
-        if self._pool is None:
+        # A closed pool is replaced, not kept: `wait()` below closes the pool
+        # when the database isn't up within its timeout, and holding on to it
+        # left the service answering "pool … is already closed" until restarted.
+        if self._pool is None or self._pool.closed:
             with self._lock:
-                if self._pool is None:
-                    self._pool = ConnectionPool(
+                if self._pool is None or self._pool.closed:
+                    pool = ConnectionPool(
                         self.config.conninfo,
                         min_size=self.config.pool_min_size,
                         max_size=self.config.pool_max_size,
@@ -56,7 +59,10 @@ class Database:
                         },
                         open=True,
                     )
-                    self._pool.wait(timeout=30)
+                    # Kept only once it has connected, so a failed wait leaves
+                    # nothing behind and the next caller tries again.
+                    pool.wait(timeout=30)
+                    self._pool = pool
         return self._pool
 
     def close(self) -> None:
