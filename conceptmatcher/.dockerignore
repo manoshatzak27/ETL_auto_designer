@@ -1,7 +1,3 @@
-# The vocabulary export is ~6.5GB and is mounted into the *postgres*
-# container, not built into the pipeline image.
-athena_ALL/
-
 .git/
 .claude/
 .venv/
@@ -15,7 +11,7 @@ __pycache__/
 # Bind-mounted at runtime, not baked in.
 data/
 
-# Consumed by psql over stdin from the host, never by the pipeline image.
+# Applied by ../scripts/setup-conceptmatcher.sh, never by the pipeline image.
 sql/
 
 README.md

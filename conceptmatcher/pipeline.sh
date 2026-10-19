@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Runs the matching pipeline in its container.
+# Runs the matching pipeline in a one-off container of the stack's
+# `conceptmatcher` service.
 #
 #   ./pipeline.sh check
 #   ./pipeline.sh match --name SBP --description "Systolic blood pressure (mmHg)"
@@ -10,10 +11,9 @@
 # Paths are container paths: ./data on the host is /app/data inside, so
 # `data/columns.csv` refers to the same file from either side.
 #
-# The image builds itself on first use. Postgres is started and waited for
-# through compose's depends_on/healthcheck, so this works from cold — though
-# the database still needs ./load_vocab.sh and ./setup_pipeline.sh to have
-# been run once to have anything in it.
+# Postgres is started and waited for through compose's depends_on/healthcheck,
+# so this works from cold — though the database needs the vocabulary loaded
+# and ../scripts/setup-conceptmatcher.sh run once to have anything in it.
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -22,4 +22,11 @@ cd "$(dirname "$0")"
 # mount source as root, and the container runs as uid 1000.
 mkdir -p data
 
-exec docker compose run --rm pipeline "$@"
+# The service mounts pipeline/ and data/ already. Tests and benchmarks are
+# mounted here on top, so they run as checked out rather than as baked into
+# the image; benchmarks read-write, because the scripts write CSVs next to
+# their gold sets.
+exec docker compose -f ../docker-compose.yml run --rm \
+    -v "$PWD/tests:/app/tests:ro" \
+    -v "$PWD/benchmarks:/app/benchmarks" \
+    conceptmatcher "$@"

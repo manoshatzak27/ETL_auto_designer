@@ -1,239 +1,88 @@
-# OMOP concept matching on a standard-only Athena vocabulary
+# OMOP concept matching
 
-Two things live here:
-
-1. **A dockerized Postgres** holding the OMOP Athena vocabulary, filtered down
-   to **standard and valid concepts only**.
-2. **A multi-stage matching pipeline** that maps source column names and
-   descriptions onto concepts in that vocabulary.
-
-Both are containerized; Docker is the only prerequisite. From cold:
-
-```bash
-./load_vocab.sh        # load the vocabulary (10-20 min)
-./setup_pipeline.sh    # build the pipeline's database objects (~2 min)
-./pipeline.sh check    # builds the pipeline image, then verifies the setup
-```
-
-This is a separate stack from `../ETL_auto_designer`, which runs its own
-**unfiltered** OMOP database on host port 5432 (container `omop-postgres`).
-This one uses a different container name, volume, and host port (`5433`) so
-both can run side by side.
+A multi-stage matching pipeline that maps source column names and descriptions
+onto standard OMOP concepts, with a confidence score and an accept / review /
+unmapped decision. It runs as the ETL Auto-Designer's `conceptmatcher` service
+(every concept search, and the Concepts step's "Load concepts"); this README
+covers the pipeline itself. The Auto-Designer's README covers how the stack
+uses it.
 
 ---
 
-# Part 1 — the vocabulary database
+# The vocabulary
 
-## What "filtered" means
+The matcher reads the Athena vocabulary the Auto-Designer loads into its own
+Postgres — the `vocab` schema of `omop-postgres`, the **full** export (~10M
+concepts) — and keeps its own objects in a `pipeline` schema beside it.
 
-- `vocab.concept` contains only rows where `standard_concept = 'S'` **and**
-  `invalid_reason IS NULL` — enforced by CHECK constraints, not just by how
-  the data was loaded.
-- Every other vocab table (`concept_relationship`, `concept_synonym`,
-  `concept_ancestor`, `drug_strength`) is filtered so that **every**
-  `concept_id` it references (both endpoints of a relationship, ancestor
-  *and* descendant, drug *and* ingredient *and* unit concepts) survived that
-  filter. Nothing in this database points at a non-standard or invalid
-  concept.
-- `vocabulary`, `domain`, `concept_class`, `relationship` are small lookup
-  tables and are loaded in full — their own `*_concept_id` columns
-  reference OMOP metadata concepts, which are intentionally non-standard
-  classification concepts, so those specific columns have no FK to
-  `vocab.concept`.
-- Out of ~10.0M raw concepts in this bundle, ~3.5M are standard + valid.
-  Dependent tables shrink proportionally more since *both* endpoints must
-  survive.
+It only ever returns **standard, valid** concepts (`standard_concept = 'S'`,
+`invalid_reason IS NULL`, ~3.5M of them). That is enforced by the queries,
+not by the data: `pipeline.concept_search`, the matview every ranked stage
+searches, holds only those, and every direct read of `vocab` filters the same
+way. Custom concepts the Auto-Designer's Finalize step inserts (ids
+≥ 2,000,000,000) are searchable like any other once they are marked standard.
 
-Actual final row counts from the last load:
-
-| table                  | rows       |
-|------------------------|------------|
-| `concept`              | 3,518,557  |
-| `concept_relationship` | 22,063,876 |
-| `concept_ancestor`     | 30,966,327 |
-| `concept_synonym`      | 2,586,198  |
-| `drug_strength`        | 2,944,760  |
-| `vocabulary`           | 131        |
-| `domain`               | 50         |
-| `concept_class`        | 433        |
-| `relationship`         | 722        |
-
-Total on-disk size after cleanup: ~9.1GB.
-
-## Which vocabularies actually survive
-
-This is worth internalizing before using the pipeline, because it is a direct
-and unavoidable consequence of the standard-only rule:
-
-| vocabulary | standard concepts here |
-|------------|------------------------|
-| SNOMED     | 349,211 |
-| RxNorm     | 157,190 |
-| LOINC      | 119,029 |
-| NDC        | 12,243  |
-| HCPCS      | 8,847   |
-| **ICD10CM, ICD9CM, CPT4, ICD10, ATC** | **0** |
-
-Source vocabularies are non-standard *by definition* — their role in OMOP is
-to be mapped away from — so filtering removed all of them. See
-"Source-vocabulary codes" under Limitations for what that means in practice.
-
-## Prerequisites
-
-- Docker + Docker Compose.
-- The Athena "ALL" vocabulary export already sitting in `./athena_ALL/`
-  (tab-delimited `CONCEPT.csv`, `CONCEPT_RELATIONSHIP.csv`, etc. — already
-  present in this directory).
-
-## Loading
-
-```bash
-./load_vocab.sh
-```
-
-This starts the `postgres` container (`docker compose up -d`) and then runs
-the SQL steps in `sql/` in order, against the mounted `athena_ALL` files:
-
-1. `01_staging_schema.sql` — raw, unconstrained staging tables (all `text`
-   columns, one per Athena CSV).
-2. `02_load_staging.sql` — server-side `COPY` of each CSV into staging.
-3. `03_final_schema.sql` — final `vocab` schema tables, with PKs/FKs/CHECKs.
-4. `04_load_filtered.sql` — filters staging into `vocab` (the standard +
-   valid rule).
-5. `05_indexes.sql` — lookup indexes (concept_code, domain_id,
-   vocabulary_id, concept_class_id, FK join columns).
-6. `06_cleanup.sql` — drops the `staging` schema, `VACUUM ANALYZE`s
-   everything, prints final row counts and a sanity check (a count of any
-   non-standard/invalid rows in `vocab.concept`, which must be 0).
-
-It's safe to re-run `./load_vocab.sh` — every step drops and recreates its
-own tables first.
-
-Loading ~6.5GB of raw CSVs (concept ≈1.3GB, concept_relationship ≈2.7GB,
-concept_ancestor ≈1.8GB, concept_synonym ≈0.35GB, drug_strength ≈0.15GB)
-takes a while — expect somewhere in the ballpark of 10-20 minutes depending
-on disk speed, most of it in the `concept_relationship` and
-`concept_ancestor` filter joins.
-
-`docker-compose.yml` sets `shm_size: "1gb"` on the container — Docker's
-64MB default `/dev/shm` is too small for Postgres to `VACUUM ANALYZE`
-tables this large (fails with "could not resize shared memory segment",
-which looks like a disk-space error but isn't — real disk usage stays
-well under it).
-
-The SQL files are **piped to `psql` over stdin**, not read from a bind mount.
-A `./sql:/sql` mount can keep serving a stale copy of a file that was
-rewritten on the host, which silently runs the previous version of a script.
-
-## Connecting
-
-### psql
-
-```bash
-psql -h localhost -p 5433 -U vocab -d athena_vocab
-```
-
-(host/port/user/db come from `.env`; change `POSTGRES_PORT` there if 5433
-is also taken). Once connected, the database's default `search_path`
-includes the `vocab` schema, so `SELECT * FROM concept` etc. resolve
-without qualification.
-
-### pgAdmin
-
-Register a new server (right-click **Servers → Register → Server...**) with:
-
-| field                  | value          |
-|-------------------------|---------------|
-| Name (General tab)      | `Athena Vocab` (or anything) |
-| Host name/address       | `localhost` (or `127.0.0.1`) |
-| Port                    | `5433`        |
-| Maintenance database    | `athena_vocab`|
-| Username                | `vocab`       |
-| Password                | `vocab_pwd`   |
-
-(values come from `.env` — update here too if you changed them). This
-assumes pgAdmin runs directly on this host (desktop app or local
-`pgadmin4`). If pgAdmin itself runs in a *separate* Docker container,
-`localhost` refers to that container, not this host — use
-`host.docker.internal` (Linux: needs `--add-host=host.docker.internal:host-gateway`
-on that container) or this machine's actual IP instead.
-
-## Browsing the vocabulary
-
-In pgAdmin's tree: **Servers → Athena Vocab → Databases → athena_vocab →
-Schemas → vocab → Tables**. That's where all nine tables listed above
-live (not under `public`). Right-click a table → **View/Edit Data → All
-Rows**, or open the **Query Tool** on the `athena_vocab` database and run
-e.g.:
-
-```sql
-SELECT concept_id, concept_name, domain_id, vocabulary_id
-FROM concept
-WHERE concept_name ILIKE '%aspirin%'
-LIMIT 50;
-```
-
-The pipeline's own objects live in the **`pipeline`** schema alongside it.
-
----
-
-# Part 2 — the matching pipeline
-
-Maps `(column_name, column_description)` onto a standard OMOP concept, with a
-confidence score and an accept / review / unmapped decision.
+Having the non-standard concepts present is what makes source codes work:
+a code the input labels — "ICD-10: E11.9" — resolves through its `Maps to`
+edge to the standard concept OHDSI curated for it (Type 2 diabetes mellitus).
+See "Source-vocabulary codes" under Limitations.
 
 ## Setup
 
+From the repo root, once the vocabulary is loaded (Finalize step, card 1):
+
 ```bash
-./setup_pipeline.sh      # database objects (~2 min)
-./pipeline.sh check      # builds the image on first use, then verifies
+./scripts/setup-conceptmatcher.sh     # ~4 min on the full export
+docker compose restart conceptmatcher
+conceptmatcher/pipeline.sh check
 ```
 
-`setup_pipeline.sh` runs four more SQL steps on top of the loaded vocabulary:
+The script runs the SQL steps in `sql/`, piped to `psql` over stdin (a bind
+mount can serve a stale copy of a rewritten file):
 
 | file | what it builds |
 |------|----------------|
 | `10_pipeline_extensions.sql` | `pg_trgm`, `fuzzystrmatch`, `unaccent`, `btree_gin`, the `pipeline_normalize()` function Stage 1 matches on, and `pipeline_is_keyword_dump()` (see "Synonyms that are not synonyms") |
 | `11_pipeline_schema.sql` | `pipeline.concept_search` materialized view, the IDF and embedding-cache tables, the Stage 7 log/feedback tables, the Stage 9 reporting views |
-| `12_pipeline_indexes.sql` | GIN FTS index on `(domain_id, search_vector)`, GIN trigram index, exact-match and logging indexes |
-| `13_pipeline_idf.sql` | `pipeline.token_idf` — 316,026 corpus token frequencies |
+| `12_pipeline_indexes.sql` | GIN FTS index on `(domain_id, search_vector)`, GIN trigram index, exact-match and logging indexes, and the lookup indexes it needs on the `vocab` tables |
+| `13_pipeline_idf.sql` | `pipeline.token_idf` — corpus token frequencies |
+| `14_pipeline_spelling.sql` | `pipeline.word_freq` — the spelling dictionary (see "Misspelt input") |
 
-Re-running is safe. Derived structures (matview, IDF) are rebuilt; captured
-history (mapping logs, manual mappings, embedding cache) is preserved.
+**Re-run it after every vocabulary reload**: the derived structures do not
+follow `vocab.concept` on their own. Re-running is safe — the matview, IDF
+and dictionary are rebuilt; captured history (mapping logs, manual mappings,
+embedding cache) is preserved.
 
 ## The pipeline container
 
-`./pipeline.sh` is a wrapper for `docker compose run --rm pipeline`. Whatever
-it is given goes to the CLI, so every command below is the documented
-`python -m pipeline.cli …` with the prefix dropped. Four verbs are not CLI
-subcommands and are handled by the entrypoint instead: `serve` (see "Serving it
-over HTTP"), `test`, `python`, and `bash`.
+`./pipeline.sh` runs a one-off container of the stack's `conceptmatcher`
+service. Whatever it is given goes to the CLI, so every command below is the
+documented `python -m pipeline.cli …` with the prefix dropped. Four verbs are
+not CLI subcommands and are handled by the entrypoint instead: `serve` (see
+"Serving it over HTTP"), `test`, `python`, and `bash`.
 
 | what | where |
 |------|-------|
-| image | built from `Dockerfile` on first use; `docker compose build pipeline` to rebuild |
-| database | reached at `postgres:5432` over the compose network, not through the published host port |
+| image | the `conceptmatcher` service's; `docker compose build conceptmatcher` (repo root) to rebuild |
+| database | the stack's `postgres` service, over the compose network |
 | `./data` | mounted at `/app/data` — put input CSVs there, write outputs there, and they appear on the host |
 | `./pipeline`, `./tests` | mounted **read-only** over the image's copy, so editing a stopword list or a threshold takes effect on the next run with no rebuild |
 | `./benchmarks` | mounted read-write; the benchmark scripts emit CSVs next to their gold sets |
-| model cache | named volume `new_concept_finding_hf_cache`, so the ~90MB MiniLM downloads once rather than per run |
+| model cache | the stack's `conceptmatcher_hf_cache` volume, so the ~90MB MiniLM downloads once |
 | config overrides | `data/pipeline.json` (copy `pipeline.example.json`); the container points `PIPELINE_CONFIG` at it |
 
-The image is ~2GB on disk, nearly all of it CPU torch. `WITH_EMBEDDINGS=0
-docker compose build pipeline` drops that to ~310MB; the pipeline then behaves
-as it does on any host without torch — Stage 5 is skipped and its 20% weight
-is redistributed across the stages that did run, rather than scoring every
-candidate zero.
-
-The image also carries its own copy of the source, so `docker run
-vocab-pipeline:latest …` works standalone with no bind mounts — the mounts are
-a development convenience, not a requirement.
+The image is ~2GB on disk, nearly all of it CPU torch.
+`CONCEPT_MATCHER_EMBEDDINGS=0 docker compose build conceptmatcher` drops that
+to ~310MB; the pipeline then behaves as it does on any host without torch —
+Stage 5 is skipped and its 20% weight is redistributed across the stages that
+did run, rather than scoring every candidate zero.
 
 To work without Docker instead, the pipeline is an ordinary Python package:
 `python3 -m venv .venv && .venv/bin/pip install -r requirements.txt` (plus
 `--index-url https://download.pytorch.org/whl/cpu torch` and
 `requirements-embeddings.txt` for Stage 5), then
-`.venv/bin/python -m pipeline.cli …` against `localhost:5433`.
+`.venv/bin/python -m pipeline.cli …`. It reads the connection from the repo
+root's `.env`, so it reaches the stack's Postgres on `localhost:5432`.
 
 ## Usage
 
@@ -337,7 +186,7 @@ Three details worth knowing:
   restriction is used alone rather than intersecting to nothing.
 * **A misspelled domain is an error, not an empty result.** Names are resolved
   against `vocab.domain` before anything runs, and a domain that holds no
-  standard concept in this database (`Modifier`, `Place of Service`, every
+  standard concept (`Modifier`, `Place of Service`, every
   `Condition/Device`-style combination domain) is refused too — restricting to
   one could only ever return nothing. `./pipeline.sh domains` lists what is
   real: 33 of the 50 defined domains.
@@ -398,16 +247,14 @@ everything else here. The matcher — connection pool, IDF index, embedding mode
 rebuilt lazily if the database was not reachable then, so the service can start
 before the vocabulary is ready.
 
-This is what `../ETL_auto_designer` uses: its Concepts step has a **Load
-concepts** button that posts every source column here and fills in the answers.
-That stack's `conceptmatcher` service builds from this directory and shares the
-`vocab-pipeline:latest` tag, so only one of the two ever builds the image, and
-it bind-mounts `pipeline/` and `data/` from here just as the `pipeline` service
-above does — so edits made here apply there too.
+This is what the ETL Auto-Designer runs as its `conceptmatcher` service: the
+Concepts step's **Load concepts** button posts every source column here and
+fills in the answers. The service bind-mounts `pipeline/` and `data/` from
+here, so edits made here apply there.
 
 One difference from every other verb: `serve` is long-running, so it imports the
 code once at startup. An edit that a CLI invocation would pick up immediately
-needs a restart here (`docker compose restart conceptmatcher` in that stack, or
+needs a restart (`docker compose restart conceptmatcher` from the repo root, or
 Ctrl-C and re-run). A stale server is otherwise silent — it keeps answering,
 with the old ranking.
 
@@ -726,7 +573,7 @@ Stage 0 therefore spell-checks the input with
 [SymSpell](https://github.com/mammothb/symspellpy) against a dictionary built
 from the vocabulary itself: `pipeline.word_freq`, every word of every concept
 name and English synonym with its frequency (`sql/14_pipeline_spelling.sql`,
-built by `./setup_pipeline.sh`). A general English dictionary would not do —
+built by `scripts/setup-conceptmatcher.sh`). A general English dictionary would not do —
 it knows neither `certolizumab` nor `bilirubin`, and "corrects" what it does
 not know. Code is in [`pipeline/spelling.py`](pipeline/spelling.py).
 
@@ -891,7 +738,7 @@ four are questionnaire items whose "No" the person mapped to a custom concept.
 Cumulative effect of the four changes above, measured after each one. The
 gold set is 50 lab/vitals columns graded by name rule; "user mappings" is 206
 real curated columns from a rheumatology study, graded by concept_id over the
-117 whose chosen concept exists in this standard-only database.
+117 whose chosen concept is a standard Athena concept.
 
 | | baseline | + description-only | + keyword-dump filter | + equivalents | + IDF stopword fix | **shipped** |
 |---|---|---|---|---|---|---|
@@ -1064,27 +911,24 @@ Stage 1 ~40ms, fuzzy ~18ms, embeddings ~30ms, preprocessing <1ms.
 
 ## Limitations
 
-**Source-vocabulary codes cannot be resolved.** ICD-10, ICD-9, CPT-4 and ATC
-concepts are non-standard by definition and so are absent (see the table in
-Part 1). Step 1.1's fallback — following `concept_relationship / 'Maps to'` to
-a standard replacement — cannot help either, because the deprecated source
-concept that owns the outgoing edge was filtered out with everything else.
-The pipeline is explicit about this rather than quietly falling through to a
-name match: an extracted-but-unresolvable code is recorded as a validation
-flag on the mapping. LOINC, SNOMED, RxNorm, NDC and HCPCS codes resolve
-normally.
-
-Resolving ICD/CPT codes needs the unfiltered vocabulary — either a second
-database loaded without the standard/valid filter, or a small
-source-concept-to-standard-concept mapping table extracted from the Athena
-CSVs at load time. Both conflict with the standard-only rule this database was
-built to enforce, so neither is done here.
+**Source-vocabulary codes resolve only when labeled.** ICD-10, ICD-9, CPT-4
+and ATC concepts are non-standard by definition, so they are never returned
+themselves; Step 1.1 follows a source code's `Maps to` edge to the standard
+concept OHDSI curated for it. That only happens for a code the input labels
+("ICD-10: E11.9", "ICD10CM L40.50"). A bare ICD-10-shaped token is not
+followed: it is far more often a questionnaire item number, and column `Q14`
+resolved to ICD-10 Q14, a congenital eye anomaly, at confidence 100 when it
+was. Measured on ten coded columns, labeled ICD-10 codes resolve; `CPT 99213`,
+`ATC M01AE01` and `ICD-9: 250.00` still do not (the last because Stage 0
+extracts "ICD-9" itself as the code). When a code cannot be resolved the
+pipeline says so in a validation flag rather than quietly falling through to a
+name match and presenting the result as deterministic.
 
 **Deprecation checks are structurally trivial.** Step 6.3 verifies the
-selected concept is not deprecated; here `vocab.concept` has a CHECK
-constraint that `invalid_reason IS NULL`, so it cannot be. The check is kept
-because it costs one indexed lookup and it is what makes the invariant an
-assertion rather than an assumption.
+selected concept is not deprecated; candidates come from
+`pipeline.concept_search`, which holds only valid concepts, so it cannot be.
+The check is kept because it costs one indexed lookup and it is what makes the
+invariant an assertion rather than an assumption.
 
 **Lemmatization is rule-based by default.** `pip install spacy` plus a model
 (or `scispacy` for the clinical pipeline) switches `text_utils.Lemmatizer` to

@@ -11,8 +11,8 @@ Three systems, the same inputs, the same grader:
                and LOINC only, no lexical stage
   linker+gpt   the same, with its GPT reasoning reranker over the top_k
 
-Run with both services up (EntityLinker on :8001, vocabulary Postgres on
-:5433). The GPT reranker is a paid API call of roughly 6s per column, so it is
+Run with both services up (EntityLinker on :8001, the stack's Postgres on
+:5432). The GPT reranker is a paid API call of roughly 6s per column, so it is
 sampled with --limit unless you ask for the whole set.
 
 Two asymmetries to keep in mind when reading the numbers; neither is fixable

@@ -138,9 +138,9 @@ the staged pipeline in `conceptmatcher/` — over the stack's own vocabulary
 
 ### What the matcher actually is
 
-It is not a second embedding search. It is a ten-stage pipeline over a
-standard-only Athena vocabulary (3,518,557 concepts), one module per stage in
-that project's `pipeline/`, driven by its `runner.py`:
+It is not a second embedding search. It is a ten-stage pipeline over the
+standard, valid concepts of the Athena vocabulary (3,518,557 of them), one
+module per stage in `conceptmatcher/pipeline/`, driven by its `runner.py`:
 
 | stage | what survives |
 |---|---|
@@ -172,11 +172,9 @@ Two consequences are worth carrying in your head while using the step:
   with) and saves ~40 ms/column. They are on as insurance for inputs where the
   lexical stages have little to grip.
 
-Full documentation is that project's own [`README.md`](../new%20concept%20finding/README.md)
-(~990 lines, including every measured dead end) and its
-[`CLAUDE.md`](../new%20concept%20finding/CLAUDE.md) for the short version. Read
-those before changing anything matcher-side; nothing about the stages is
-configurable from this repo.
+Full documentation is the matcher's own [`README.md`](conceptmatcher/README.md)
+(~950 lines, including every measured dead end). Read it before changing
+anything matcher-side; nothing about the stages is configurable from the wizard.
 
 ### Give it descriptions first
 
@@ -307,7 +305,7 @@ run.
 
 ### What to expect from it
 
-Measured on that project's two benchmarks — 50 lab/vitals columns graded by name
+Measured on the matcher's two benchmarks — 50 lab/vitals columns graded by name
 rule, and 206 real curated columns from a rheumatology study graded by
 concept_id (only 117 of which are reachable at all, the rest being custom ids
 ≥ 2e9 or non-standard):
@@ -350,7 +348,7 @@ the pipeline cannot reliably prefer the former: `height` returns
 `4203099 Normal height` (Clinical Finding) rather than `3036277 Body height`;
 "What is your profession?" returns `4076340 Employed` rather than
 `36203487 Occupation [Type]`. Four separate attempts to fix this by penalising
-extra words are recorded as measured failures in that project's README. This is
+extra words are recorded as measured failures in `conceptmatcher/README.md`. This is
 the main reason the review queue exists — skim it for this shape of error
 specifically.
 
@@ -393,8 +391,8 @@ the step works exactly as before, by hand.
 
 ### Keeping it current
 
-`conceptmatcher/pipeline/` and `conceptmatcher/data/` are bind-mounted read-only over the
-image's own copies, the same way its own compose does it, so a changed
+`conceptmatcher/pipeline/` and `conceptmatcher/data/` are bind-mounted over the
+image's own copies, so a changed
 threshold, stopword list or scoring stage does **not** need a rebuild. What it
 does need is a restart, because unlike the CLI — one-shot, so it re-reads
 everything on each invocation — this is a long-running process that imported the
@@ -413,7 +411,7 @@ against the host file settles it.
 
 Nothing in this wizard explains *why* a column got the concept it got — the UI
 shows a score and a shortlist, not the arithmetic. Take the question to the
-sibling project's CLI, which prints the full per-stage breakdown:
+matcher's CLI, which prints the full per-stage breakdown:
 
 ```bash
 cd conceptmatcher
@@ -425,7 +423,7 @@ rather than a missing feature, and it shows which stage chose the winner.
 `./pipeline.sh shell` is the same thing interactively, with the embedding model
 loaded once (~250 ms/query instead of a ~10 s model load per invocation).
 
-Tuning lives entirely in that project, not here:
+Tuning lives entirely in `conceptmatcher/`:
 
 | what | where |
 |---|---|

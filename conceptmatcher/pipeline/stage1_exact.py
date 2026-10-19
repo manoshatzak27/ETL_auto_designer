@@ -17,8 +17,8 @@ Step 1.1 asks that an invalid code be redirected through
 ``concept_relationship / 'Maps to'``. Whether that works depends on which
 vocabulary this runs against.
 
-``vocab`` may be the full Athena export (shared with the ETL Auto-Designer) or
-the standard-only one ./load_vocab.sh builds, so every query here filters to
+``vocab`` is normally the full Athena export the ETL Auto-Designer loads, but
+may be a copy pruned to standard concepts, so every query here filters to
 standard, valid concepts itself rather than relying on the database to.
 
 Against the full vocabulary a *source* code — ICD10CM, ICD9CM, CPT4, ATC, all
@@ -28,7 +28,7 @@ input *labeled* ("ICD-10: E11.9"): an inferred, bare ICD-10-shaped token is
 far more often a questionnaire item number ("Q14"), and a hit here exits at
 100.
 
-Against the standard-only vocabulary filtering removed every source concept and
+Against a standard-only vocabulary, pruning removed every source concept and
 with it every outgoing 'Maps to' edge, so an ICD-10 or CPT-4 code cannot resolve
 at all. When that happens the stage says so explicitly rather than silently
 falling through to a name match and presenting the result as deterministic.

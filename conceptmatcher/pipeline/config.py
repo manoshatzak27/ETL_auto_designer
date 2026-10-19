@@ -41,11 +41,13 @@ def _load_dotenv(path: Path) -> dict[str, str]:
 @dataclass
 class PipelineConfig:
     # ── Database ────────────────────────────────────────────────────────
+    # The ETL Auto-Designer stack's Postgres as seen from the host; inside its
+    # conceptmatcher service the POSTGRES_* environment overrides all of these.
     host: str = "localhost"
-    port: int = 5433
-    dbname: str = "athena_vocab"
-    user: str = "vocab"
-    password: str = "vocab_pwd"
+    port: int = 5432
+    dbname: str = "omop"
+    user: str = "omop"
+    password: str = "omop_pwd"
     pool_min_size: int = 1
     pool_max_size: int = 8
     statement_timeout_ms: int = 120_000
@@ -337,7 +339,10 @@ class PipelineConfig:
         """Build a config from .env, an optional JSON file, then overrides."""
         cfg = cls()
 
-        env = {**_load_dotenv(PROJECT_ROOT / ".env"), **os.environ}
+        # The stack's own .env (one level up) names the same POSTGRES_*
+        # variables, so a host-side run reaches the database the stack uses.
+        env = {**_load_dotenv(PROJECT_ROOT.parent / ".env"),
+               **_load_dotenv(PROJECT_ROOT / ".env"), **os.environ}
         if "POSTGRES_HOST" in env:
             cfg.host = env["POSTGRES_HOST"]
         if "POSTGRES_PORT" in env:

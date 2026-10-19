@@ -68,11 +68,11 @@ class SpellChecker:
             try:
                 rows = self.db.fetch_all("SELECT word, freq FROM pipeline.word_freq")
             except Exception as exc:
-                self._unavailable_reason = f"pipeline.word_freq unreadable ({exc}); run ./setup_pipeline.sh"
+                self._unavailable_reason = f"pipeline.word_freq unreadable ({exc}); run scripts/setup-conceptmatcher.sh"
                 log.warning("spelling correction disabled: %s", self._unavailable_reason)
                 return None
             if not rows:
-                self._unavailable_reason = "pipeline.word_freq is empty; run ./setup_pipeline.sh"
+                self._unavailable_reason = "pipeline.word_freq is empty; run scripts/setup-conceptmatcher.sh"
                 log.warning("spelling correction disabled: %s", self._unavailable_reason)
                 return None
             symspell = SymSpell(max_dictionary_edit_distance=2, prefix_length=7)

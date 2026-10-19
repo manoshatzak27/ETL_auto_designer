@@ -1,7 +1,8 @@
 # syntax=docker/dockerfile:1
 #
 # The matching pipeline, so that nothing but Docker is needed to run it.
-# Built and invoked through the `pipeline` service in docker-compose.yml:
+# Built as the `conceptmatcher` service in the repo root's docker-compose.yml,
+# and invoked through it by pipeline.sh:
 #
 #   ./pipeline.sh check
 #   ./pipeline.sh match --name SBP --description "Systolic blood pressure"

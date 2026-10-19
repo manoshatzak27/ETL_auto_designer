@@ -117,9 +117,9 @@ class Database:
         checks = {
             "vocab.concept":
                 "SELECT to_regclass('vocab.concept') IS NOT NULL",
-            "pipeline.concept_search (run ./setup_pipeline.sh)":
+            "pipeline.concept_search (run scripts/setup-conceptmatcher.sh)":
                 "SELECT to_regclass('pipeline.concept_search') IS NOT NULL",
-            "pipeline.token_idf (run ./setup_pipeline.sh)":
+            "pipeline.token_idf (run scripts/setup-conceptmatcher.sh)":
                 "SELECT to_regclass('pipeline.token_idf') IS NOT NULL",
             "pg_trgm extension":
                 "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='pg_trgm')",

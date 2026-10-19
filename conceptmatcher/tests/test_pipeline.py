@@ -25,7 +25,7 @@ from pipeline.stage6_composite import CompositeScorer, merge_candidates
 def make_config() -> PipelineConfig:
     """Shipped defaults, with only the database connection read from the
     environment — so the integration tests find Postgres whether they run on
-    the host (`localhost:5433`) or inside the pipeline container
+    the host (`localhost:5432`) or inside the conceptmatcher container
     (`postgres:5432`).
 
     Everything else stays at the built-in defaults on purpose: the unit tests
@@ -572,8 +572,8 @@ def database_available() -> bool:
 
 
 @unittest.skipUnless(database_available(),
-                     "vocabulary database not reachable; run ./load_vocab.sh "
-                     "and ./setup_pipeline.sh")
+                     "vocabulary database not reachable; load the vocabulary "
+                     "and run scripts/setup-conceptmatcher.sh")
 class TestIntegration(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -688,8 +688,8 @@ class TestIntegration(unittest.TestCase):
 
 
 @unittest.skipUnless(database_available(),
-                     "vocabulary database not reachable; run ./load_vocab.sh "
-                     "and ./setup_pipeline.sh")
+                     "vocabulary database not reachable; load the vocabulary "
+                     "and run scripts/setup-conceptmatcher.sh")
 class TestDomainRestrictionIntegration(unittest.TestCase):
     """`--domain` against the real vocabulary."""
 
@@ -792,8 +792,8 @@ class TestDomainRestrictionIntegration(unittest.TestCase):
 
 
 @unittest.skipUnless(database_available(),
-                     "vocabulary database not reachable; run ./load_vocab.sh "
-                     "and ./setup_pipeline.sh")
+                     "vocabulary database not reachable; load the vocabulary "
+                     "and run scripts/setup-conceptmatcher.sh")
 class TestSpellingIntegration(unittest.TestCase):
     """SymSpell over pipeline.word_freq, end to end."""
 

@@ -108,7 +108,9 @@ services:
       # `docker compose restart conceptmatcher` to be picked up. Dependency
       # changes (requirements.txt) still need a rebuild.
       - ./conceptmatcher/pipeline:/app/pipeline:ro
-      - ./conceptmatcher/data:/app/data:ro
+      # Writable for conceptmatcher/pipeline.sh, which runs the CLI in this
+      # service and writes batch outputs there; the server itself only reads.
+      - ./conceptmatcher/data:/app/data
       # ~90MB for the default MiniLM, downloaded once rather than on every
       # container recreate.
       - conceptmatcher_hf_cache:/cache/huggingface
