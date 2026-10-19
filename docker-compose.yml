@@ -64,12 +64,12 @@ services:
   # The multi-stage concept matcher in ./conceptmatcher, run as `serve`
   # (pipeline/service.py) instead of as a one-shot CLI.
   #
-  # It needs that project's *own* Postgres — the standard-only Athena vocabulary
-  # plus the `pipeline` schema — which is a separate ~9GB stack on host port
-  # 5433, loaded there with ./load_vocab.sh and ./setup_pipeline.sh. Rather than
-  # duplicate it, this container reaches the already-running one back through the
-  # host gateway, so both stacks stay independently startable. Point
-  # VOCAB_DB_HOST/PORT elsewhere in .env if that database lives on another host.
+  # It reads the same Athena vocabulary as everything else here — the `vocab`
+  # schema in `postgres`, loaded by the Finalize step — filtering to standard,
+  # valid concepts itself, plus its own `pipeline` schema next to it. That
+  # schema is built by ./scripts/setup-conceptmatcher.sh, once the vocabulary
+  # is loaded and again after every reload; until then /health reports what is
+  # missing and the Concepts step says so.
   #
   # `image:` keeps the tag the matcher's standalone compose used, so an image
   # built there is reused instead of building ~2GB of CPU torch again.
@@ -82,22 +82,21 @@ services:
     container_name: omop-conceptmatcher
     restart: unless-stopped
     command: ["serve"]
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       # Container-internal listen address, not the published host port below.
       SERVICE_HOST: 0.0.0.0
       SERVICE_PORT: 8000
-      POSTGRES_HOST: ${VOCAB_DB_HOST:-host.docker.internal}
-      POSTGRES_PORT: ${VOCAB_DB_PORT:-5433}
-      POSTGRES_DB: ${VOCAB_DB_NAME:-athena_vocab}
-      POSTGRES_USER: ${VOCAB_DB_USER:-vocab}
-      POSTGRES_PASSWORD: ${VOCAB_DB_PASSWORD:-vocab_pwd}
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-omop}
+      POSTGRES_USER: ${POSTGRES_USER:-omop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
       # Tuning overrides live in conceptmatcher/data/pipeline.json (copied from
       # conceptmatcher/pipeline.example.json). config.py tolerates it being absent.
       PIPELINE_CONFIG: /app/data/pipeline.json
-    extra_hosts:
-      # Linux has no built-in host.docker.internal; without this the vocabulary
-      # database on the host's port 5433 is unreachable from in here.
-      - "host.docker.internal:host-gateway"
     volumes:
       # The pipeline source, mounted read-only over the image's own copy, so a
       # changed threshold, stopword list or scoring stage takes effect without

@@ -14,6 +14,14 @@
 
 CREATE SCHEMA IF NOT EXISTS pipeline;
 
+-- Synonyms by concept: the matview below joins them in per concept, and Stage 4
+-- looks them up per candidate. Built here, before the matview, because without
+-- it that join scans all of concept_synonym once per concept and the build
+-- runs for hours. 05_indexes.sql creates it under the same name; a vocabulary
+-- loaded by something else (the ETL Auto-Designer's) does not have it.
+CREATE INDEX IF NOT EXISTS idx_concept_syn_concept
+    ON vocab.concept_synonym (concept_id);
+
 -- ─────────────────────────────────────────────────────────────────────────
 -- Stage 2: materialized search view
 --
@@ -214,6 +222,11 @@ CREATE TABLE IF NOT EXISTS pipeline.stage_timing (
 -- manual_mapping is consulted by Stage 1 before anything else, so a human
 -- correction is never re-derived on the next run.
 -- lookup_key is the Stage 0 normalized form of "name description".
+--
+-- concept_id deliberately has no foreign key to vocab.concept: the ETL
+-- Auto-Designer reloads the vocabulary with TRUNCATE ... CASCADE, which would
+-- follow it and empty this table. Stage 1 joins through concept_search, so a
+-- mapping to a concept a reload removed is simply never returned.
 -- ─────────────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS pipeline.manual_mapping (
     manual_id          bigserial   PRIMARY KEY,
@@ -221,7 +234,7 @@ CREATE TABLE IF NOT EXISTS pipeline.manual_mapping (
     column_name        text        NOT NULL,
     column_description text,
     source_system      text,
-    concept_id         integer     NOT NULL REFERENCES vocab.concept (concept_id),
+    concept_id         integer     NOT NULL,
     active             boolean     NOT NULL DEFAULT true,
     created_at         timestamptz NOT NULL DEFAULT now(),
     created_by         text,

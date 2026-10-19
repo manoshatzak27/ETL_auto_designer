@@ -5545,10 +5545,10 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             <div>
               <p className="font-semibold">Automatic concept loading is unavailable.</p>
               <p className="mt-0.5">
-                {matcherHealth.detail || 'The concept matcher is not responding.'} Start the matching stack
-                (<code className="bg-amber-100 px-1 rounded font-mono">./load_vocab.sh</code> and{' '}
-                <code className="bg-amber-100 px-1 rounded font-mono">./setup_pipeline.sh</code> in the concept-matching
-                project, then <code className="bg-amber-100 px-1 rounded font-mono">docker compose up -d conceptmatcher</code> here)
+                {matcherHealth.detail || 'The concept matcher is not responding.'} Load the vocabulary
+                (Finalize step), run{' '}
+                <code className="bg-amber-100 px-1 rounded font-mono">./scripts/setup-conceptmatcher.sh</code>, then{' '}
+                <code className="bg-amber-100 px-1 rounded font-mono">docker compose restart conceptmatcher</code>{' '}
                 to enable it. Mapping by hand works either way.
               </p>
             </div>

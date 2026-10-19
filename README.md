@@ -17,7 +17,7 @@ flowchart LR
   Backend --> SQLite[(SQLite wizard state)]
   Backend --> OpenAI
   Backend --> ConceptMatcher[Concept matcher / staged pipeline]
-  ConceptMatcher --> VocabDb[(Athena vocabulary, standard-only)]
+  ConceptMatcher --> Postgres
   Backend --> Executor[etl_executor]
   Executor --> Outputs[outputs/PROJECT_ID/*.csv]
   Outputs --> Loader[omop_loader]
@@ -120,16 +120,14 @@ Set in repo-root `.env` (consumed by `docker-compose.yml`) and/or `backend/.env`
 | `CONCEPT_MATCHER_URL`   | (inside Docker: `http://conceptmatcher:8000`) | Concept matcher behind every concept search and the Concepts step's "Load concepts" button. Empty disables them. |
 | `CONCEPT_MATCHER_PORT`  | `8002`                                 | Host port the matcher is published on                         |
 | `CONCEPT_MATCHER_EMBEDDINGS` | `1`                               | Build arg. `0` drops Stage 5 and shrinks the image ~2GB → ~310MB; the remaining stages' weights are renormalized rather than scored zero |
-| `VOCAB_DB_HOST` / `VOCAB_DB_PORT` | `host.docker.internal` / `5433` | Where the matcher finds the standard-only Athena vocabulary   |
-| `VOCAB_DB_NAME` / `VOCAB_DB_USER` / `VOCAB_DB_PASSWORD` | `athena_vocab` / `vocab` / `vocab_pwd` | Credentials for that vocabulary database  |
 
 ---
 
 ## Automatic concept matching (Concepts step → "Load concepts")
 
 Every concept finder in the app goes through one service, `conceptmatcher` —
-the staged pipeline in `conceptmatcher/` — over that project's own
-Postgres: **standard + valid concepts only**. It is used two ways:
+the staged pipeline in `conceptmatcher/` — over the stack's own vocabulary
+(`vocab` schema), returning **standard + valid concepts only**. It is used two ways:
 
 | | **Search** (per row / per field) | **Load concepts** (whole project) |
 |---|---|---|
@@ -366,32 +364,36 @@ single-domain — a study's lab panel, one questionnaire.
 
 ### Bringing the matcher up
 
-It needs the sibling project's **own** database — the standard-only Athena
-vocabulary plus its `pipeline` schema, roughly 9GB — which is a separate stack
-on host port 5433. That stack is not duplicated here; the container reaches the
-running one through the host gateway, so the two stay independently startable.
+The matcher reads the same Athena vocabulary as the rest of the stack — the
+`vocab` schema in `postgres` — and keeps its search structures (a search
+matview, IDF weights, a spelling dictionary, its logs and feedback) in a
+`pipeline` schema next to it. Build that once the vocabulary is loaded:
 
 ```bash
-cd conceptmatcher
-./load_vocab.sh          # the vocabulary (10-20 min, once)
-./setup_pipeline.sh      # the pipeline's database objects (~2 min, once)
-
-cd -                     # back here
-docker compose up -d conceptmatcher
+# Finalize step, card 1: load the Athena bundle (once)
+./scripts/setup-conceptmatcher.sh        # ~5 min on a full Athena export
+docker compose restart conceptmatcher
 curl localhost:8002/health
 ```
 
-The service is `pipeline/service.py` in that project, run as `serve`. The
-`conceptmatcher` compose service and that project's own `pipeline` service share
-one image tag (`vocab-pipeline:latest`), so whichever stack builds it first, the
-other reuses it rather than building ~2GB of CPU torch twice.
+**Re-run the script after every vocabulary reload.** The search structures are
+derived from `vocab.concept` and do not follow it on their own; until the
+script runs again the matcher keeps answering from the previous release.
+Custom concepts the Finalize step inserts (ids ≥ 2,000,000,000) become
+searchable the same way, on the next run of the script.
 
-Without all that, the button is disabled and says why — the step works exactly
-as before, by hand.
+The script also adds four indexes the matcher needs to the vocab tables
+(synonyms by name and by concept, concepts by code, `Maps to` lookups), about
+2 GB on a full export. A vocabulary reload keeps them up to date as it copies,
+which makes the reload slower than without them.
+
+The service is `conceptmatcher/pipeline/service.py`, run as `serve`. Without a
+built `pipeline` schema the Concepts step's button is disabled and says why —
+the step works exactly as before, by hand.
 
 ### Keeping it current
 
-That project's `pipeline/` and `data/` are bind-mounted read-only over the
+`conceptmatcher/pipeline/` and `conceptmatcher/data/` are bind-mounted read-only over the
 image's own copies, the same way its own compose does it, so a changed
 threshold, stopword list or scoring stage does **not** need a rebuild. What it
 does need is a restart, because unlike the CLI — one-shot, so it re-reads
@@ -789,8 +791,8 @@ need from it:
 `ATHENA_BUNDLE_PATH=/your/absolute/path` in `.env`, then `docker compose up --build`.
 Card 1 of the Finalize step auto-detects the bundle and shows "Detected 9 vocabulary files".
 
-The concept matcher does not read this directory — it has its own standard-only vocabulary
-database (see *Automatic concept matching*).
+The concept matcher does not read this directory either: it reads the vocabulary
+this loader puts in Postgres (see *Automatic concept matching*).
 
 ## Upgrading from a pre-vocab-schema dev DB
 
