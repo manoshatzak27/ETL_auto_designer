@@ -996,11 +996,6 @@ def _suggestion(value: str, term: str, result: dict[str, Any] | None) -> dict[st
     }
 
 
-# Values of a unit or route column that say there is none to record. Set to 0
-# (not mapped) by auto-fill rather than searched for.
-NOT_MAPPED_FIELD_VALUES = MISSING_VALUES | {"other", "none", "-", "?"}
-
-
 @lru_cache(maxsize=1)
 def _ucum_units() -> tuple[dict[str, tuple[int, str]], dict[str, list[tuple[str, int, str]]]]:
     """Standard UCUM unit concepts by code: (exact code → concept, lower-cased
@@ -1191,17 +1186,44 @@ async def suggest_value_concepts(
     domain to the vocabularies / concept classes the field wants (see
     ConceptPreference).
     """
-    from app.services.concept_normalizer import GENDER_FEMALE, GENDER_MALE, gender_concept, normalize_term
-
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
+    results = await suggest_concepts_for_values(
+        project_id, payload.domain, payload.values, payload.prefer, payload.candidates,
+    )
+    return {"domain": payload.domain, "results": results}
 
+
+async def suggest_concepts_for_values(
+    project_id: str,
+    domain: str,
+    values: list[str],
+    prefer: ConceptPreference | None = None,
+    candidates: int = 5,
+) -> dict[str, dict[str, Any]]:
+    """The work of `suggest_value_concepts`, for callers that already hold the
+    project — column auto-match checks a column by how many of its values map."""
+    from app.services.concept_normalizer import (
+        GENDER_FEMALE, GENDER_MALE, gender_concept, is_no_value, normalize_term,
+    )
+
+    payload = SuggestValueConceptsPayload(domain=domain, values=values, candidates=candidates, prefer=prefer)
     values = list(dict.fromkeys(v for v in payload.values if str(v).strip()))
     out: dict[str, dict[str, Any]] = {}
     pending: dict[str, list[str]] = {}   # term → the source values it came from
 
     for value in values:
+        if is_no_value(value):
+            # "Unknown", "Other", "N/A" have no concept to find; recorded as not
+            # mapped (0), the CDM's convention for exactly this, instead of
+            # left open or matched to whatever shares the word ("Other" →
+            # "Native Hawaiian or Other Pacific Islander").
+            entry = _suggestion(value, value, None)
+            entry.update(source="rule", status="auto_accept", confidence=100.0,
+                         concept_id=0, concept_name="Not mapped")
+            out[value] = entry
+            continue
         if payload.domain.lower() == "gender":
             concept_id = gender_concept(value)
             if concept_id:
@@ -1212,14 +1234,6 @@ async def suggest_value_concepts(
                 )
                 out[value] = entry
                 continue
-        if payload.domain.lower() in ("unit", "route") and value.strip().lower() in NOT_MAPPED_FIELD_VALUES:
-            # "Unknown" has no unit or route to find; recorded as not mapped
-            # (0), the row's convention for exactly this, instead of left open.
-            entry = _suggestion(value, value, None)
-            entry.update(source="rule", status="auto_accept", confidence=100.0,
-                         concept_id=0, concept_name="Not mapped")
-            out[value] = entry
-            continue
         if payload.domain.lower() == "unit":
             try:
                 entry = _ucum_unit(value)
@@ -1265,7 +1279,7 @@ async def suggest_value_concepts(
                     if payload.domain.lower() == "race":
                         _roll_up_race(out[value])
 
-    return {"domain": payload.domain, "results": {v: out[v] for v in values}}
+    return {v: out[v] for v in values}
 
 
 def _name_search(term: str, domains: list[str] | None, limit: int) -> list[dict[str, Any]]:

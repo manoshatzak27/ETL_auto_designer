@@ -346,7 +346,9 @@ export interface ColumnMatch {
   filename: string | null
   score: number
   status: 'auto' | 'suggest' | 'none'
-  source: 'heuristic' | 'llm'
+  /** `values`: found by scanning the file for a column whose values map to
+   *  the field's concepts — always a suggestion. */
+  source: 'heuristic' | 'llm' | 'values'
   reason: string
   alternatives: { column: string; filename: string; score: number }[]
   /** Date fields: the format to set the step's date format to when applying
@@ -380,7 +382,15 @@ export const suggestColumnMapping = (
   body: { table: string; filenames: string[]; fields: ColumnMatchField[]; exclude_columns: string[]; use_llm: boolean },
 ) =>
   api
-    .post<{ matches: Record<string, ColumnMatch>; llm_available: boolean; llm_used: boolean; llm_error: string | null }>(
+    .post<{
+      matches: Record<string, ColumnMatch>
+      llm_available: boolean
+      llm_used: boolean
+      llm_error: string | null
+      /** Concept fields checked by how many of their values map; `error` when
+       *  the concept matcher could not be asked. */
+      value_check: { used: boolean; error: string | null; scanned_columns: number }
+    }>(
       `/projects/${projectId}/suggest-column-mapping`,
       body,
     )
