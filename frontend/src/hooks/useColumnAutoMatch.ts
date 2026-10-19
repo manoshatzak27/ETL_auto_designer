@@ -24,6 +24,8 @@ export interface ColumnAutoMatchSummary {
   missing: number
   aiUsed: boolean
   aiError: string | null
+  /** Why concept fields were matched without checking their values. */
+  valueError: string | null
 }
 
 const USE_LLM_KEY = 'columnAutoMatch.useLlm'
@@ -137,6 +139,7 @@ export function useColumnAutoMatch(projectId: string, table: string, scope = '')
         missing,
         aiUsed: res.llm_used,
         aiError: res.llm_error,
+        valueError: res.value_check?.error ?? null,
       }
       setSummary(result)
       // A failed AI call changes what the badge should say.

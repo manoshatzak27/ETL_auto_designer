@@ -102,6 +102,12 @@ export function ColumnAutoMatchSummary({ autoMatch }: { autoMatch: ColumnAutoMat
       {s.aiError && (
         <p className="mt-1 text-xs text-destructive">AI fallback unavailable: {s.aiError} — name and value checks only.</p>
       )}
+      {s.valueError && (
+        <p className="mt-1 text-xs text-amber-700 dark:text-amber-400">
+          Concept matcher unavailable: {s.valueError} — columns for concept fields (gender, race, visit type…)
+          were picked without checking that their values map.
+        </p>
+      )}
       <p className="mt-1 text-xs text-muted-foreground">
         Fields already mapped were left as they were. Check the filled columns below; suggestions are
         shown under their field.
@@ -127,6 +133,9 @@ export function ColumnSuggestion({ suggestion, onUse, showFile }: {
         {showFile && suggestion.filename && <span>in {suggestion.filename}</span>}
         <span>· {Math.round(suggestion.score * 100)}%</span>
         {suggestion.source === 'llm' && <Badge variant="default" className="px-1.5 py-0">AI</Badge>}
+        {suggestion.source === 'values' && (
+          <Badge variant="outline" className="px-1.5 py-0" title={suggestion.reason}>by values</Badge>
+        )}
         <button
           type="button"
           onClick={() => onUse(suggestion.column!)}

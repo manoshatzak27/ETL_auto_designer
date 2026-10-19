@@ -9,23 +9,33 @@ what. This module makes that first pass for them:
    go by: `dob`, `birth_date`, `PatientBirthDt` all point at date of birth.
 2. **Values** — a sample of the column is checked against the kind of data the
    field holds. A column called `admission_type` scores well on name for an
-   admission *date*, and the values are what rule it out.
+   admission *date*, and the values are what rule it out. For a field whose
+   values are later mapped to concepts (gender, race, ethnicity, visit
+   concept...), the check is how many of the column's values the concept
+   matcher maps in that field's domain: `DEMOGR_NATIONALITY` (PRT, GR, NL) maps
+   to Ethnicity concepts, a free-text treatment column maps to no Visit concept.
 3. **Assignment** — each column fills at most one field, best scores first, so
    `city` goes to the person's city rather than to the care site's as well.
 4. **LLM fallback** — fields still without a confident match are sent, with the
    columns nobody claimed and a few sample values of each, to the OpenAI model
    the project already uses for code generation. Its answer is held to the same
    value checks: a pick that fails them is offered, not applied.
+5. **Value scan** — a concept field still without a confident match has every
+   unclaimed short-list column's values put through the concept matcher; one
+   whose values clearly are the field's concepts is offered, never applied.
 
 The scores are not probabilities; they are only meant to be compared against
 `AUTO_THRESHOLD` and `SUGGEST_THRESHOLD`.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
 import time
+from collections import Counter
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from difflib import SequenceMatcher
@@ -37,6 +47,7 @@ from openai import AsyncOpenAI
 
 from app.config import settings
 from app.services.column_descriptions import _normalize
+from app.services.concept_normalizer import is_no_value
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +63,21 @@ VALUE_WEIGHT = 0.35
 VETO_FACTOR = 0.3
 PROFILE_ROWS = 5000
 SAMPLE_VALUES = 5
+# A `related` synonym names a neighbouring idea (nationality for ethnicity): it
+# brings the column in for the values to decide, at a discount.
+RELATED_FACTOR = 0.9
 
 
 # ── Field specifications ─────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class ConceptTarget:
+    """The concepts a field's values are mapped to — the domain and preference
+    its step's "Auto-fill concept IDs" asks the concept matcher for."""
+    domain: str
+    vocabularies: tuple[str, ...] = ()
+    concept_classes: tuple[str, ...] = ()
+
 
 @dataclass(frozen=True)
 class FieldSpec:
@@ -62,10 +85,19 @@ class FieldSpec:
     kind: str
     synonyms: tuple[str, ...]
     description: str
+    related: tuple[str, ...] = ()
+    concept: ConceptTarget | None = None
 
 
-def _spec(label: str, kind: str, synonyms: list[str], description: str) -> FieldSpec:
-    return FieldSpec(label, kind, tuple(synonyms), description)
+def _spec(label: str, kind: str, synonyms: list[str], description: str,
+          related: list[str] | None = None, concept: ConceptTarget | None = None) -> FieldSpec:
+    return FieldSpec(label, kind, tuple(synonyms), description, tuple(related or ()), concept)
+
+
+GENDER_CONCEPTS = ConceptTarget("Gender")
+COUNTRY_CONCEPTS = ConceptTarget("Geography", concept_classes=("Location", "2nd level"))
+VISIT_CONCEPTS = ConceptTarget("Visit", vocabularies=("Visit",))
+PLACE_OF_SERVICE_CONCEPTS = ConceptTarget("Visit", vocabularies=("CMS Place of Service",))
 
 
 def _prefixed(prefixes: list[str], synonyms: list[str]) -> list[str]:
@@ -107,7 +139,8 @@ def _location_fields() -> dict[str, FieldSpec]:
         "state_col": _spec("State", "category", STATE, "State, province or region the patient lives in"),
         "zip_col": _spec("Zip code", "zip", ZIP, "Postal code of the patient's residence"),
         "county_col": _spec("County", "category", COUNTY, "County or district the patient lives in"),
-        "country_col": _spec("Country", "country", COUNTRY, "Country the patient lives in"),
+        "country_col": _spec("Country", "country", COUNTRY, "Country the patient lives in",
+                             concept=COUNTRY_CONCEPTS),
         "latitude_col": _spec("Latitude", "latitude", LATITUDE, "Latitude of the patient's residence"),
         "longitude_col": _spec("Longitude", "longitude", LONGITUDE, "Longitude of the patient's residence"),
     }
@@ -121,6 +154,7 @@ def _location_fields() -> dict[str, FieldSpec]:
             _prefixed(SITE_WORDS, list(spec.synonyms)),
             spec.description.replace("the patient's residence", "the care site")
                             .replace("the patient lives in", "the care site is in"),
+            concept=spec.concept,
         )
     return fields
 
@@ -141,7 +175,8 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
             ["place of service", "pos", "service location", "setting", "care setting",
              "facility type", "site type", "care site type", "department type", "location type",
              "place of care"],
-            "Kind of place care was delivered in (inpatient hospital, office, emergency room...)"),
+            "Kind of place care was delivered in (inpatient hospital, office, emergency room...)",
+            concept=PLACE_OF_SERVICE_CONCEPTS),
     },
     "provider": {
         "person_id_col": _spec("Patient ID", "id", PATIENT_ID, "Identifier of the patient a row belongs to"),
@@ -162,29 +197,39 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
             "Specialty", "category",
             ["specialty", "speciality", "provider specialty", "physician specialty",
              "doctor specialty", "medical specialty", "discipline", "provider type", "specialism"],
-            "Medical specialty of the provider (cardiology, general practice...)"),
+            "Medical specialty of the provider (cardiology, general practice...)",
+            concept=ConceptTarget("Provider")),
         "gender_source_value_col": _spec("Provider gender", "gender",
                                          _prefixed(PROVIDER_WORDS, GENDER),
-                                         "Gender of the provider, not of the patient"),
+                                         "Gender of the provider, not of the patient",
+                                         concept=GENDER_CONCEPTS),
     },
     "person": {
         "person_id": _spec("Patient ID", "id", PATIENT_ID, "Unique identifier of the patient"),
         "gender_concept_id": _spec(
             "Gender", "gender",
             GENDER + ["patient gender", "patient sex", "sesso", "geschlecht", "sexe", "fylo", "genre"],
-            "Biological sex or gender of the patient"),
+            "Biological sex or gender of the patient",
+            concept=GENDER_CONCEPTS),
         "year_of_birth": _spec("Date of birth", "birth", BIRTH + ["patient dob", "patient birth date"],
                                "Patient's date of birth, or year of birth"),
         "birth_time": _spec("Birth time", "time", ["birth time", "time of birth", "tob", "birth hour"],
                             "Time of day the patient was born"),
+        # Datasets often say "ethnicity" for what OMOP calls race (White,
+        # Black, Asian), and record a nationality that loads as ethnicity
+        # (Greek, Dutch): related synonyms, settled by the values.
         "race_concept_id": _spec("Race", "category",
                                  ["race", "racial group", "race code", "race category", "patient race"],
-                                 "Race of the patient"),
+                                 "Race of the patient",
+                                 related=["ethnicity", "ethnic group", "ethnic origin"],
+                                 concept=ConceptTarget("Race")),
         "ethnicity_concept_id": _spec(
             "Ethnicity", "category",
             ["ethnicity", "ethnic", "ethnic group", "ethnicity code", "hispanic", "hispanic latino",
              "ethnic origin", "patient ethnicity"],
-            "Ethnicity of the patient (Hispanic or not)"),
+            "Ethnicity of the patient (Hispanic or not)",
+            related=["nationality", "citizenship"],
+            concept=ConceptTarget("Ethnicity")),
     },
     "visit_occurrence": {
         "visit_source_col": _spec(
@@ -215,7 +260,8 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
             "Visit type", "category",
             ["visit type", "encounter type", "visit category", "admission type", "patient class",
              "care type", "visit class", "service type", "inpatient outpatient", "setting"],
-            "Kind of visit (inpatient, outpatient, emergency...)"),
+            "Kind of visit (inpatient, outpatient, emergency...)",
+            concept=VISIT_CONCEPTS),
         "visit_type_source_col": _spec(
             "Visit provenance", "category",
             ["visit provenance", "record type", "data source", "source type", "provenance",
@@ -225,12 +271,14 @@ FIELD_SPECS: dict[str, dict[str, FieldSpec]] = {
             "Admitted from", "category",
             ["admitted from", "admission source", "admit source", "source of admission",
              "referral source", "arrived from", "admission origin"],
-            "Where the patient came from when admitted (home, other hospital...)"),
+            "Where the patient came from when admitted (home, other hospital...)",
+            concept=PLACE_OF_SERVICE_CONCEPTS),
         "discharged_to_source_col": _spec(
             "Discharged to", "category",
             ["discharged to", "discharge disposition", "discharge destination", "discharge status",
              "disposition", "discharge location"],
-            "Where the patient went when discharged (home, nursing facility, deceased...)"),
+            "Where the patient went when discharged (home, nursing facility, deceased...)",
+            concept=PLACE_OF_SERVICE_CONCEPTS),
     },
     "observation_period": {
         "start_date_col": _spec(
@@ -305,9 +353,7 @@ def _token_match(a: str, b: str) -> bool:
     return len(short) >= 4 and len(short) <= 0.65 * len(long_) and long_.startswith(short)
 
 
-def _contains_tokens(haystack: list[str], needles: list[str], exact: bool = False) -> bool:
-    if exact:
-        return set(needles) <= set(haystack)
+def _contains_tokens(haystack: list[str], needles: list[str]) -> bool:
     return all(any(_token_match(h, n) for h in haystack) for n in needles)
 
 
@@ -348,8 +394,12 @@ def description_score(description: str, synonym: str) -> float:
     # A lone short word ("id", "lat") turns up in too many descriptions to count.
     if not syn_tokens or (len(syn_tokens) == 1 and len(syn_tokens[0]) < 4):
         return 0.0
-    # Prose is written out in full, so whole words only.
-    return 0.85 if _contains_tokens(tokenize(description), syn_tokens, exact=True) else 0.0
+    # Prose is written out in full, so whole words only, and as a phrase: "What
+    # type of treatment did you visit the hospital for?" holds "visit" and
+    # "type", but is not about the visit type.
+    words = tokenize(description)
+    n = len(syn_tokens)
+    return 0.85 if any(words[i:i + n] == syn_tokens for i in range(len(words) - n + 1)) else 0.0
 
 
 def best_name_score(column: str, spec: FieldSpec, description: str = "", hint: str = "") -> float:
@@ -361,9 +411,14 @@ def best_name_score(column: str, spec: FieldSpec, description: str = "", hint: s
     synonyms are discounted so that a column carrying the hint wins.
     """
     synonyms = spec.synonyms
-    scores = [name_score(column, s) for s in synonyms]
-    if description:
-        scores += [description_score(description, s) for s in synonyms]
+
+    def scored(names: tuple[str, ...]) -> list[float]:
+        out = [name_score(column, s) for s in names]
+        if description:
+            out += [description_score(description, s) for s in names]
+        return out
+
+    scores = scored(synonyms) + [s * RELATED_FACTOR for s in scored(spec.related)]
     best = max(scores, default=0.0)
     if hint and tokenize(hint):
         best *= 0.9
@@ -422,6 +477,8 @@ class ColumnProfile:
     lon_rate: float
     # Up to 500 distinct values, for working out a date column's format.
     values: list[str] = field(default_factory=list)
+    # How many rows hold each of `values`.
+    counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def distinct_ratio(self) -> float:
@@ -434,7 +491,8 @@ class ColumnProfile:
 def profile_series(series: pd.Series) -> ColumnProfile:
     values = [str(v).strip() for v in series.dropna().tolist()]
     values = [v for v in values if v]
-    distinct_values = list(dict.fromkeys(values))
+    counts = Counter(values)
+    distinct_values = list(counts)
     # The rates come from the distinct values so a column of 5000 "M"/"F" rows
     # costs as little as one of two.
     sample = distinct_values[:500]
@@ -464,6 +522,7 @@ def profile_series(series: pd.Series) -> ColumnProfile:
         lat_rate=(sum(1 for x in numbers if -90 <= x <= 90 and x != int(x)) / n) if n else 0.0,
         lon_rate=(sum(1 for x in numbers if -180 <= x <= 180 and x != int(x)) / n) if n else 0.0,
         values=sample,
+        counts={v: counts[v] for v in sample},
     )
 
 
@@ -662,6 +721,110 @@ def apply_date_formats(
                             f"{guess.alternative}); check the date format")
 
 
+# ── Concept coverage ─────────────────────────────────────────────────────────
+#
+# A field whose values are mapped to concepts afterwards (race, ethnicity,
+# visit concept...) is checked by doing that mapping: the column whose values
+# the concept matcher maps in the field's domain is the one that holds it.
+
+# The most frequent values of a column that are checked.
+COVERAGE_VALUES = 30
+# Name-matched candidates per field that are checked.
+COVERAGE_CANDIDATES = 3
+# Below this share of rows mapped — over at least COVERAGE_MIN_CHECKED values —
+# a column is not the field's, whatever its name says.
+COVERAGE_VETO = 0.1
+COVERAGE_MIN_CHECKED = 3
+# At or above this, with STRONG_MATCHED values mapped outright, the values
+# confirm the name: the score gets COVERAGE_BONUS.
+STRONG_COVERAGE = 0.8
+STRONG_MATCHED = 3
+COVERAGE_BONUS = 1.1
+# The value scan offers a column only above these.
+SCAN_MIN_COVERAGE = 0.6
+SCAN_MIN_MATCHED = 3
+SCAN_MAX_DISTINCT = 50
+
+# (target, values) → each value's status from the concept matcher:
+# "auto_accept", "review" or "unmapped". Supplied by the caller (the API).
+ValueConcepts = Callable[[ConceptTarget, list[str]], Awaitable[dict[str, str]]]
+
+
+@dataclass
+class Coverage:
+    """How much of a column the concept matcher maps in a field's domain.
+
+    "Unknown", "Other", empty and the like (`is_no_value`) are left out of both
+    sides: they are set to concept 0 whichever column holds them. A column of
+    nothing else has no coverage at all — rate 0 and not `telling` — rather
+    than 0 of 0 read as everything mapped.
+    """
+    rate: float      # share of the rows checked; a review counts half
+    matched: int     # distinct values mapped outright
+    checked: int     # distinct values checked
+    rows: int        # rows those values cover
+
+    @property
+    def telling(self) -> bool:
+        """Enough to go by: two values neither of which maps say little, and
+        none say nothing."""
+        return self.rows > 0 and (self.checked >= COVERAGE_MIN_CHECKED or self.matched > 0)
+
+    @property
+    def veto(self) -> bool:
+        return self.checked >= COVERAGE_MIN_CHECKED and self.rate < COVERAGE_VETO
+
+    @property
+    def strong(self) -> bool:
+        return self.rate >= STRONG_COVERAGE and self.matched >= STRONG_MATCHED
+
+    @property
+    def scan_worthy(self) -> bool:
+        return self.rate >= SCAN_MIN_COVERAGE and self.matched >= SCAN_MIN_MATCHED
+
+
+CoverageKey = tuple[ConceptTarget, str, str]   # target, filename, column
+
+
+def top_values(prof: ColumnProfile, limit: int = COVERAGE_VALUES) -> list[tuple[str, int]]:
+    """The column's most frequent values that could map to a concept."""
+    vals = [(v, prof.counts.get(v, 1)) for v in prof.values if not is_no_value(v)]
+    return sorted(vals, key=lambda vc: -vc[1])[:limit]
+
+
+def coverage_of(values: list[tuple[str, int]], statuses: dict[str, str]) -> Coverage:
+    values = [(v, c) for v, c in values if not is_no_value(v)]
+    rows = sum(c for _, c in values)
+    if rows == 0:
+        return Coverage(rate=0.0, matched=0, checked=0, rows=0)
+    weight = {"auto_accept": 1.0, "review": 0.5}
+    covered = sum(c * weight.get(statuses.get(v, ""), 0.0) for v, c in values)
+    return Coverage(
+        rate=covered / rows,
+        matched=sum(1 for v, _ in values if statuses.get(v) == "auto_accept"),
+        checked=len(values),
+        rows=rows,
+    )
+
+
+async def fetch_coverage(
+    value_concepts: ValueConcepts,
+    wanted: dict[ConceptTarget, set[tuple[str, str]]],
+    sources: dict[str, SourceColumns],
+) -> dict[CoverageKey, Coverage]:
+    """Coverage of each (filename, column) under its target — one call per target."""
+    async def one(target: ConceptTarget, cols: set[tuple[str, str]]) -> dict[CoverageKey, Coverage]:
+        tops = {(fn, col): top_values(sources[fn].profiles[col]) for fn, col in cols}
+        values = sorted({v for vs in tops.values() for v, _ in vs})
+        statuses = await value_concepts(target, values) if values else {}
+        return {(target, fn, col): coverage_of(vs, statuses) for (fn, col), vs in tops.items()}
+
+    out: dict[CoverageKey, Coverage] = {}
+    for part in await asyncio.gather(*(one(t, cols) for t, cols in wanted.items() if cols)):
+        out.update(part)
+    return out
+
+
 # ── Matching ─────────────────────────────────────────────────────────────────
 
 @dataclass
@@ -673,6 +836,7 @@ class Candidate:
     name: float
     value: float
     veto: bool
+    coverage: Coverage | None = None
 
 
 @dataclass
@@ -696,9 +860,15 @@ class SourceColumns:
     profiles: dict[str, ColumnProfile]
 
 
+def _coverage_reason(cov: Coverage, target: ConceptTarget) -> str:
+    return f"{cov.matched} of {cov.checked} values map to {target.domain} concepts ({round(cov.rate * 100)}% of rows)"
+
+
 def _reason(c: Candidate, spec: FieldSpec) -> str:
     bits = [f"name {round(c.name * 100)}%"]
-    if c.veto:
+    if c.coverage is not None and spec.concept:
+        bits.append(_coverage_reason(c.coverage, spec.concept))
+    elif c.veto:
         bits.append(f"values don't look like {spec.kind}")
     else:
         bits.append(f"values {round(c.value * 100)}% {spec.kind}")
@@ -710,7 +880,12 @@ def score_candidates(
     sources: dict[str, SourceColumns],
     exclude: set[str],
     descriptions: dict[str, str],
+    coverage: dict[CoverageKey, Coverage] | None = None,
 ) -> dict[str, list[Candidate]]:
+    """`coverage`, where it has a column under a field's concept target,
+    replaces the value check of that field's kind: whether the values map is
+    the better question than whether they look like a category."""
+    coverage = coverage or {}
     out: dict[str, list[Candidate]] = {}
     for f in fields:
         cands: list[Candidate] = []
@@ -725,11 +900,32 @@ def score_candidates(
                 if n < MIN_NAME_SCORE:
                     continue
                 v, veto = value_score(f.spec.kind, prof)
+                cov = coverage.get((f.spec.concept, fn, col)) if f.spec.concept else None
+                if cov is not None and not cov.telling:
+                    cov = None
+                if cov is not None:
+                    v, veto = cov.rate, veto or cov.veto
                 score = n * (1 - VALUE_WEIGHT + VALUE_WEIGHT * v) * (VETO_FACTOR if veto else 1.0)
-                cands.append(Candidate(f.key, col, fn, round(score, 3), n, v, veto))
+                if cov is not None and cov.strong and not veto:
+                    score = min(1.0, score * COVERAGE_BONUS)
+                cands.append(Candidate(f.key, col, fn, round(score, 3), n, v, veto, cov))
         cands.sort(key=lambda c: c.score, reverse=True)
         out[f.key] = cands
     return out
+
+
+def coverage_wanted(
+    candidates: dict[str, list[Candidate]],
+    fields: list[FieldRequest],
+) -> dict[ConceptTarget, set[tuple[str, str]]]:
+    """The leading candidates of each concept field, to check by their values."""
+    wanted: dict[ConceptTarget, set[tuple[str, str]]] = {}
+    for f in fields:
+        if not f.spec.concept:
+            continue
+        top = [c for c in candidates[f.key] if c.score >= SUGGEST_THRESHOLD * 0.8][:COVERAGE_CANDIDATES]
+        wanted.setdefault(f.spec.concept, set()).update((c.filename, c.column) for c in top)
+    return wanted
 
 
 def assign(candidates: dict[str, list[Candidate]]) -> dict[str, Candidate]:
@@ -752,9 +948,10 @@ def heuristic_match(
     sources: dict[str, SourceColumns],
     exclude: set[str],
     descriptions: dict[str, str],
+    coverage: dict[CoverageKey, Coverage] | None = None,
 ) -> dict[str, dict[str, Any]]:
     by_key = {f.key: f for f in fields}
-    candidates = score_candidates(fields, sources, exclude, descriptions)
+    candidates = score_candidates(fields, sources, exclude, descriptions, coverage)
     chosen = assign(candidates)
     taken = {(c.filename, c.column) for c in chosen.values()}
 
@@ -952,6 +1149,81 @@ async def llm_match(
     return out
 
 
+# ── Value scan ───────────────────────────────────────────────────────────────
+
+def _scannable(prof: ColumnProfile) -> bool:
+    """A short list of words — what a concept field's column looks like."""
+    return (prof.non_null > 0 and prof.letter_rate >= 0.5 and prof.date_rate < 0.5
+            and prof.distinct <= SCAN_MAX_DISTINCT and len(top_values(prof)) >= SCAN_MIN_MATCHED)
+
+
+def scan_wanted(
+    fields: list[FieldRequest],
+    sources: dict[str, SourceColumns],
+    exclude: set[str],
+    taken: set[tuple[str, str]],
+) -> dict[str, set[tuple[str, str]]]:
+    """Per field, every column the value scan checks: unclaimed and scannable."""
+    return {
+        f.key: {
+            (fn, col)
+            for fn in f.filenames if fn in sources
+            for col, prof in sources[fn].profiles.items()
+            if col not in exclude and (fn, col) not in taken and _scannable(prof)
+        }
+        for f in fields
+    }
+
+
+def apply_scan(
+    fields: list[FieldRequest],
+    columns: dict[str, set[tuple[str, str]]],
+    matches: dict[str, dict[str, Any]],
+    coverage: dict[CoverageKey, Coverage],
+    taken: set[tuple[str, str]],
+) -> None:
+    """Offer each field the scanned column its values back most, in place.
+
+    Only ever a suggestion: nothing in the name says it is the field. A
+    suggestion the name found and the values back is kept; one they don't
+    back gives way and becomes an alternative.
+    """
+    options = []
+    for f in fields:
+        for fn, col in columns[f.key]:
+            cov = coverage.get((f.spec.concept, fn, col))
+            if cov is not None and cov.scan_worthy:
+                # Most rows mapped first: NATIONALITY (every patient) before
+                # NATIONALITY_OTHER (the few with "Other").
+                options.append((cov.rate * cov.rows, f, fn, col, cov))
+    options.sort(key=lambda o: o[0], reverse=True)
+    used = set(taken)
+    done: set[str] = set()
+    for _, f, fn, col, cov in options:
+        if f.key in done or (fn, col) in used:
+            continue
+        m = matches[f.key]
+        if (m["filename"], m["column"]) == (fn, col):
+            done.add(f.key)
+            continue
+        prior = coverage.get((f.spec.concept, m["filename"], m["column"])) if m["column"] else None
+        if prior is not None and prior.scan_worthy:
+            done.add(f.key)
+            continue
+        before = [{"column": m["column"], "filename": m["filename"], "score": m["score"]}] if m["column"] else []
+        matches[f.key] = {
+            "column": col,
+            "filename": fn,
+            "score": round(cov.rate, 3),
+            "status": "suggest",
+            "source": "values",
+            "reason": f"found by its values: {_coverage_reason(cov, f.spec.concept)}",
+            "alternatives": [*before, *m["alternatives"]][:3],
+        }
+        done.add(f.key)
+        used.add((fn, col))
+
+
 async def match_columns(
     table: str,
     fields: list[FieldRequest],
@@ -959,8 +1231,28 @@ async def match_columns(
     exclude: set[str],
     descriptions: dict[str, str],
     use_llm: bool,
+    value_concepts: ValueConcepts | None = None,
 ) -> dict[str, Any]:
-    matches = heuristic_match(fields, sources, exclude, descriptions)
+    """`value_concepts`, when given, checks concept fields by their values
+    (see "Concept coverage"); without it, or when it fails, the matching is
+    as if there were no such check."""
+    coverage: dict[CoverageKey, Coverage] = {}
+    value_error: str | None = None
+    scanned = 0
+
+    async def check(wanted: dict[ConceptTarget, set[tuple[str, str]]]) -> None:
+        nonlocal value_error
+        if value_concepts is None or value_error:
+            return
+        missing = {t: {c for c in cols if (t, *c) not in coverage} for t, cols in wanted.items()}
+        try:
+            coverage.update(await fetch_coverage(value_concepts, missing, sources))
+        except Exception as exc:  # noqa: BLE001 — match without the check
+            value_error = getattr(exc, "detail", None) or _error_detail(exc)
+            logger.warning("column matcher: value check failed: %s", value_error)
+
+    await check(coverage_wanted(score_candidates(fields, sources, exclude, descriptions), fields))
+    matches = heuristic_match(fields, sources, exclude, descriptions, coverage)
 
     unresolved = [f for f in fields if matches[f.key]["status"] != "auto"]
     llm_used = False
@@ -988,10 +1280,44 @@ async def match_columns(
                 pick["alternatives"] = prior["alternatives"]
             matches[key] = pick
 
+    # The AI's picks for concept fields are held to their values too.
+    by_key = {f.key: f for f in fields}
+    ai_picks = [by_key[k] for k, m in matches.items() if m["source"] == "llm" and by_key[k].spec.concept]
+    wanted: dict[ConceptTarget, set[tuple[str, str]]] = {}
+    for f in ai_picks:
+        wanted.setdefault(f.spec.concept, set()).add((matches[f.key]["filename"], matches[f.key]["column"]))
+    await check(wanted)
+    for f in ai_picks:
+        m = matches[f.key]
+        cov = coverage.get((f.spec.concept, m["filename"], m["column"]))
+        if cov is None or not cov.telling:
+            continue
+        m["reason"] += f", {_coverage_reason(cov, f.spec.concept)}"
+        if cov.veto:
+            m["status"] = "suggest"
+
+    # Concept fields still open: look for their values anywhere in the file.
+    to_scan = [f for f in fields if f.spec.concept and matches[f.key]["status"] != "auto"]
+    if to_scan and value_concepts is not None and not value_error:
+        taken = {(m["filename"], m["column"]) for m in matches.values() if m["status"] == "auto"}
+        columns = scan_wanted(to_scan, sources, exclude, taken)
+        scan_targets: dict[ConceptTarget, set[tuple[str, str]]] = {}
+        for f in to_scan:
+            scan_targets.setdefault(f.spec.concept, set()).update(columns[f.key])
+        await check(scan_targets)
+        if not value_error:
+            apply_scan(to_scan, columns, matches, coverage, taken)
+            scanned = len({c for cols in columns.values() for c in cols})
+
     apply_date_formats(fields, matches, sources)
     return {
         "matches": matches,
         "llm_available": llm_configured(),
         "llm_used": llm_used,
         "llm_error": llm_error,
+        "value_check": {
+            "used": value_concepts is not None and not value_error and bool(coverage),
+            "error": value_error,
+            "scanned_columns": scanned,
+        },
     }

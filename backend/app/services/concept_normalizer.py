@@ -31,6 +31,19 @@ import re
 GENDER_MALE = 8507
 GENDER_FEMALE = 8532
 
+# Values that say nothing is recorded. Auto-fill sets them to concept 0 (not
+# mapped) without searching, and column auto-match leaves them out of a
+# column's concept coverage altogether.
+NO_VALUES = frozenset({
+    "", "unknown", "unk", "not known", "don't know", "dont know", "n/a", "na", "missing",
+    "not applicable", "null", "nan", "none", "unspecified", "not specified", "not available",
+    "other", "others", "-", "?",
+})
+
+
+def is_no_value(value: str) -> bool:
+    return str(value).strip().lower() in NO_VALUES
+
 # Lower-cased, punctuation-stripped source value → standard gender concept.
 # Deliberately no numeric codes: "1"/"2" mean male/female in one dataset and
 # the reverse in the next, so guessing would silently swap patients' sex.

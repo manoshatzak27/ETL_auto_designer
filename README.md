@@ -483,8 +483,8 @@ are never sent, so re-running it is safe. The pipeline lives in
 
 ```
 empty fields ──► profile the file ──► name score × value check ──► one column per field
-                                                                        │
-          date format ◄── AI fallback (fields still unsure) ◄───────────┘
+                                      (concept fields: do the values map?)      │
+  date format ◄── value scan (concept fields still open) ◄── AI fallback ◄──────┘
 ```
 
 **1. What the step sends.** The empty fields; the file(s) to look in (the active
@@ -509,7 +509,10 @@ to the care site. Provider gender and year of birth need a provider word
 
 **4. Name score.** Names are split into words — `PatBirthDt`, `pat_birth_dt` and
 `pat-birth dt` all become *pat, birth, dt* — and filler words (*of*, *the*) dropped.
-The best score over the field's names counts:
+The best score over the field's names counts; a few fields also have *related*
+names, scored 10% less, that bring a column in for the values to settle (step
+5) — race takes `ethnicity`, which datasets often use for White / Black / Asian,
+and ethnicity takes `nationality`:
 
 | case | score |
 |---|---|
@@ -522,7 +525,9 @@ The best score over the field's names counts:
 
 An abbreviation counts only as a real shortening of 4+ letters (`addr` →
 `address`, not `doc` → `doctor`). With a data dictionary loaded (Concepts step →
-Descriptions), a description containing all the words of a name scores 0.85. For
+Descriptions), a description containing a name as a phrase scores 0.85 — *"What
+type of treatment did you visit the hospital for?"* holds *visit* and *type* but
+not *visit type*, so it is not the visit concept column. For
 Visit, a name combined with the visit's label scores in full and the bare names
 10% less, so the *Follow-up* visit gets `followup_date`, not `baseline_date`.
 Columns scoring under 0.35 are dropped.
@@ -534,6 +539,25 @@ plainly are not that kind is multiplied by 0.3 — below the suggestion threshol
 so `admission_type` never becomes an admission date. Values confirm or weaken a
 name; they never stand in for one.
 
+*Concept fields* — the ones whose values **Auto-fill concept IDs** maps
+afterwards: gender (person and provider), race, ethnicity, country, care site
+place of service, provider specialty, and the visit's concept, admitted from and
+discharged to — are checked by doing that mapping instead. The three best name
+matches of each have their 30 most frequent values sent to the concept matcher
+in the field's domain and vocabulary, and the share of rows filled in outright
+(a *review* counts half) is the value score. *Unknown*, *Other*, *N/A*, empty
+and the rest of the "none" values (below) are set to 0 in any column, so they
+count on neither side of that share; a column holding nothing else has no
+coverage at all — it is judged by its kind, never read as 0 of 0 = 100%.
+Under 10% over 3+ values is a veto; 80%+ with 3+ values filled in multiplies the
+score by 1.1. Two values that map to nothing say too little and fall back to the
+kind check. On the harmonized prospective dataset this is what puts race on
+`DEMOGR_ETHNICITY_HARMONIZED` (White, Black, Asian: 100%) and ethnicity on
+`DEMOGR_NATIONALITY` (PRT, GR, NL…: 100%) rather than `DEMOGR_ETHNICITY` (20%).
+Fields without a concept list (the visit identifier — *T0, T3…* — dates, ids)
+are never checked this way. Answers are cached per project, domain and value
+until the backend restarts.
+
 **6. Assignment.** All field–column pairs are taken best score first, so each
 column fills at most one field. **≥ 0.75** is filled in, **0.45–0.75** suggested,
 lower not offered; up to three alternatives are kept per field.
@@ -542,8 +566,20 @@ lower not offered; up to three alternatives are kept per field.
 claimed (up to 5 sample values each, and their descriptions), to the OpenAI model
 in `OPENAI_MODEL`. It must answer with column names from that list: an invented,
 excluded or doubly-used column is discarded. A pick is filled in only at
-confidence ≥ 0.7 *and* if its values pass step 5; otherwise it is a suggestion
-marked *AI*. If the call fails, the name-and-value results stand.
+confidence ≥ 0.7 *and* if its values pass step 5 (for a concept field, its
+values must map too); otherwise it is a suggestion marked *AI*. If the call
+fails, the name-and-value results stand.
+
+**Value scan.** A concept field still not filled in has every unclaimed column
+that looks like a short list of words (≤ 50 distinct values, mostly letters, not
+dates) checked as in step 5, whatever its name. A column is offered only when 3+
+of its values are filled in outright and they cover 60%+ of its rows; between
+two, the one covering more rows wins. It is only ever a suggestion, marked *by
+values*, and it gives way to a name-matched suggestion that its values also back.
+When nothing passes, the field stays empty. The first scan of a file takes about
+a minute per domain (~300 columns); after that the cache answers at once. If the
+concept matcher can't be reached, matching goes on without step 5's concept
+check and the scan, and the summary says so.
 
 The badge beside the button says whether the fallback can be used —
 **ready · gpt-4o** (key and model verified with one cheap request, cached five
@@ -602,7 +638,10 @@ Gender concept), so every request is confined to it.
   and Visit steps) sends every *unmapped* value of the step's concept columns
   through `POST /projects/{id}/suggest-value-concepts`. Confident matches are filled in;
   weaker ones appear under the value as *Suggested: … Use*; the rest stay empty.
-  Values already mapped are never touched, so re-running it is safe.
+  "None" values (*Unknown*, *Other*, *N/A*…) are set to 0 (not mapped) without
+  a search. Values already mapped are never touched, so re-running it is safe.
+  Column auto-match asks the same endpoint, to check that a column's values map
+  before it picks the column for a concept field.
 - **Search** (🔍 beside every value, and beside the *Set default* inputs, in all
   seven table steps — Observation period and Death too) calls
   `GET /projects/{id}/search-concepts`, restricted to the field's domain. The
@@ -658,8 +697,11 @@ Two kinds of value are resolved before the matcher is asked:
   non-UCUM spellings are translated first (mcg → ug, IU → [iU], cc → mL,
   tablets → {tbl}, puffs → {actuat}). A value with an amount in it ("2,5mg") is
   only offered; a number or a date is skipped.
-- **"None" values.** In unit and route columns, unknown / not applicable / other /
-  n/a / none / missing are set to 0 (not mapped).
+- **"None" values.** In every domain, unknown / not applicable / other / n/a /
+  none / null / missing / unspecified (and `-`, `?`) are set to 0 (not mapped)
+  without asking the matcher — otherwise "Other" in a race column lands on
+  *Native Hawaiian or Other Pacific Islander*. The list is `NO_VALUES` in
+  [`concept_normalizer.py`](backend/app/services/concept_normalizer.py).
 
 Routes otherwise go to the matcher after the normalizer's synonyms (PO, IV, IM,
 SC, PR, SL, eye drops, patch, "Sub cut injection", "injection (unspecified)" →
@@ -869,9 +911,9 @@ Per-project `cdm_<id>` schemas are unaffected.
 | GET    | `/api/projects/concept-matcher/health`            | Is the bulk concept matcher up, and what has it loaded    |
 | POST   | `/api/projects/{id}/match-concepts`               | Map a column list onto standard OMOP concepts in one pass |
 | POST   | `/api/projects/{id}/match-values`                 | Map a column's distinct values, two passes, one domain per column |
-| POST   | `/api/projects/{id}/suggest-value-concepts`       | Suggest a concept per value within a given domain (`{domain, values}`); race rolled up to the five top-level categories |
+| POST   | `/api/projects/{id}/suggest-value-concepts`       | Suggest a concept per value within a given domain (`{domain, values}`); race rolled up to the five top-level categories; "none" values (*Unknown*, *Other*…) set to 0 |
 | GET    | `/api/projects/{id}/search-concepts`              | Free-text search within one domain (`?query=&domain=`), grouped under direct parents |
-| POST   | `/api/projects/{id}/suggest-column-mapping`       | Source column per step field (`{table, filenames, fields, exclude_columns, use_llm}`), with detected date formats |
+| POST   | `/api/projects/{id}/suggest-column-mapping`       | Source column per step field (`{table, filenames, fields, exclude_columns, use_llm}`), with detected date formats; concept fields checked by how many of their values map (`value_check`) |
 | GET    | `/api/projects/column-matcher/health`             | Can the AI fallback be used: `ready` / `not_configured` / `error` (`?refresh=1` re-checks) |
 | GET/PUT| `/api/projects/{id}/column-descriptions`          | Read / replace the project's data dictionary              |
 | POST   | `/api/projects/{id}/column-descriptions/upload`   | Merge in a CSV/Excel dictionary (`?replace=true` to overwrite) |

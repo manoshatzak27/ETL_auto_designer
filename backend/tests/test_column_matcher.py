@@ -113,6 +113,150 @@ def test_description_can_name_a_cryptic_column():
     assert m["year_of_birth"]["column"] == "v07"
 
 
+def test_description_must_name_the_field_as_a_phrase():
+    # "visit" and "type" are both in it, but it is not about the visit type.
+    src = source({"fp011SQ002_SQ001": ["Rheumatologist", "Wondcontrole", "CT-Scan"] * (N // 3)})
+    desc = {"fp011SQ002_SQ001": "11. What type of treatment did you visit the hospital for during the day?"}
+    m = heuristic_match(fields("visit_occurrence", ["visit_concept_source_col"]), src, set(), desc)
+    assert m["visit_concept_source_col"]["column"] is None
+
+
+# ── Concept coverage ─────────────────────────────────────────────────────────
+
+# What the concept matcher fills in outright, per domain.
+MAPPED = {
+    "Race": {"White", "Black", "Asian"},
+    "Ethnicity": {"PRT", "GR", "NL", "GB", "BRA", "Greek", "The Netherlands", "German", "Irish"},
+    "Visit": {"Inpatient", "Outpatient", "Emergency Room"},
+}
+
+
+def fake_concepts(mapped=MAPPED, calls=None):
+    async def statuses(target, values):
+        if calls is not None:
+            calls.append((target.domain, list(values)))
+        return {v: "auto_accept" if v in mapped.get(target.domain, set()) else "unmapped" for v in values}
+    return statuses
+
+
+def match_values(table, src, keys, value_concepts, descriptions=None, exclude=frozenset()):
+    return asyncio.run(match_columns(
+        table, fields(table, keys), src, set(exclude), descriptions or {}, False, value_concepts,
+    ))
+
+
+def harmonized_prospective():
+    """The demographics of the dataset that prompted this check."""
+    return source({
+        "DEMOGR_ETHNICITY": ["White European", "Greek", "The Netherlands", "Unknown", "Other", "Black",
+                             "White non-European", "Asian or Asian British: Indian, Pakistani"] * 10,
+        "DEMOGR_ETHNICITY_HARMONIZED": ["White", "White", "Other", "Asian", "Black", "White", "White", "Black"] * 10,
+        "DEMOGR_NATIONALITY": ["PRT", "GR", "NL", "Other", "GB", "BRA", "GR", "NL"] * 10,
+        "DEMOGR_NATIONALITY_OTHER": ["", "", "", "German", "", "", "", ""] * 10,
+    })
+
+
+def test_no_values_count_on_neither_side_of_coverage():
+    statuses = {"White": "auto_accept", "Mixed": "unmapped", "Unknown": "auto_accept", "Other": "auto_accept"}
+    cov = cm.coverage_of([("White", 30), ("Mixed", 10), ("Unknown", 50), ("Other", 10), ("N/A", 5)], statuses)
+    assert (cov.rate, cov.matched, cov.checked, cov.rows) == (0.75, 1, 2, 40)
+
+
+def test_a_column_of_only_no_values_has_no_coverage():
+    cov = cm.coverage_of([("Unknown", 50), ("Other", 10), ("null", 3)], {"Unknown": "auto_accept"})
+    assert cov.rate == 0.0 and cov.rows == 0
+    assert not cov.telling and not cov.veto and not cov.strong and not cov.scan_worthy
+
+
+def test_column_of_only_no_values_neither_helps_nor_hurts():
+    src = source({"race": ["Unknown", "Other", "N/A"] * (N // 3)})
+    m = match_values("person", src, ["race_concept_id"], fake_concepts())
+    without = asyncio.run(match_columns("person", fields("person", ["race_concept_id"]), src, set(), {}, False))
+    assert m["matches"]["race_concept_id"]["score"] == without["matches"]["race_concept_id"]["score"]
+    assert "values map" not in m["matches"]["race_concept_id"]["reason"]
+
+
+def test_values_settle_race_and_ethnicity():
+    result = match_values("person", harmonized_prospective(),
+                          ["race_concept_id", "ethnicity_concept_id"], fake_concepts())
+    assert picks(result["matches"]) == {
+        "race_concept_id": "DEMOGR_ETHNICITY_HARMONIZED",
+        "ethnicity_concept_id": "DEMOGR_NATIONALITY",
+    }
+    assert "map to Ethnicity concepts" in result["matches"]["ethnicity_concept_id"]["reason"]
+    assert result["value_check"]["used"] is True
+
+
+def test_without_value_check_names_decide():
+    m = asyncio.run(match_columns("person", fields("person", ["ethnicity_concept_id"]),
+                                  harmonized_prospective(), set(), {}, False))["matches"]
+    assert m["ethnicity_concept_id"]["column"] == "DEMOGR_ETHNICITY"
+
+
+def test_values_that_map_to_nothing_are_only_suggested():
+    src = source({"visit_type": ["Rheumatologist", "Wondcontrole", "CT-Scan", "Hysterectomy"] * (N // 4)})
+    m = match_values("visit_occurrence", src, ["visit_concept_source_col"], fake_concepts())
+    assert m["matches"]["visit_concept_source_col"]["status"] != "auto"
+
+
+def test_scan_finds_a_cryptic_column_and_only_suggests_it():
+    src = source({
+        "Q7": ["Inpatient", "Outpatient", "Emergency Room", "Unknown"] * (N // 4),
+        "Q8": ["mild", "moderate", "severe", "none"] * (N // 4),
+    })
+    m = match_values("visit_occurrence", src, ["visit_concept_source_col"], fake_concepts())
+    vc = m["matches"]["visit_concept_source_col"]
+    assert (vc["column"], vc["status"], vc["source"]) == ("Q7", "suggest", "values")
+    assert m["value_check"]["scanned_columns"] == 2
+
+
+def test_scan_finds_nothing_leaves_the_field_empty():
+    src = source({"Q8": ["mild", "moderate", "severe"] * (N // 3)})
+    m = match_values("visit_occurrence", src, ["visit_concept_source_col"], fake_concepts())
+    assert m["matches"]["visit_concept_source_col"]["column"] is None
+
+
+def test_scan_ignores_columns_with_few_mapped_values():
+    # One value that happens to map ("mg") says nothing about the column.
+    src = source({"PAT_MED_UNIT_1": ["mg", "tablet", "mg", "puff"] * (N // 4)})
+    m = match_values("person", src, ["ethnicity_concept_id"], fake_concepts({"Ethnicity": {"mg"}}))
+    assert m["matches"]["ethnicity_concept_id"]["column"] is None
+
+
+def test_scan_prefers_the_column_covering_more_rows():
+    src = source({
+        "c1": ["PRT", "GR", "NL", "GB"] * (N // 4),
+        "c2": ["German", "Irish", "Greek", ""] * (N // 4),
+    })
+    src["f.csv"].profiles["c2"].counts = {"German": 1, "Irish": 1, "Greek": 1}
+    m = match_values("person", src, ["ethnicity_concept_id"], fake_concepts())
+    e = m["matches"]["ethnicity_concept_id"]
+    assert e["column"] == "c1" and e["alternatives"] == []
+
+
+def test_columns_matched_with_confidence_are_not_scanned():
+    calls = []
+    src = source({"gender": ["M", "F"] * (N // 2), "Q1": ["Inpatient", "Outpatient", "Emergency Room"] * (N // 3)})
+    match_values("person", src, ["gender_concept_id"], fake_concepts(calls=calls))
+    # The gender column is checked; nothing is left open to scan for.
+    assert [d for d, _ in calls] == ["Gender"]
+
+
+def test_value_check_failure_keeps_name_matching():
+    async def down(target, values):
+        raise RuntimeError("concept matcher down")
+    m = match_values("person", harmonized_prospective(), ["ethnicity_concept_id"], down)
+    assert m["matches"]["ethnicity_concept_id"]["column"] == "DEMOGR_ETHNICITY"
+    assert m["value_check"] == {"used": False, "error": "concept matcher down", "scanned_columns": 0}
+
+
+def test_non_concept_fields_are_not_value_checked():
+    calls = []
+    src = source({"Visit Occurrence": ["T0", "T3", "T6"] * (N // 3)})
+    m = match_values("visit_occurrence", src, ["visit_source_col"], fake_concepts(calls=calls))
+    assert calls == [] and m["matches"]["visit_source_col"]["column"] == "Visit Occurrence"
+
+
 class FakeCompletions:
     def __init__(self, answer):
         self.answer = answer

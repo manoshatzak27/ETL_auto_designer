@@ -10,18 +10,48 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.concept_mapping import ConceptPreference, suggest_concepts_for_values
 from app.database import get_db
 from app.models.project import Project
 from app.services.column_matcher import (
     FIELD_SPECS,
+    ConceptTarget,
     FieldRequest,
     SourceColumns,
+    ValueConcepts,
     llm_health,
     match_columns,
     profile_file,
 )
 
 router = APIRouter(prefix="/projects", tags=["column-matching"])
+
+# (project, target, value) → the concept matcher's status for that value. The
+# value scan sends every short-list column of a file — a minute or so per
+# domain the first time — so a value is asked about once per process.
+_VALUE_STATUS_LIMIT = 200_000
+_value_status: dict[tuple[str, ConceptTarget, str], str] = {}
+
+
+def _value_concepts(project_id: str) -> ValueConcepts:
+    async def statuses(target: ConceptTarget, values: list[str]) -> dict[str, str]:
+        todo = [v for v in values if (project_id, target, v) not in _value_status]
+        if todo:
+            prefer = ConceptPreference(
+                vocabularies=list(target.vocabularies) or None,
+                concept_classes=list(target.concept_classes) or None,
+            ) if target.vocabularies or target.concept_classes else None
+            results = await suggest_concepts_for_values(project_id, target.domain, todo, prefer)
+            if len(_value_status) + len(results) > _VALUE_STATUS_LIMIT:
+                _value_status.clear()
+            for v, entry in results.items():
+                # No concept, or concept 0 ("Unknown" → not mapped), is no
+                # evidence that the column holds the field's concepts.
+                status = entry["status"] if entry.get("concept_id") else "unmapped"
+                _value_status[(project_id, target, v)] = status
+        return {v: _value_status.get((project_id, target, v), "unmapped") for v in values}
+
+    return statuses
 
 
 @router.get("/column-matcher/health")
@@ -109,4 +139,5 @@ async def suggest_column_mapping(
         set(body.exclude_columns),
         dict(project.column_descriptions or {}),
         body.use_llm,
+        _value_concepts(project_id),
     )
