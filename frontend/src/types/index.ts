@@ -356,4 +356,7 @@ export interface ChatMessage {
   content: string
   table?: string
   code_updated?: boolean
+  /** What became of the script the AI returned in this message. Older messages
+   *  have only code_updated: their code was applied as soon as it arrived. */
+  code_status?: 'proposed' | 'applied' | 'discarded' | 'superseded'
 }

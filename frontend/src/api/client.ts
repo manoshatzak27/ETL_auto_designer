@@ -483,6 +483,14 @@ export const getChatHistory = (projectId: string) =>
 export const sendChatMessage = (projectId: string, message: string, table: string) =>
   api.post(`/projects/${projectId}/chat`, { message, table }).then(r => r.data)
 
+/** Replace the table's script with the AI's pending proposal; returns the updated project. */
+export const applyChatProposal = (projectId: string, table: string) =>
+  api.post(`/projects/${projectId}/chat/proposal/apply`, { table }).then(r => r.data)
+
+/** Drop the table's pending proposal; returns the updated chat history. */
+export const discardChatProposal = (projectId: string, table: string) =>
+  api.post(`/projects/${projectId}/chat/proposal/discard`, { table }).then(r => r.data)
+
 export const clearChatHistory = (projectId: string) =>
   api.delete(`/projects/${projectId}/chat`).then(r => r.data)
 

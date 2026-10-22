@@ -3,11 +3,11 @@
  *
  * Opens as a fixed panel anchored to the bottom-right of the screen.
  * The user selects which table to discuss; the AI can answer questions
- * or return an updated version of the script. Code updates are held as
- * pending and only applied after explicit user confirmation.
+ * or return an updated version of the script. That version is only a proposal,
+ * kept in the chat history, until the user applies or discards it.
  */
 import { useState, useEffect, useRef } from 'react'
-import { getChatHistory, sendChatMessage, clearChatHistory } from '../api/client'
+import { getChatHistory, sendChatMessage, clearChatHistory, applyChatProposal, discardChatProposal } from '../api/client'
 import type { Project, ChatMessage } from '../types'
 import {
   MessageSquare, X, Send, RefreshCw, Trash2,
@@ -55,7 +55,7 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   const [sending, setSending] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [error, setError] = useState('')
-  const [pendingScripts, setPendingScripts] = useState<Record<string, string> | null>(null)
+  const [resolving, setResolving] = useState(false)
   const [nearPageBottom, setNearPageBottom] = useState(false)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -97,9 +97,6 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
     if (open) setTimeout(() => inputRef.current?.focus(), 120)
   }, [open])
 
-  // Discard pending code update when the user switches tables
-  useEffect(() => { setPendingScripts(null) }, [table])
-
   // If the selected table has no script (e.g. none were generated yet
   // when the panel opened), fall back to the first generated one as it becomes available
   useEffect(() => {
@@ -107,18 +104,31 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
     if (generatedTables.length > 0) setTable(generatedTables[0].key)
   }, [table, generatedTables, project.generated_scripts])
 
-  const handleApplyCode = () => {
-    if (!pendingScripts) return
-    onUpdate({ ...project, generated_scripts: pendingScripts })
-    setPendingScripts(null)
-  }
-
-  const handleDiscardCode = () => setPendingScripts(null)
-
   // Filter messages for currently selected table
   const visibleMessages = messages.filter(
     m => !m.table || m.table === table,
   )
+
+  // The AI's script waits in the history until it is applied or discarded, so
+  // it survives a reload or a switch to another table and back.
+  const hasProposal = visibleMessages.some(m => m.code_status === 'proposed')
+
+  const resolveProposal = async (apply: boolean) => {
+    setResolving(true)
+    setError('')
+    try {
+      if (apply) {
+        onUpdate(await applyChatProposal(project.id, table))
+        setMessages((await getChatHistory(project.id)).history || [])
+      } else {
+        setMessages((await discardChatProposal(project.id, table)).history || [])
+      }
+    } catch (e: unknown) {
+      setError(readDetail(e) || `Failed to ${apply ? 'apply' : 'discard'} the change.`)
+    } finally {
+      setResolving(false)
+    }
+  }
 
   const handleSend = async () => {
     const text = input.trim()
@@ -132,21 +142,9 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
 
     try {
       const data = await sendChatMessage(project.id, text, table)
-
-      const aiMsg: ChatMessage = {
-        role: 'assistant',
-        content: data.response,
-        table,
-        code_updated: data.code_updated,
-      }
-      setMessages(prev => [...prev, aiMsg])
-
-      if (data.code_updated && data.generated_scripts) {
-        setPendingScripts(data.generated_scripts)
-      }
+      setMessages(data.history || [])
     } catch (e: unknown) {
-      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
-      setError(typeof detail === 'string' && detail ? detail : 'Failed to send message. Please try again.')
+      setError(readDetail(e) || 'Failed to send message. Please try again.')
       setMessages(prev => prev.slice(0, -1))
     } finally {
       setSending(false)
@@ -294,16 +292,20 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
           </div>
 
           {/* Pending code confirmation banner */}
-          {pendingScripts && (
+          {hasProposal && (
             <div className="mx-3 mb-2 rounded-xl border border-amber-400/60 bg-amber-50 dark:bg-amber-950/30 px-3.5 py-3 flex-shrink-0">
-              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-2 flex items-center gap-1.5">
+              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
                 <Code2 className="w-3.5 h-3.5" />
-                AI generated an updated {table}.py — apply it?
+                AI proposed a change to {table}.py — apply it?
+              </p>
+              <p className="text-xs text-amber-800/80 dark:text-amber-300/80 mt-0.5 mb-2">
+                The script stays as it is until you apply the change.
               </p>
               <div className="flex gap-2">
                 <Button
                   size="sm"
-                  onClick={handleApplyCode}
+                  onClick={() => resolveProposal(true)}
+                  disabled={resolving}
                   className="h-7 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
                 >
                   <Check className="w-3 h-3" />
@@ -312,7 +314,8 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
                 <Button
                   size="sm"
                   variant="ghost"
-                  onClick={handleDiscardCode}
+                  onClick={() => resolveProposal(false)}
+                  disabled={resolving}
                   className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-destructive"
                 >
                   <Ban className="w-3 h-3" />
@@ -357,8 +360,22 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   )
 }
 
+const CODE_STATUS_LABEL: Record<NonNullable<ChatMessage['code_status']>, string> = {
+  proposed: 'Proposed change — waiting for you to apply or discard it.',
+  applied: 'Change applied to the script.',
+  discarded: 'Change discarded.',
+  superseded: 'Change replaced by a newer proposal.',
+}
+
+function readDetail(e: unknown): string {
+  const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+  return typeof detail === 'string' ? detail : ''
+}
+
 function MessageBubble({ msg }: { msg: ChatMessage }) {
   const isUser = msg.role === 'user'
+  // Messages from before proposals existed: their code was applied on arrival.
+  const codeStatus = msg.code_status ?? (msg.code_updated ? 'applied' : undefined)
 
   return (
     <div className={cn('flex gap-2', isUser ? 'flex-row-reverse' : 'flex-row')}>
@@ -380,10 +397,15 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
           ? 'bg-primary text-primary-foreground rounded-tr-sm'
           : 'bg-muted text-foreground rounded-tl-sm',
       )}>
-        {msg.code_updated && (
-          <div className="flex items-center gap-1.5 mb-2 text-xs text-green-700 bg-green-100 rounded-lg px-2.5 py-1.5 font-medium">
+        {codeStatus && (
+          <div className={cn(
+            'flex items-center gap-1.5 mb-2 text-xs rounded-lg px-2.5 py-1.5 font-medium',
+            codeStatus === 'applied' && 'text-green-700 bg-green-100',
+            codeStatus === 'proposed' && 'text-amber-800 bg-amber-100',
+            (codeStatus === 'discarded' || codeStatus === 'superseded') && 'text-muted-foreground bg-background/60',
+          )}>
             <Code2 className="w-3 h-3" />
-            Script updated — check the code preview above.
+            {CODE_STATUS_LABEL[codeStatus]}
           </div>
         )}
         <FormattedMessage content={msg.content} isUser={isUser} />
