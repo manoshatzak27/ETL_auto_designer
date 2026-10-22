@@ -208,12 +208,19 @@ export default function SourceStep({ project, onUpdate }: Props) {
           onDragLeave={() => setDragging(false)}
           onDrop={onDrop}
           className={clsx(
-            'cursor-pointer rounded-xl border-2 border-dashed p-10 text-center transition-colors',
+            'cursor-pointer rounded-xl border-2 border-dashed p-10 text-center transition-colors focus-visible:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
             dragging
               ? 'border-primary bg-secondary'
               : 'border-border bg-card hover:border-primary/50',
           )}
+          role="button"
+          tabIndex={0}
           onClick={() => document.getElementById('file-input')?.click()}
+          onKeyDown={e => {
+            if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+            e.preventDefault()
+            document.getElementById('file-input')?.click()
+          }}
         >
           <UploadCloud className="mx-auto mb-3 size-10 text-muted-foreground" />
           <p className="font-medium text-foreground">

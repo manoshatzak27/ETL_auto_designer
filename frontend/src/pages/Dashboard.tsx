@@ -223,9 +223,17 @@ export default function Dashboard() {
               return (
               <Card
                 key={p.id}
+                role="link"
+                tabIndex={0}
                 onClick={() => navigate(`/project/${p.id}/step/${progress.resume.slug}`)}
+                onKeyDown={e => {
+                  // Only the card itself: Enter on one of its buttons does that button's action.
+                  if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                  e.preventDefault()
+                  navigate(`/project/${p.id}/step/${progress.resume.slug}`)
+                }}
                 title={`Open at ${progress.resume.label}`}
-                className="group flex cursor-pointer items-center gap-4 px-5 py-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg"
+                className="group flex cursor-pointer items-center gap-4 px-5 py-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg focus-visible:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-lg bg-secondary">
                   <Database className="size-5 text-primary" />
@@ -278,7 +286,7 @@ export default function Dashboard() {
                       e.stopPropagation()
                       openRename(p)
                     }}
-                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                   >
                     <Pencil />
                   </Button>
@@ -291,7 +299,7 @@ export default function Dashboard() {
                       e.stopPropagation()
                       handleCopy(p)
                     }}
-                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100"
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                   >
                     {copyingId === p.id ? <Loader2 className="animate-spin" /> : <Copy />}
                   </Button>
@@ -303,7 +311,7 @@ export default function Dashboard() {
                       e.stopPropagation()
                       setDeleteTarget(p)
                     }}
-                    className="text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100"
+                    className="text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
                   >
                     <Trash2 />
                   </Button>
