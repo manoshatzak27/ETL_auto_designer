@@ -144,9 +144,14 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
     checkScroll()
     window.addEventListener('scroll', checkScroll, { passive: true })
     window.addEventListener('resize', checkScroll)
+    // The page grows as a step loads its content, without any scroll or
+    // resize event; without this the button stays lifted until the user scrolls.
+    const observer = new ResizeObserver(checkScroll)
+    observer.observe(document.body)
     return () => {
       window.removeEventListener('scroll', checkScroll)
       window.removeEventListener('resize', checkScroll)
+      observer.disconnect()
     }
   }, [])
 
