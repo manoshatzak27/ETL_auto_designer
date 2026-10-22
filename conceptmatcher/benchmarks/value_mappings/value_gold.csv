@@ -1,0 +1,733 @@
+# Value-level gold set: every distinct value of the 101 columns a person mapped
+# value by value in the harmonized prospective PsA study, in source order (the
+# order decides domain-vote ties). user_concept_id 0 = deliberately not mapped;
+# blank = the person left that value undecided (not graded). Descriptions are
+# the study's data dictionary. Graded by compare_value_mappings.py.
+variable,description,value,user_concept_id,user_concept_name
+PAT_SMOKE_H,Do you smoke?,Never smoked,35821355,Never smoked
+PAT_SMOKE_H,Do you smoke?,Smoker,35823658,Smokes on most or all days
+PAT_SMOKE_H,Do you smoke?,No,35818763,Ex-smoker
+PAT_SMOKE_H,Do you smoke?,Ex-smoker,35818763,Ex-smoker
+PAT_SMOKE_H,Do you smoke?,Yes,40766945,Current smoker
+PAT_SMOKE_H,Do you smoke?,Unknown,0,Not mapped
+PAT_SMOKE_PAST_H,Have you smoke in the past?,Yes,35818763,Ex-smoker
+PAT_SMOKE_PAST_H,Have you smoke in the past?,No,0,Not mapped
+PAT_SMOKE_OTHER_PROD_H,"Do you smoke other products (e.g., e-cigarettes, vape, water pipe) than cigarettes or cigars/pipes?",No,0,Not mapped
+PAT_SMOKE_OTHER_PROD_H,"Do you smoke other products (e.g., e-cigarettes, vape, water pipe) than cigarettes or cigars/pipes?",Yes,2000000072,Patient smokes other products than cigarettes or cigars/pipes.
+PAT_SMOKE_OTHER_PROD_PAST_H,"Did you smoke other products (e.g., e-cigarette, vape, water pipe) than cigarettes or cigars/pipes?",No,0,Not mapped
+PAT_SMOKE_OTHER_PROD_PAST_H,"Did you smoke other products (e.g., e-cigarette, vape, water pipe) than cigarettes or cigars/pipes?",Yes,2000000073,Patient smoked other products than cigarettes or cigars/pipes in the past.
+PAT_JOB,Do you have a paid job?,No,0,Not mapped
+PAT_JOB,Do you have a paid job?,Yes,42690180,Does paid work
+PAT_PROFESSION,What is your profession?,private servant,,
+PAT_PROFESSION,What is your profession?,Teaching Assistant,,
+PAT_PROFESSION,What is your profession?,Podiatrist,,
+PAT_PROFESSION,What is your profession?,Risk analyst,,
+PAT_PROFESSION,What is your profession?,Truck driver,4337806,Truck and van driver (long-distance transport)
+PAT_PROFESSION,What is your profession?,Pharmacy dispensing assistant,,
+PAT_PROFESSION,What is your profession?,Accountant,,
+PAT_PROFESSION,What is your profession?,police officer,4011270,Police/prison/fire officers
+PAT_PROFESSION,What is your profession?,Property Management,,
+PAT_PROFESSION,What is your profession?,Education Programmes Lead,,
+PAT_PROFESSION,What is your profession?,Nurse,,
+PAT_PROFESSION,What is your profession?,Civil Servant,4342009,Civil servant
+PAT_PROFESSION,What is your profession?,shop owner,,
+PAT_PROFESSION,What is your profession?,car engineer,4148859,Automotive engineer
+PAT_PROFESSION,What is your profession?,Technical project manager,,
+PAT_PROFESSION,What is your profession?,economist,,
+PAT_PROFESSION,What is your profession?,worker,,
+PAT_PROFESSION,What is your profession?,Continuous improvement specialist,,
+PAT_PROFESSION,What is your profession?,Paediatric Research Nurse,,
+PAT_PROFESSION,What is your profession?,saleswoman,4024869,Sales worker
+PAT_PROFESSION,What is your profession?,Nursery Manager,,
+PAT_PROFESSION,What is your profession?,Information Analyst,,
+PAT_PROFESSION,What is your profession?,Residential childcare officer,,
+PAT_PROFESSION,What is your profession?,Partner Contact Lead Agent,,
+PAT_PROFESSION,What is your profession?,Area Manager,,
+PAT_PROFESSION,What is your profession?,Project Manager,,
+PAT_PROFESSION,What is your profession?,Optician,4024853,Optometrist AND/OR optician
+PAT_PROFESSION,What is your profession?,private employee,,
+PAT_PROFESSION,What is your profession?,teacher,4023470,Teacher
+PAT_PROFESSION,What is your profession?,engineer,4023457,Engineer
+PAT_PROFESSION,What is your profession?,sugar artist,,
+PAT_PROFESSION,What is your profession?,constructor,,
+PAT_PROFESSION,What is your profession?,salesman,4024869,Sales worker
+PAT_PROFESSION,What is your profession?,civil engineer,4023338,Civil engineer
+PAT_PROFESSION,What is your profession?,teacher- owner of restaurant,,
+PAT_PROFESSION,What is your profession?,Civil engineer,4023338,Civil engineer
+PAT_PROFESSION,What is your profession?,cosmetics eshop owner,,
+PAT_PROFESSION,What is your profession?,Evictions assessor,,
+PAT_PROFESSION,What is your profession?,Personal assistant,,
+PAT_PROFESSION,What is your profession?,post doctoral researcher,,
+PAT_PROFESSION,What is your profession?,civil servant,,
+PAT_PROFESSION,What is your profession?,Procurement manager,,
+PAT_PROFESSION,What is your profession?,Transport operative,,
+PAT_PROFESSION,What is your profession?,businessman,,
+PAT_PROFESSION,What is your profession?,public survant,,
+PAT_PROFESSION,What is your profession?,nurse,,
+PAT_PROFESSION,What is your profession?,archaeological surveyor,,
+PAT_PROFESSION,What is your profession?,Secretery,4202007,Secretary
+PAT_PROFESSION,What is your profession?,IT specialist,,
+PAT_PROFESSION,What is your profession?,PA to Headteacher (Admin),,
+PAT_PROFESSION,What is your profession?,Chief Executive,,
+PAT_PROFESSION,What is your profession?,admin support,,
+PAT_PROFESSION,What is your profession?,IT Consultant,,
+PAT_PROFESSION,What is your profession?,personal trainer-student,,
+PAT_PROFESSION,What is your profession?,tailor,,
+PAT_PROFESSION,What is your profession?,pharmacist,,
+PAT_PROFESSION,What is your profession?,ambulance driver,,
+PAT_PROFESSION,What is your profession?,free lancer,,
+PAT_PROFESSION,What is your profession?,public servant,,
+PAT_PROFESSION,What is your profession?,software developer,37170387,Software engineer
+PAT_PROFESSION,What is your profession?,university profesor,,
+PAT_PROFESSION,What is your profession?,airplane mechanic,,
+PAT_PROFESSION,What is your profession?,interpreneur,,
+PAT_PROFESSION,What is your profession?,software engineer,37170387,Software engineer
+PAT_PROFESSION,What is your profession?,accountant,,
+PAT_PROFESSION,What is your profession?,Human Resources,,
+PAT_PROFESSION,What is your profession?,Business analyst,,
+PAT_PROFESSION,What is your profession?,Maintenance,,
+PAT_PROFESSION,What is your profession?,Support worker in higher Education/ life celebrant,,
+PAT_PROFESSION,What is your profession?,SEN Teacher,,
+PAT_PROFESSION,What is your profession?,Removals,,
+PAT_PROFESSION,What is your profession?,Research Biologist,,
+PAT_PROFESSION,What is your profession?,Administrator,,
+PAT_PROFESSION,What is your profession?,Clinical Support Worker,,
+PAT_PROFESSION,What is your profession?,private sector,,
+PAT_PROFESSION,What is your profession?,fundraiser,,
+PAT_PROFESSION,What is your profession?,Product Manager,,
+PAT_PROFESSION,What is your profession?,data analyst,,
+PAT_PROFESSION,What is your profession?,Retail assistant,,
+PAT_PROFESSION,What is your profession?,Quality control inspector,,
+PAT_PROFESSION,What is your profession?,Site supervisor,,
+PAT_PROFESSION,What is your profession?,Teacher,4023470,Teacher
+PAT_PROFESSION,What is your profession?,GP,,
+PAT_PROFESSION,What is your profession?,Admin,,
+PAT_PROFESSION,What is your profession?,university employee,,
+PAT_PROFESSION,What is your profession?,theatrologist,,
+PAT_PROFESSION,What is your profession?,Landscape gardener,,
+PAT_PROFESSION,What is your profession?,Computer programmer,4195753,Computer programmer
+PAT_PROFESSION,What is your profession?,infrastructure engineer- civil service,,
+PAT_PROFESSION,What is your profession?,assistant teacher support,,
+PAT_PROFESSION,What is your profession?,Reasearcher,35625940,Researcher
+PAT_PROFESSION,What is your profession?,Logistics Driver,,
+PAT_PROFESSION,What is your profession?,Optometrist,4024853,Optometrist AND/OR optician
+PAT_PROFESSION,What is your profession?,Beauty Therapist,,
+PAT_PROFESSION,What is your profession?,Freelance Fundraiser,,
+PAT_PROFESSION,What is your profession?,doctor,,
+PAT_SHIFTS,Do you work in shifts?,No,0,Not mapped
+PAT_SHIFTS,Do you work in shifts?,Yes,4141797,Shift worker
+PAT_MED_ARD_NAME_1,,Tofacitinib,42904205,tofacitinib
+PAT_MED_ARD_NAME_1,,Upadacitinib,1361580,upadacitinib
+PAT_MED_ARD_NAME_1,,Methotrexate,1305058,methotrexate
+PAT_MED_ARD_NAME_1,,Leflunomide,1101898,leflunomide
+PAT_MED_ARD_NAME_1,,Adalimumab,1119119,adalimumab
+PAT_MED_ARD_NAME_1,,Ixekizumab,35603563,ixekizumab
+PAT_MED_ARD_NAME_1,,Sulfasalazine,964339,sulfasalazine
+PAT_MED_ARD_NAME_1,,Guselkumab,1593700,guselkumab
+PAT_MED_ARD_NAME_1,,Bimekizumab,746895,bimekizumab
+PAT_MED_ARD_NAME_1,,Secukinumab,45892883,secukinumab
+PAT_MED_ARD_NAME_1,,Etanercept,1151789,etanercept
+PAT_MED_ARD_NAME_1,,Ustekinumab,40161532,ustekinumab
+PAT_MED_ARD_NAME_1,,Inflximab,937368,infliximab
+PAT_MED_ARD_NAME_1,,Certoluzimab,912263,certolizumab pegol
+PAT_MED_ARD_NAME_1,,Risankizumab,1511348,risankizumab
+PAT_MED_ARD_NAME_1,,Apremilast,44816294,apremilast
+PAT_MED_ARD_NAME_1,,Golimumab,19041065,golimumab
+PAT_MED_ARD_NAME_1,,Prednison,1551099,prednisone
+PAT_MED_ARD_NAME_1,,Abatacept,1186087,abatacept
+PAT_MED_ARD_NAME_1,,Hydroxychloroquine,1777087,hydroxychloroquine
+PAT_MED_ARD_NAME_1,,Brodalumab,1592513,brodalumab
+PAT_MED_ARD_NAME_1,,Tildrakizumab,35200139,tildrakizumab
+PAT_MED_ARD_NAME_1,,Prednisolon,1550557,prednisolone
+PAT_MED_ARD_NAME_2,,Methotrexate,1305058,methotrexate
+PAT_MED_ARD_NAME_2,,Prednisolon,1550557,prednisolone
+PAT_MED_ARD_NAME_2,,Sulfasalazine,964339,sulfasalazine
+PAT_MED_ARD_NAME_2,,Adalimumab,1119119,adalimumab
+PAT_MED_ARD_NAME_2,,Upadacitinib,1361580,upadacitinib
+PAT_MED_ARD_NAME_2,,Inflximab,937368,infliximab
+PAT_MED_ARD_NAME_2,,Secukinumab,45892883,secukinumab
+PAT_MED_ARD_NAME_2,,Bimekizumab,746895,bimekizumab
+PAT_MED_ARD_NAME_2,,Leflunomide,1101898,leflunomide
+PAT_MED_ARD_NAME_2,,Hydroxychloroquine,1777087,hydroxychloroquine
+PAT_MED_ARD_NAME_2,,Ixekizumab,35603563,ixekizumab
+PAT_MED_ARD_NAME_2,,Cyclosporin,19010482,cyclosporine
+PAT_MED_ARD_NAME_2,,Abatacept,1186087,abatacept
+PAT_MED_ARD_NAME_2,,Golimumab,19041065,golimumab
+PAT_MED_ARD_NAME_2,,Etanercept,1151789,etanercept
+PAT_MED_ARD_NAME_2,,Ustekinumab,40161532,ustekinumab
+PAT_MED_ARD_NAME_2,,Apremilast,44816294,apremilast
+PAT_MED_ARD_NAME_2,,Prednison,1551099,prednisone
+PAT_MED_ARD_NAME_2,,Guselkumab,1593700,guselkumab
+PAT_MED_ARD_NAME_2,,Tofacitinib,42904205,tofacitinib
+PAT_MED_ARD_NAME_2,,Certoluzimab,912263,certolizumab pegol
+PAT_MED_ARD_NAME_2,,2/20/23,,
+PAT_MED_ARD_NAME_3,,Sulfasalazine,964339,sulfasalazine
+PAT_MED_ARD_NAME_3,,Adalimumab,1119119,adalimumab
+PAT_MED_ARD_NAME_3,,Hydroxychloroquine,1777087,hydroxychloroquine
+PAT_MED_ARD_NAME_3,,Inflximab,937368,infliximab
+PAT_MED_ARD_NAME_3,,Secukinumab,45892883,secukinumab
+PAT_MED_ARD_NAME_3,,Prednisolon,1550557,prednisolone
+PAT_MED_ARD_NAME_3,,Ustekinumab,40161532,ustekinumab
+PAT_MED_ARD_NAME_3,,Leflunomide,1101898,leflunomide
+PAT_MED_ARD_NAME_3,,Methotrexate,1305058,methotrexate
+PAT_MED_ARD_NAME_3,,Prednison,1551099,prednisone
+PAT_MED_ARD_NAME_3,,Certoluzimab,912263,certolizumab pegol
+PAT_MED_ARD_NAME_3,,Ixekizumab,35603563,ixekizumab
+PAT_MED_ARD_NAME_3,,oraal,,
+PAT_MED_ARD_NAME_3,,Upadacitinib,1361580,upadacitinib
+PAT_MED_ARD_NAME_4,,Prednisolon,1550557,prednisolone
+PAT_MED_ARD_NAME_4,,Golimumab,19041065,golimumab
+PAT_MED_ARD_NAME_4,,Sulfasalazine,964339,sulfasalazine
+PAT_MED_ARD_NAME_4,,Leflunomide,1101898,leflunomide
+PAT_MED_ARD_NAME_4,,Ixekizumab,35603563,ixekizumab
+PAT_MED_ARD_NAME_4,,Methotrexate,1305058,methotrexate
+PAT_MED_ARD_NAME_4,,Secukinumab,45892883,secukinumab
+PAT_MED_ARD_NAME_4,,Adalimumab,1119119,adalimumab
+PAT_MED_ARD_NAME_4,,Hydroxychloroquine,1777087,hydroxychloroquine
+PAT_MED_ARD_NAME_4,,Cyclosporin,19010482,cyclosporine
+PAT_MED_ARD_NAME_4,,Prednison,1551099,prednisone
+PAT_MED_ARD_NAME_4,,Inflximab,937368,infliximab
+PAT_MED_ARD_NAME_4,,Upadacitinib,1361580,upadacitinib
+PAT_MED_ARD_NAME_4,,Guselkumab,1593700,guselkumab
+PAT_MED_ARD_NAME_5,,Prednisolon,1550557,prednisolone
+PAT_MED_ARD_NAME_5,,Apremilast,44816294,apremilast
+PAT_MED_ARD_NAME_5,,Adalimumab,1119119,adalimumab
+PAT_MED_ARD_NAME_5,,Certoluzimab,912263,certolizumab pegol
+PAT_MED_ARD_NAME_5,,Secukinumab,45892883,secukinumab
+PAT_MED_ARD_NAME_5,,Inflximab,937368,infliximab
+PAT_MED_ARD_NAME_5,,Sulfasalazine,964339,sulfasalazine
+PAT_MED_ARD_NAME_5,,Prednison,1551099,prednisone
+PAT_MED_ARD_NAME_5,,Guselkumab,1593700,guselkumab
+PAT_MED_ARD_NAME_6,,Prednisolon,1550557,prednisolone
+PAT_MED_ARD_NAME_6,,Ixekizumab,35603563,ixekizumab
+PAT_MED_ARD_NAME_6,,Secukinumab,45892883,secukinumab
+PAT_MED_ARD_NAME_6,,Inflximab,937368,infliximab
+PAT_MED_ARD_NAME_6,,Prednison,1551099,prednisone
+PAT_MED_ARD_NAME_7,,23,0,Not mapped
+PAT_MED_NARD_NAME_1,,Atorvastatin,1545958,atorvastatin
+PAT_MED_NARD_NAME_1,,Etoricoxib,19011355,etoricoxib
+PAT_MED_NARD_NAME_1,,Folic Acid,19111620,folic acid
+PAT_MED_NARD_NAME_1,,Sildenafil,1316262,sildenafil
+PAT_MED_NARD_NAME_1,,Acetylsalicylic Acid,1112807,aspirin
+PAT_MED_NARD_NAME_1,,Trazodone,703547,trazodone
+PAT_MED_NARD_NAME_1,,flecainide,1354860,flecainide
+PAT_MED_NARD_NAME_1,,Flu Vaccine,40213158,"influenza virus vaccine, unspecified formulation"
+PAT_MED_NARD_NAME_1,,levothyroxine sodium,40169766,levothyroxine sodium 0.1 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Deflazacort,19086888,deflazacort
+PAT_MED_NARD_NAME_1,,Cyclobenzaprine,778711,cyclobenzaprine
+PAT_MED_NARD_NAME_1,,Simvastatin,1539403,simvastatin
+PAT_MED_NARD_NAME_1,,Rosuvastatin,1510813,rosuvastatin
+PAT_MED_NARD_NAME_1,,Secukinumab,45892883,secukinumab
+PAT_MED_NARD_NAME_1,,Venlafaxine,743670,venlafaxine
+PAT_MED_NARD_NAME_1,,Mirtazapine,725131,mirtazapine
+PAT_MED_NARD_NAME_1,,Co-codamol,21133217,Acetaminophen / Codeine Oral Tablet [Co-codamol]
+PAT_MED_NARD_NAME_1,,Naproxen,1115008,naproxen
+PAT_MED_NARD_NAME_1,,Lansoprazole,929887,lansoprazole
+PAT_MED_NARD_NAME_1,,Symtuza,1560081,cobicistat 150 MG / darunavir 800 MG / emtricitabine 200 MG / tenofovir alafenamide 10 MG [Symtuza]
+PAT_MED_NARD_NAME_1,,amlodipine,1332418,amlodipine
+PAT_MED_NARD_NAME_1,,propranolol,1353766,propranolol
+PAT_MED_NARD_NAME_1,,folic acid,19111620,folic acid
+PAT_MED_NARD_NAME_1,,sulfasalisine,19136426,sulfamerazine
+PAT_MED_NARD_NAME_1,,Amlodipine,1332418,amlodipine
+PAT_MED_NARD_NAME_1,,Esomeprazole,904453,esomeprazole
+PAT_MED_NARD_NAME_1,,lisinopril,1308216,lisinopril
+PAT_MED_NARD_NAME_1,,diltiazem,1328165,diltiazem
+PAT_MED_NARD_NAME_1,,Folic acid,19111620,folic acid
+PAT_MED_NARD_NAME_1,,foliumzuur,19111620,folic acid
+PAT_MED_NARD_NAME_1,,deglutec insulin,35602717,insulin degludec
+PAT_MED_NARD_NAME_1,,rosuvastatin,1510813,rosuvastatin
+PAT_MED_NARD_NAME_1,,Omeprazole,923645,omeprazole
+PAT_MED_NARD_NAME_1,,irbesartan/ hydrochlorotheiazide,19078080,hydrochlorothiazide 12.5 MG / irbesartan 150 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,perindopril,1373225,perindopril
+PAT_MED_NARD_NAME_1,,Ferrous Fumarate,1595799,ferrous fumarate
+PAT_MED_NARD_NAME_1,,rosuvastatine,1510813,rosuvastatin
+PAT_MED_NARD_NAME_1,,Losartan,1367500,losartan
+PAT_MED_NARD_NAME_1,,ramipril,1334456,ramipril
+PAT_MED_NARD_NAME_1,,Setraline,739138,sertraline
+PAT_MED_NARD_NAME_1,,clinel modulate inhaler,40722958,Beclomethasone 0.2 MG/ACTUAT Inhalant Powder [Clenil Modulite]
+PAT_MED_NARD_NAME_1,,Leflunomide,1101898,leflunomide
+PAT_MED_NARD_NAME_1,,Zapain,21172661,Acetaminophen 500 MG / Codeine 30 MG [Zapain]
+PAT_MED_NARD_NAME_1,,metoclopramide,906780,metoclopramide
+PAT_MED_NARD_NAME_1,,Allopurinol,1167322,allopurinol
+PAT_MED_NARD_NAME_1,,Naproxen + Esomeprazole,40892969,Esomeprazole / Naproxen Oral Tablet
+PAT_MED_NARD_NAME_1,,Meloxicam,1150345,meloxicam
+PAT_MED_NARD_NAME_1,,meloxicam,1150345,meloxicam
+PAT_MED_NARD_NAME_1,,Aceclofenac,19029393,aceclofenac
+PAT_MED_NARD_NAME_1,,Propranolol,1353766,propranolol
+PAT_MED_NARD_NAME_1,,tyrosint,40174938,levothyroxine sodium 0.1 MG Oral Capsule [Tirosint]
+PAT_MED_NARD_NAME_1,,thyroxine,1501700,levothyroxine
+PAT_MED_NARD_NAME_1,,allopourinol,1167322,allopurinol
+PAT_MED_NARD_NAME_1,,oxcarbazepine,718122,oxcarbazepine
+PAT_MED_NARD_NAME_1,,alfural,930021,alfuzosin
+PAT_MED_NARD_NAME_1,,Acetylsalicylic acid,1112807,aspirin
+PAT_MED_NARD_NAME_1,,Sucralfate,1036228,sucralfate
+PAT_MED_NARD_NAME_1,,rivaroxaban,40241331,rivaroxaban
+PAT_MED_NARD_NAME_1,,medithyrox,40169766,levothyroxine sodium 0.1 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Tamoxifen,1436678,tamoxifen
+PAT_MED_NARD_NAME_1,,atorvastatin,1545958,atorvastatin
+PAT_MED_NARD_NAME_1,,gliclazide,19059796,gliclazide
+PAT_MED_NARD_NAME_1,,olmetec,21130963,olmesartan 10 MG Oral Tablet [Olmetec]
+PAT_MED_NARD_NAME_1,,accu-thyrox,40174948,levothyroxine sodium 0.1 MG Oral Tablet [Thyrox]
+PAT_MED_NARD_NAME_1,,bisoprolol,1338005,bisoprolol
+PAT_MED_NARD_NAME_1,,daxirem,40228152,dabigatran etexilate
+PAT_MED_NARD_NAME_1,,comprelan,19127433,amlodipine 5 MG / olmesartan medoxomil 20 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,ezetiben,1526475,ezetimibe
+PAT_MED_NARD_NAME_1,,prednisolone,1550557,prednisolone
+PAT_MED_NARD_NAME_1,,irbepress,1347384,irbesartan
+PAT_MED_NARD_NAME_1,,Prednisolone,1550557,prednisolone
+PAT_MED_NARD_NAME_1,,Macrogel,986417,polyethylene glycol 3350
+PAT_MED_NARD_NAME_1,,oxazepam,724816,oxazepam
+PAT_MED_NARD_NAME_1,,tramadol,1103314,tramadol
+PAT_MED_NARD_NAME_1,,Metoprolol,1307046,metoprolol
+PAT_MED_NARD_NAME_1,,tacrolimus,950637,tacrolimus
+PAT_MED_NARD_NAME_1,,Magnesiumhydroxide,992956,magnesium hydroxide
+PAT_MED_NARD_NAME_1,,Adalimumab,1119119,adalimumab
+PAT_MED_NARD_NAME_1,,Pramipexol,720810,pramipexole
+PAT_MED_NARD_NAME_1,,nexium,904453,esomeprazole
+PAT_MED_NARD_NAME_1,,azitromycine,1734104,azithromycin
+PAT_MED_NARD_NAME_1,,Pantoprazol,948078,pantoprazole
+PAT_MED_NARD_NAME_1,,Rosuvastine,1510813,rosuvastatin
+PAT_MED_NARD_NAME_1,,Risankizumab,1511348,risankizumab
+PAT_MED_NARD_NAME_1,,lansoprazole,929887,lansoprazole
+PAT_MED_NARD_NAME_1,,Sertraline,739138,sertraline
+PAT_MED_NARD_NAME_1,,Levothyroxine,1501700,levothyroxine
+PAT_MED_NARD_NAME_1,,methylfenidaat,705944,methylphenidate
+PAT_MED_NARD_NAME_1,,Atomoxetine,742185,atomoxetine
+PAT_MED_NARD_NAME_1,,Atorvastatine,1545958,atorvastatin
+PAT_MED_NARD_NAME_1,,Perindopril,1373225,perindopril
+PAT_MED_NARD_NAME_1,,lacipil,19004539,lacidipine
+PAT_MED_NARD_NAME_1,,ezetimibe,1526475,ezetimibe
+PAT_MED_NARD_NAME_1,,escitalopram,715939,escitalopram
+PAT_MED_NARD_NAME_1,,Mometasone,905233,mometasone
+PAT_MED_NARD_NAME_1,,Etanercept,1151789,etanercept
+PAT_MED_NARD_NAME_1,,Amlodipine/valsartan,40140541,amlodipine / valsartan Oral Tablet
+PAT_MED_NARD_NAME_1,,Omeprazol,923645,omeprazole
+PAT_MED_NARD_NAME_1,,copaxone,751889,glatiramer
+PAT_MED_NARD_NAME_1,,depakine chrono,42931727,Valproate 300 MG Extended Release Oral Tablet [DEPAKINE CHRONO]
+PAT_MED_NARD_NAME_1,,Beclomethason/formoterol,40223712,formoterol / mometasone Metered Dose Inhaler
+PAT_MED_NARD_NAME_1,,Ustekinumab,40161532,ustekinumab
+PAT_MED_NARD_NAME_1,,Vaseline/paraffine zalf,40069099,petrolatum Topical Cream
+PAT_MED_NARD_NAME_1,,adalimumab,1119119,adalimumab
+PAT_MED_NARD_NAME_1,,carbamazepine,740275,carbamazepine
+PAT_MED_NARD_NAME_1,,Metformin,1503297,metformin
+PAT_MED_NARD_NAME_1,,indapamide,978555,indapamide
+PAT_MED_NARD_NAME_1,,Etorcoxib,19011355,etoricoxib
+PAT_MED_NARD_NAME_1,,Betamethasone Valerate,40019108,betamethasone Topical Cream
+PAT_MED_NARD_NAME_1,,Evorel combination patch,1548195,estradiol
+PAT_MED_NARD_NAME_1,,atorvastatin+ ezetimibe,43527027,atorvastatin / ezetimibe Oral Tablet
+PAT_MED_NARD_NAME_1,,adelcort,1550557,prednisolone
+PAT_MED_NARD_NAME_1,,allopurinol,1167322,allopurinol
+PAT_MED_NARD_NAME_1,,Duloxetine,715259,duloxetine
+PAT_MED_NARD_NAME_1,,Ramipril,1334456,ramipril
+PAT_MED_NARD_NAME_1,,Clobetasone,19005129,clobetasone
+PAT_MED_NARD_NAME_1,,Ivabradine,46234437,ivabradine
+PAT_MED_NARD_NAME_1,,Topiramate,742267,topiramate
+PAT_MED_NARD_NAME_1,,Diclofenac,1124300,diclofenac
+PAT_MED_NARD_NAME_1,,Levetiracetam,711584,levetiracetam
+PAT_MED_NARD_NAME_1,,Yuflyma injvlst,46275866,adalimumab Injection
+PAT_MED_NARD_NAME_1,,Acemetacin,40097558,acemetacin Oral Tablet
+PAT_MED_NARD_NAME_1,,Tamsulosine,924566,tamsulosin
+PAT_MED_NARD_NAME_1,,Lisinopril,1308216,lisinopril
+PAT_MED_NARD_NAME_1,,Terbinafine,1741309,terbinafine
+PAT_MED_NARD_NAME_1,,Tildracizumab,35200139,tildrakizumab
+PAT_MED_NARD_NAME_1,,ethynylestradiol,1549786,ethinyl estradiol
+PAT_MED_NARD_NAME_1,,Escitalopram,715939,escitalopram
+PAT_MED_NARD_NAME_1,,insulin glargine,1502905,insulin glargine
+PAT_MED_NARD_NAME_1,,thyrormone,40169766,levothyroxine sodium 0.1 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,budesonide+formoterol fumarate,42902748,budesonide 0.16 MG/ACTUAT / formoterol fumarate 0.0045 MG/ACTUAT Metered Dose Inhaler
+PAT_MED_NARD_NAME_1,,empagliflozin/ metformin,46287689,empagliflozin 5 MG / metformin hydrochloride 1000 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,benralizumab,792993,benralizumab
+PAT_MED_NARD_NAME_1,,duloxetine,715259,duloxetine
+PAT_MED_NARD_NAME_1,,levothyroxine,1501700,levothyroxine
+PAT_MED_NARD_NAME_1,,concor,43659489,Bisoprolol 5 MG Oral Tablet [Concor]
+PAT_MED_NARD_NAME_1,,Bupropion,750982,bupropion
+PAT_MED_NARD_NAME_1,,olmesartan,40226742,olmesartan
+PAT_MED_NARD_NAME_1,,"levothyroxine sodiu,",40169766,levothyroxine sodium 0.1 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Ibuprofen,1177480,ibuprofen
+PAT_MED_NARD_NAME_1,,Paracetamol,1125315,acetaminophen
+PAT_MED_NARD_NAME_1,,Felodipine,1353776,felodipine
+PAT_MED_NARD_NAME_1,,pantaprazol,948078,pantoprazole
+PAT_MED_NARD_NAME_1,,diazepam,723013,diazepam
+PAT_MED_NARD_NAME_1,,amgevita,2933183,adalimumab Injection [Amgevita]
+PAT_MED_NARD_NAME_1,,omeprazol,923645,omeprazole
+PAT_MED_NARD_NAME_1,,sertraline,739138,sertraline
+PAT_MED_NARD_NAME_1,,Oxycodon kortwerkend,40232756,oxycodone hydrochloride 5 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Hydroxocobalamine,1377023,hydroxocobalamin
+PAT_MED_NARD_NAME_1,,isosorbide mononitraat,19106176,isosorbide mononitrate 25 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Enalapril,1341927,enalapril
+PAT_MED_NARD_NAME_1,,Fluticason,1149380,fluticasone
+PAT_MED_NARD_NAME_1,,bactroban,44069782,Mupirocin Nasal Ointment [Bactroban Nasal]
+PAT_MED_NARD_NAME_1,,Fultium-D3 800 unit,21080424,Cholecalciferol 800 UNT [Fultium-D3]
+PAT_MED_NARD_NAME_1,,Methotraxaat,1305058,methotrexate
+PAT_MED_NARD_NAME_1,,acetylsalicylzuur,1112807,aspirin
+PAT_MED_NARD_NAME_1,,carbasalaatcalcium,40798706,Carbasalate Calcium
+PAT_MED_NARD_NAME_1,,Denosumab,40222444,denosumab
+PAT_MED_NARD_NAME_1,,etanercept,1151789,etanercept
+PAT_MED_NARD_NAME_1,,Betamethason,920458,betamethasone
+PAT_MED_NARD_NAME_1,,candesartan,1351557,candesartan
+PAT_MED_NARD_NAME_1,,euthyrox,1501700,levothyroxine
+PAT_MED_NARD_NAME_1,,chlooramfenicol,990069,chloramphenicol
+PAT_MED_NARD_NAME_1,,Calcipotriol,19035631,calcitriol
+PAT_MED_NARD_NAME_1,,enanlapril,1341927,enalapril
+PAT_MED_NARD_NAME_1,,Dovobet gel,40833159,Betamethasone / calcipotriene Topical Gel [Dovobet]
+PAT_MED_NARD_NAME_1,,pregabaline,734354,pregabalin
+PAT_MED_NARD_NAME_1,,sitagliptin,1580747,sitagliptin
+PAT_MED_NARD_NAME_1,,Betamethason/calcipotriol gel,45906849,Betamethasone / calcipotriene
+PAT_MED_NARD_NAME_1,,paracetamol,1125315,acetaminophen
+PAT_MED_NARD_NAME_1,,Paracetomol,1125315,acetaminophen
+PAT_MED_NARD_NAME_1,,Hydrochloorthiazide,974166,hydrochlorothiazide
+PAT_MED_NARD_NAME_1,,Acenocoumarol,19024063,acenocoumarol
+PAT_MED_NARD_NAME_1,,ibuprofen,1177480,ibuprofen
+PAT_MED_NARD_NAME_1,,diprolene,1718372,betamethasone Topical Ointment [Diprolene]
+PAT_MED_NARD_NAME_1,,sumatriptan,1140643,sumatriptan
+PAT_MED_NARD_NAME_1,,Metformine,1503297,metformin
+PAT_MED_NARD_NAME_1,,Semaglutide,793143,semaglutide
+PAT_MED_NARD_NAME_1,,Valsartan-hydrochlorotheiazide,43277756,Hydrochlorothiazide / valsartan Oral Tablet [Valsartan Hctz]
+PAT_MED_NARD_NAME_1,,Utrogestan,21060698,Progesterone 100 MG Oral Capsule [Utrogestan]
+PAT_MED_NARD_NAME_1,,fenprocoumon,19035344,phenprocoumon
+PAT_MED_NARD_NAME_1,,Methotrexaat,1305058,methotrexate
+PAT_MED_NARD_NAME_1,,perindropil- amplodipine,45892980,amlodipine / perindopril Oral Tablet
+PAT_MED_NARD_NAME_1,,olmesartan /amlodipine,42955514,Amlodipine 2.5 MG / olmesartan 20 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,citalopram,797617,citalopram
+PAT_MED_NARD_NAME_1,,Hydroxocobalamin,1377023,hydroxocobalamin
+PAT_MED_NARD_NAME_1,,Ventolin,1356108,albuterol Inhalation Solution
+PAT_MED_NARD_NAME_1,,Zolpidem,744740,zolpidem
+PAT_MED_NARD_NAME_1,,temisartan,1317640,telmisartan
+PAT_MED_NARD_NAME_1,,mirtazipine,725131,mirtazapine
+PAT_MED_NARD_NAME_1,,paroxetine,722031,paroxetine
+PAT_MED_NARD_NAME_1,,Salmeterol,1137529,salmeterol
+PAT_MED_NARD_NAME_1,,Loratadine,1107830,loratadine
+PAT_MED_NARD_NAME_1,,Tacalcitol,19008361,tacalcitol
+PAT_MED_NARD_NAME_1,,Clopidogrel,1322184,clopidogrel
+PAT_MED_NARD_NAME_1,,pataprozol,948078,pantoprazole
+PAT_MED_NARD_NAME_1,,capecitabine,1337620,capecitabine
+PAT_MED_NARD_NAME_1,,Lantus,43279683,Insulin Glargine Injection [Lantus]
+PAT_MED_NARD_NAME_1,,naproxen,1115008,naproxen
+PAT_MED_NARD_NAME_1,,Acyclovir,1703687,acyclovir
+PAT_MED_NARD_NAME_1,,Co-Codomol,21133217,Acetaminophen / Codeine Oral Tablet [Co-codamol]
+PAT_MED_NARD_NAME_1,,pantaprozol,948078,pantoprazole
+PAT_MED_NARD_NAME_1,,nebivolol,1314577,nebivolol
+PAT_MED_NARD_NAME_1,,metropolol,1307046,metoprolol
+PAT_MED_NARD_NAME_1,,Antibiotics and Tamiflu,0,Not mapped
+PAT_MED_NARD_NAME_1,,Amitriptyline,710062,amitriptyline
+PAT_MED_NARD_NAME_1,,chloortalidon,1395058,chlorthalidone
+PAT_MED_NARD_NAME_1,,insulin degludec,1356056,insulin degludec Injectable Solution
+PAT_MED_NARD_NAME_1,,Spironolactone,970250,spironolactone
+PAT_MED_NARD_NAME_1,,losartan,1367500,losartan
+PAT_MED_NARD_NAME_1,,clenil modulite,21021434,Beclomethasone 0.2 MG/ACTUAT [Clenil Modulite]
+PAT_MED_NARD_NAME_1,,ompeprazole,923645,omeprazole
+PAT_MED_NARD_NAME_1,,Bisoprolol,1338005,bisoprolol
+PAT_MED_NARD_NAME_1,,mebeverine,19008994,mebeverine
+PAT_MED_NARD_NAME_1,,meloxican,1150345,meloxicam
+PAT_MED_NARD_NAME_1,,levothyroxin sodium,40169766,levothyroxine sodium 0.1 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,pitavastatin,40165636,pitavastatin
+PAT_MED_NARD_NAME_1,,semaglutide,793143,semaglutide
+PAT_MED_NARD_NAME_1,,alfusin,930021,alfuzosin
+PAT_MED_NARD_NAME_1,,acetylsalicylic acid,1112807,aspirin
+PAT_MED_NARD_NAME_1,,acetylosalycilic acid,1112807,aspirin
+PAT_MED_NARD_NAME_1,,lexothyroxine,1501700,levothyroxine
+PAT_MED_NARD_NAME_1,,rosuvastin,1510813,rosuvastatin
+PAT_MED_NARD_NAME_1,,sitagliptin + metformin,40164891,metformin hydrochloride 1000 MG / sitagliptin 50 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,levothyrixine sodium,40169766,levothyroxine sodium 0.1 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,dabigatran,45775372,dabigatran
+PAT_MED_NARD_NAME_1,,amlodipin,1332418,amlodipine
+PAT_MED_NARD_NAME_1,,Oxazepam,724816,oxazepam
+PAT_MED_NARD_NAME_1,,drospirenone,1512674,drospirenone
+PAT_MED_NARD_NAME_1,,methylprednisolone,1506270,methylprednisolone
+PAT_MED_NARD_NAME_1,,Calcioptriol,908921,calcipotriene
+PAT_MED_NARD_NAME_1,,Dovobet,40833159,Betamethasone / calcipotriene Topical Gel [Dovobet]
+PAT_MED_NARD_NAME_1,,ecsitalopram,715939,escitalopram
+PAT_MED_NARD_NAME_1,,amlodipine+ valsartan,40140541,amlodipine / valsartan Oral Tablet
+PAT_MED_NARD_NAME_1,,glatiramer,751889,glatiramer
+PAT_MED_NARD_NAME_1,,Sodium Valproate,745466,valproate
+PAT_MED_NARD_NAME_1,,karvamazepin,740275,carbamazepine
+PAT_MED_NARD_NAME_1,,atorvastatin+ezetimibe,43527027,atorvastatin / ezetimibe Oral Tablet
+PAT_MED_NARD_NAME_1,,glargine insulin,1502905,insulin glargine
+PAT_MED_NARD_NAME_1,,denosumab,40222444,denosumab
+PAT_MED_NARD_NAME_1,,Paracetamol/brufen,21073756,Acetaminophen 500 MG / Ibuprofen 200 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Fluoexetine,755700,fluoxetine 20 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,irbesartan+ hydrochlorothiazide,19078080,hydrochlorothiazide 12.5 MG / irbesartan 150 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,Co-Codamol,21133217,Acetaminophen / Codeine Oral Tablet [Co-codamol]
+PAT_MED_NARD_NAME_1,,Vitamine D,19009405,vitamin D
+PAT_MED_NARD_NAME_1,,Strivit-D3,36059306,cholecalciferol 3333 UNT Oral Capsule [Strivit-D3]
+PAT_MED_NARD_NAME_1,,valsartan-hydrochlorotheiazide,40045128,hydrochlorothiazide / valsartan Oral Tablet
+PAT_MED_NARD_NAME_1,,metformin,1503297,metformin
+PAT_MED_NARD_NAME_1,,Exorex,40028798,coal tar Topical Lotion
+PAT_MED_NARD_NAME_1,,Adcal D3,35774783,Calcium Carbonate Oral Tablet [Adcal-D3]
+PAT_MED_NARD_NAME_1,,capecitebine,1337620,capecitabine
+PAT_MED_NARD_NAME_1,,sulfasalazine,964339,sulfasalazine
+PAT_MED_NARD_NAME_1,,dermol,40926175,Clobetasol Topical Cream [Dermol]
+PAT_MED_NARD_NAME_1,,foster,36408839,Beclomethasone / formoterol Inhalant Powder [Fostair]
+PAT_MED_NARD_NAME_1,,Fluoxetine,755695,fluoxetine
+PAT_MED_NARD_NAME_1,,Dovato,1511088,dolutegravir / lamivudine Oral Tablet [Dovato]
+PAT_MED_NARD_NAME_1,,Nifedipine,1318853,nifedipine
+PAT_MED_NARD_NAME_1,,clopidogrel,1322184,clopidogrel
+PAT_MED_NARD_NAME_1,,Fexofenadine,1153428,fexofenadine
+PAT_MED_NARD_NAME_1,,Mounjaro,779705,tirzepatide
+PAT_MED_NARD_NAME_1,,alfuzosin,930021,alfuzosin
+PAT_MED_NARD_NAME_1,,salospir,1112807,aspirin
+PAT_MED_NARD_NAME_1,,acetysalicylic acid,1112807,aspirin
+PAT_MED_NARD_NAME_1,,rovastatin,1510813,rosuvastatin
+PAT_MED_NARD_NAME_1,,metformin/sitagliptin,40164891,metformin hydrochloride 1000 MG / sitagliptin 50 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,cevelamer,952004,sevelamer
+PAT_MED_NARD_NAME_1,,Lercandipine,19015802,lercanidipine
+PAT_MED_NARD_NAME_1,,Evorel Combi,1548195,estradiol
+PAT_MED_NARD_NAME_1,,valproate sodium,745466,valproate
+PAT_MED_NARD_NAME_1,,atorvastatin/ezetimibe,43527027,atorvastatin / ezetimibe Oral Tablet
+PAT_MED_NARD_NAME_1,,hydrocortisone,975125,hydrocortisone
+PAT_MED_NARD_NAME_1,,etoricoxib,19011355,etoricoxib
+PAT_MED_NARD_NAME_1,,Pantaprozol,948078,pantoprazole
+PAT_MED_NARD_NAME_1,,Mirtazepine,725131,mirtazapine
+PAT_MED_NARD_NAME_1,,omalizumab,1110942,omalizumab
+PAT_MED_NARD_NAME_1,,Quinine Sulphate,1760685,quinine 200 MG
+PAT_MED_NARD_NAME_1,,omeprazole,923645,omeprazole
+PAT_MED_NARD_NAME_1,,Tramadol,1103314,tramadol
+PAT_MED_NARD_NAME_1,,oxcamazepine,718122,oxcarbazepine
+PAT_MED_NARD_NAME_1,,metformin-sitagliptin,40164891,metformin hydrochloride 1000 MG / sitagliptin 50 MG Oral Tablet
+PAT_MED_NARD_NAME_1,,atorvastatin-ezetimibe,43527027,atorvastatin / ezetimibe Oral Tablet
+PAT_MED_NARD_NAME_1,,irbesartan,1347384,irbesartan
+PAT_MED_NARD_NAME_1,,Zoledroninezuur,1524674,zoledronic acid
+PAT_MED_NARD_NAME_1,,amitriptyline,710062,amitriptyline
+PAT_MED_NARD_NAME_1,,pregabalin,734354,pregabalin
+PAT_MED_NARD_NAME_1,,Clexane,1301025,enoxaparin
+PAT_MED_NARD_NAME_1,,Antibiotics,0,Not mapped
+PAT_MED_NARD_NAME_1,,clenil modulate,21021434,Beclomethasone 0.2 MG/ACTUAT [Clenil Modulite]
+PAT_MED_NARD_NAME_1,,Luforbec,36932145,beclomethasone 0.1 MG/ACTUAT Metered Dose Inhaler by Lupin
+PAT_MED_NARD_NAME_1,,Mebeverine,19008994,mebeverine
+PAT_MED_NARD_NAME_1,,sevelamer,952004,sevelamer
+PAT_MED_NARD_NAME_1,,Relvar ellipta,40754977,fluticasone 0.093 MG/ACTUAT / vilanterol 0.022 MG/ACTUAT Inhalant Powder [Relvar]
+PAT_MED_NARD_NAME_1,,testostrone,1636780,testosterone
+PAT_MED_NARD_NAME_1,,levetiracetam,711584,levetiracetam
+PAT_MED_NARD_NAME_1,,methotrexate,1305058,methotrexate
+PAT_MED_NARD_NAME_1,,artorvastatin,1545958,atorvastatin
+PAT_SWOL_JOINTS,Are there any swollen joints?,No,0,Not mapped
+PAT_SWOL_JOINTS,Are there any swollen joints?,Yes,4154927,Joint swelling
+PAT_PAIN_JOINTS,Are there any tender joints?,No,0,Not mapped
+PAT_PAIN_JOINTS,Are there any tender joints?,Yes,77074,Pain of joint
+PAT_DICTYL_HAND,Are there fingers with dactylitis?,No,0,Not mapped
+PAT_DICTYL_HAND,Are there fingers with dactylitis?,Yes,46270490,Dactylitis of finger
+PAT_DICTYL_FEET,Are there toes with dactylitis?,No,0,Not mapped
+PAT_DICTYL_FEET,Are there toes with dactylitis?,Yes,46272449,Dactylitis of toe
+DOC_IAD,"Inflammatory Articular Disease, please indicate:",Polyarticular,37160369,Polyarticular psoriatic arthritis
+DOC_IAD,"Inflammatory Articular Disease, please indicate:",Oligoarticular,37160379,Oligoarticular psoriatic arthritis
+DOC_IAD,"Inflammatory Articular Disease, please indicate:",Axial,36716891,Axial spondyloarthritis
+DOC_IAD,"Inflammatory Articular Disease, please indicate:",Entheseal,4231746,Enthesitis
+DOC_IAD,"Inflammatory Articular Disease, please indicate:",Dactylitis,4131942,Dactylitis
+DOC_IAD,"Inflammatory Articular Disease, please indicate:",Monoarticular,44783376,Monoarthritis
+DOC_PSORIATIC_SCALP,"Psoriatic skin or scalp disease present today, diagnosed by a rheumatologist or dermatologist",Yes,4031141,Psoriasis of scalp
+DOC_PSORIATIC_SCALP,"Psoriatic skin or scalp disease present today, diagnosed by a rheumatologist or dermatologist",No,0,Not mapped
+DOC_PSORIASIS_HIST,Personal or family history of psoriasis,No,0,Not mapped
+DOC_PSORIASIS_HIST,Personal or family history of psoriasis,Yes,4299287,Familial psoriasis
+DOC_NAIL_DISTROPHY,"Typical psoriatic nail dystrophy (onycholysis, pitting, and hyperkeratosis on exam)",No,0,Not mapped
+DOC_NAIL_DISTROPHY,"Typical psoriatic nail dystrophy (onycholysis, pitting, and hyperkeratosis on exam)",Yes,4031140,Psoriatic nail dystrophy
+DOC_RHEUMA_FACTOR_NEG,Rheumatoid factor negative (any method except latex; ELISA or nephelometry preferred),No,4299364,Rheumatoid factor
+DOC_RHEUMA_FACTOR_NEG,Rheumatoid factor negative (any method except latex; ELISA or nephelometry preferred),Yes,0,Not mapped
+DOC_DACTYLITIS_BY_RHEUMA,Current dactylitis (swelling of an entire digit) or history of dactylitis recorded by a rheumatologist,No,0,Not mapped
+DOC_DACTYLITIS_BY_RHEUMA,Current dactylitis (swelling of an entire digit) or history of dactylitis recorded by a rheumatologist,Yes,4131942,Dactylitis
+DOC_JUXT,Juxtaarticular new bone formation on hand or foot x-ray (ill-defined ossification near joint margins excluding osteophyte formation),Yes,4263759,Abnormal bone formation
+DOC_JUXT,Juxtaarticular new bone formation on hand or foot x-ray (ill-defined ossification near joint margins excluding osteophyte formation),No,0,Not mapped
+PAT_REM,"At this time, is your psoriatic arthritis in remission, if this means: you feel your disease is as good as gone?",No,0,Not mapped
+PAT_REM,"At this time, is your psoriatic arthritis in remission, if this means: you feel your disease is as good as gone?",Yes,2000000074,Psoriatic arthritis patient reported remission
+PAT_DIS_ACT,"At this time, are you in low disease activity, if this means: your disease is in low activity but it’s not as good as gone?",Yes,2000000075,Psoriatic arthritis patient reported low disease activity
+PAT_DIS_ACT,"At this time, are you in low disease activity, if this means: your disease is in low activity but it’s not as good as gone?",No,0,Not mapped
+PAT_FLARE,"At this time, are you having a flare of your psoriatic arthritis, if this means the symptoms are worse than usual?",No,0,Not mapped
+PAT_FLARE,"At this time, are you having a flare of your psoriatic arthritis, if this means the symptoms are worse than usual?",Yes,2000000076,Psoriatic Arthritis patient reported flare
+DOC_REM,"At this time, is the psoriatic arthritis in remission, if this means: the absence of clinical and laboratory evidence of significant inflammatory disease activity?",Yes,2000000077,Psoriatic arthritis physician assessed remission
+DOC_REM,"At this time, is the psoriatic arthritis in remission, if this means: the absence of clinical and laboratory evidence of significant inflammatory disease activity?",No,0,Not mapped
+DOC_DIS_ACT,"At this time, is the psoriatic arthritis in low or minimal disease activity?",Yes,2000000078,Psoriatic arthritis physician assessed low disease activity
+DOC_DIS_ACT,"At this time, is the psoriatic arthritis in low or minimal disease activity?",No,0,Not mapped
+DOC_FLARE,"At this time, is the disease in flare (i.e., significantly worsened/more active compared to usual)?",No,0,Not mapped
+DOC_FLARE,"At this time, is the disease in flare (i.e., significantly worsened/more active compared to usual)?",Yes,2000000079,Psoriatic arthritis physician assessed flare
+STEROIDS_ALL,Have you received an injection of prednisone or other steroid during the past 3 months?,No,0,Not mapped
+STEROIDS_ALL,Have you received an injection of prednisone or other steroid during the past 3 months?,Yes,4176683,Injection of steroid
+PAT_BIRTH_C_SECT,Were you born through a caesarean section ?,No,0,Not mapped
+PAT_BIRTH_C_SECT,Were you born through a caesarean section ?,Yes,4192676,Born by cesarean section
+PAT_BIRTH_C_SECT,Were you born through a caesarean section ?,I don't know,0,Not mapped
+PAT_ALERGIES,Do you have any food allergies or food intolerances,No,0,Not mapped
+PAT_ALERGIES,Do you have any food allergies or food intolerances,Yes,4340252,Intolerance to food
+PAT_SPECIAL_DIET,"Do you follow a special diet (e.g., vegan, vegetarian, gluten-free, low calorie, low fat, low salt)",No,0,Not mapped
+PAT_SPECIAL_DIET,"Do you follow a special diet (e.g., vegan, vegetarian, gluten-free, low calorie, low fat, low salt)",Yes,40486712,On special diet
+PAT_DIET,"In general, how healthy is your overall diet? (e.g., a healthy diet contains fruit and vegetables, lean protein sources, whole grains, healthy fats as in nuts and olive oil, is low in saturated and trans fat and low in added sugar). Would you say:",Fair,2000000114,Fair
+PAT_DIET,"In general, how healthy is your overall diet? (e.g., a healthy diet contains fruit and vegetables, lean protein sources, whole grains, healthy fats as in nuts and olive oil, is low in saturated and trans fat and low in added sugar). Would you say:",Good,2000000115,Good
+PAT_DIET,"In general, how healthy is your overall diet? (e.g., a healthy diet contains fruit and vegetables, lean protein sources, whole grains, healthy fats as in nuts and olive oil, is low in saturated and trans fat and low in added sugar). Would you say:",Very good,2000000116,Very good
+PAT_DIET,"In general, how healthy is your overall diet? (e.g., a healthy diet contains fruit and vegetables, lean protein sources, whole grains, healthy fats as in nuts and olive oil, is low in saturated and trans fat and low in added sugar). Would you say:",Excellent,2000000117,Excellent
+PAT_DIET,"In general, how healthy is your overall diet? (e.g., a healthy diet contains fruit and vegetables, lean protein sources, whole grains, healthy fats as in nuts and olive oil, is low in saturated and trans fat and low in added sugar). Would you say:",Poor,2000000118,Poor
+PAT_FAMILYCARE,"Do you have family member(s) (e.g., child, elder) in your household that you take care of?",No,0,Not mapped
+PAT_FAMILYCARE,"Do you have family member(s) (e.g., child, elder) in your household that you take care of?",Yes,2000000107,Family care responsibilities in household
+PAT_FLY,Did you fly for work or holidays in the past 3 months,Yes,2000000111,Air travel in past 3 months (work/holiday)
+PAT_FLY,Did you fly for work or holidays in the past 3 months,No,0,Not mapped
+PAT_HAND,"Are you:(left-handed, right-handed)",Left-handed,4227730,Left handed
+PAT_HAND,"Are you:(left-handed, right-handed)",Right-handed,4263218,Right handed
+PAT_HAND,"Are you:(left-handed, right-handed)",Ambidextrousness,4045863,Ambidextrous
+PAT_TOOLS_SMARTPHONE,"Do you use any tool when typing on your smartphone (e.g., pen):",No,0,Not mapped
+PAT_TOOLS_SMARTPHONE,"Do you use any tool when typing on your smartphone (e.g., pen):",Yes,2000000112,Patient uses assistive tool when typing on smartphone (e.g. pen)
+DOC_PAT_HAIR,Hair sample has been collected:,No,0,Not mapped
+DOC_PAT_HAIR,Hair sample has been collected:,Yes,44808096,Collection of hair specimen
+DOC_PAT_SALIVA,Saliva sample has been collected:,Yes,4076764,Collection of sample of saliva
+DOC_PAT_SALIVA,Saliva sample has been collected:,No,0,Not mapped
+DOC_PAT_STOOL,Stool sample has been received:,No,0,Not mapped
+DOC_PAT_STOOL,Stool sample has been received:,Yes,4076765,Collection of stool specimen
+DOC_LEI_LAT_ELBOW_L,Lateral elbow epicondyle - Left,Pain/Tenderness Present,81379,Lateral epicondylitis
+DOC_LEI_LAT_ELBOW_L,Lateral elbow epicondyle - Left,Pain/Tenderness Absent,0,Not mapped
+DOC_LEI_LAT_ELBOW_R,Lateral elbow epicondyle - Right,Pain/Tenderness Present,81379,Lateral epicondylitis
+DOC_LEI_LAT_ELBOW_R,Lateral elbow epicondyle - Right,Pain/Tenderness Absent,0,Not mapped
+DOC_LEI_MED_FEM_L,Medial femoral condyle - Left,Pain/Tenderness Absent,0,Not mapped
+DOC_LEI_MED_FEM_L,Medial femoral condyle - Left,Pain/Tenderness Present,4344149,Osteochondritis dissecans of the medial femoral condyle
+DOC_LEI_MED_FEM_R,Medial femoral condyle - Right,Pain/Tenderness Absent,0,Not mapped
+DOC_LEI_MED_FEM_R,Medial femoral condyle - Right,Pain/Tenderness Present,4344149,Osteochondritis dissecans of the medial femoral condyle
+DOC_LEI_ACHILLES_L,Achilles tendon insertion - Left,Pain/Tenderness Absent,0,Not mapped
+DOC_LEI_ACHILLES_L,Achilles tendon insertion - Left,Pain/Tenderness Present,45763856,Insertional Achilles tendinopathy
+DOC_LEI_ACHILLES_R,Achilles tendon insertion - Right,Pain/Tenderness Absent,0,Not mapped
+DOC_LEI_ACHILLES_R,Achilles tendon insertion - Right,Pain/Tenderness Present,45763856,Insertional Achilles tendinopathy
+PAT_DIET_SUPPLEMENTS,"Have you used any dietary supplements during the past 3 months (e.g., vitamin supplements, fish oil, prebiotics, probiotics)?",Yes,2000000120,use of dietary supplements during the past 3 months
+PAT_DIET_SUPPLEMENTS,"Have you used any dietary supplements during the past 3 months (e.g., vitamin supplements, fish oil, prebiotics, probiotics)?",No,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Yes,2000000145,Unknown aiding devices use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],No,2000000025,Patient does not use aiding devices
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Orthopedische schoenen,2000000130,Orthopedic shoe use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],bed gaurd,2000000131,Bed guard use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],douche stoel,2000000132,Shower seat use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Handorteses,2000000133,Hand orthosis use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Ik heb hulp van mijn man,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Bedguard,2000000131,Bed guard use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],geen,2000000025,Patient does not use aiding devices
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],I have a mobility scooter,2000000134,Mobility scooter use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Doekje,2000000135,Grip cloth use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Geen,2000000025,Patient does not use aiding devices
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Mijn vrouw,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Niets,2000000025,Patient does not use aiding devices
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Keukenhulpen,2000000136,Kitchen aid use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Rollator,2000000137,Rollator use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Werk stoel,2000000138,Work chair use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Handrail for climbing stairs,2000000139,Stair handrail use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],flessendophulp,2000000140,Bottle opener use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Hulp partner voor snijden e.d,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Bedframe (help to sit up),2000000141,Bed frame use (for sitting up assistance)
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],"beugel in de badkamer en het toilet, douchestoel",0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Handen ortheses,2000000133,Hand orthosis use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Jar opener,2000000140,Bottle opener use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Extra reling trap,2000000139,Stair handrail use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Potten doekje,2000000135,Grip cloth use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],toilet frame as well as shower seat as well as bath and shower rail,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],hulp van mijn man,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Steun bij de wc & badkamer,0,Not mapped
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Niks,2000000025,Patient does not use aiding devices
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Handles,2000000142,Handle/grip aid use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Kettle pourer,2000000143,Kettle pouring aid use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Handorheses,2000000133,Hand orthosis use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Jar and bottle opener,2000000140,Bottle opener use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Stoel in keuken,2000000136,Kitchen aid use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],Kettle tipper,2000000143,Kettle pouring aid use
+HAQ02other,HAQ02[other]. 1b. Please tick any aids or devices that you usually use for any of these activities [Other],"Went in the shower, I grabbed the sink or taps",2000000144,Toilet grab rail use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Yes,2000000145,Unknown aiding devices use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],No,2000000025,Patient does not use aiding devices
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Orthopedische schoenen,2000000130,Orthopedic shoe use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Hand grabber,2000000147,Hand grabber use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Shower chair,2000000031,Shower chair use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],pull handles,2000000148,Pull handles use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Husband would help,0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Mijn man help me in bad gaan,0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Bath rails,2000000033,Patient uses bath rails
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],af en toe de rollator,2000000137,Rollator use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],geen,2000000025,Patient does not use aiding devices
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],kookkrukje op wieltjes,2000000149,Rolling kitchen stool use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],zadelkruk voor in de keuken,2000000154,Saddle stool use (kitchen)
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],"Toilet frame, shower seat",0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Moved outnof previous area in cycle for occupational therapy assesments,0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Mijn man helpt daarmee,0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Traplift,2000000150,Stairlift use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],grijptang om iets van de grond op te pakken,2000000030,Patient hand grabber
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],"Long handled sponge, bottom wiper,",0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Lange grijper,2000000030,Patient hand grabber
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Een papegaai bij bed,2000000151,Bedside pole use (for getting in/out of bed)
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Hulp partner,0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Opstapje,2000000152,Step stool use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],"Mijn man, voor het openen van potten",0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Geen hulp middelen,2000000025,Patient does not use aiding devices
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Geen,2000000025,Patient does not use aiding devices
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Douchetoilet,2000000132,Shower seat use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],handles,2000000142,Handle/grip aid use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],wc douche,2000000155,Shower toilet
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],ik vraag me man om me te helpenals het echt niet kan,0,Not mapped
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],handles to get in and out of shower/front door,2000000033,Patient uses bath rails
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Jar opener if not open first,2000000140,Bottle opener use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Steun om van toilet te komen tot staan,2000000153,Toilet standing aid use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Hulp middel voor blikken en potten open maken sinds kort,2000000140,Bottle opener use
+HAQ05other,HAQ05[other]. 2b. Please tick any aids or devices that you usually use for any of these activities [Other],Mijn man help me veel als het niet gaat ik ben voor hem mantelzorging  en hij voor mij zo helpen we elkaar,0,Not mapped
+HAQ02HAQ02SQ1,HAQ02[HAQ02SQ1]. 1b. Please tick any aids or devices that you usually use for any of these activities [I do not use aids],No,0,Not mapped
+HAQ02HAQ02SQ1,HAQ02[HAQ02SQ1]. 1b. Please tick any aids or devices that you usually use for any of these activities [I do not use aids],Yes,2000000025,Patient does not use aiding devices
+HAQ02HAQ02SQ2,"HAQ02[HAQ02SQ2]. 1b. Please tick any aids or devices that you usually use for any of these activities [Devices used for dressing (button hook, zipper pull, long-handled shoe horn)]",Yes,2000000124,"Dressing aid use (button hook, zipper pull, long-handled shoe horn)"
+HAQ02HAQ02SQ2,"HAQ02[HAQ02SQ2]. 1b. Please tick any aids or devices that you usually use for any of these activities [Devices used for dressing (button hook, zipper pull, long-handled shoe horn)]",No,0,Not mapped
+HAQ02HAQ02SQ3,HAQ02[HAQ02SQ3]. 1b. Please tick any aids or devices that you usually use for any of these activities [Crutches],Yes,2000000125,Walking aid use  [Crutches]
+HAQ02HAQ02SQ3,HAQ02[HAQ02SQ3]. 1b. Please tick any aids or devices that you usually use for any of these activities [Crutches],No,0,Not mapped
+HAQ02HAQ02SQ4,HAQ02[HAQ02SQ4]. 1b. Please tick any aids or devices that you usually use for any of these activities [Walking frame],Yes,2000000126,Walking aid use  [Walking frame]
+HAQ02HAQ02SQ4,HAQ02[HAQ02SQ4]. 1b. Please tick any aids or devices that you usually use for any of these activities [Walking frame],No,0,Not mapped
+HAQ02HAQ02SQ5,HAQ02[HAQ02SQ5]. 1b. Please tick any aids or devices that you usually use for any of these activities [Special or built up chair],Yes,2000000127,Seating aid use (special or built up chair)
+HAQ02HAQ02SQ5,HAQ02[HAQ02SQ5]. 1b. Please tick any aids or devices that you usually use for any of these activities [Special or built up chair],No,0,Not mapped
+HAQ02HAQ02SQ6,HAQ02[HAQ02SQ6]. 1b. Please tick any aids or devices that you usually use for any of these activities [Built up or special utensils],Yes,2000000128,Eating aid use (built up or special utensils)
+HAQ02HAQ02SQ6,HAQ02[HAQ02SQ6]. 1b. Please tick any aids or devices that you usually use for any of these activities [Built up or special utensils],No,0,Not mapped
+HAQ02SQ007,HAQ02[SQ007]. 1b. Please tick any aids or devices that you usually use for any of these activities [Walking stick],Yes,2000000129,Walking aid use (walking stick)
+HAQ02SQ007,HAQ02[SQ007]. 1b. Please tick any aids or devices that you usually use for any of these activities [Walking stick],No,0,Not mapped
+HAQ02SQ008,HAQ02[SQ008]. 1b. Please tick any aids or devices that you usually use for any of these activities [Wheelchair],Yes,4044714,Using wheelchair
+HAQ02SQ008,HAQ02[SQ008]. 1b. Please tick any aids or devices that you usually use for any of these activities [Wheelchair],No,0,Not mapped
+HAQ03HAQ03SQ1,HAQ03[HAQ03SQ1]. 1c. Please tick any categories for which you usually need help from another person. [Dressing and grooming],Yes,4043370,Needs help with dressing
+HAQ03HAQ03SQ1,HAQ03[HAQ03SQ1]. 1c. Please tick any categories for which you usually need help from another person. [Dressing and grooming],No,0,Not mapped
+HAQ03HAQ03SQ2,HAQ03[HAQ03SQ2]. 1c. Please tick any categories for which you usually need help from another person. [Rising],Yes,42689898,Difficulty rising from chair without assistance
+HAQ03HAQ03SQ2,HAQ03[HAQ03SQ2]. 1c. Please tick any categories for which you usually need help from another person. [Rising],No,0,Not mapped
+HAQ03HAQ03SQ3,HAQ03[HAQ03SQ3]. 1c. Please tick any categories for which you usually need help from another person. [Eating],Yes,4012838,Needs help with feeding
+HAQ03HAQ03SQ3,HAQ03[HAQ03SQ3]. 1c. Please tick any categories for which you usually need help from another person. [Eating],No,0,Not mapped
+HAQ03HAQ03SQ4,HAQ03[HAQ03SQ4]. 1c. Please tick any categories for which you usually need help from another person. [Walking],Yes,1450204,Needs help with walking
+HAQ03HAQ03SQ4,HAQ03[HAQ03SQ4]. 1c. Please tick any categories for which you usually need help from another person. [Walking],No,0,Not mapped
+HAQ03HAQ03SQ5,HAQ03[HAQ03SQ5]. 1c. Please tick any categories for which you usually need help from another person. [None of the above],Yes,2000000146,Needs help from another person - other category
+HAQ03HAQ03SQ5,HAQ03[HAQ03SQ5]. 1c. Please tick any categories for which you usually need help from another person. [None of the above],No,0,Not mapped
+HAQ05HAQ05SQ1,HAQ05[HAQ05SQ1]. 2b. Please tick any aids or devices that you usually use for any of these activities [I do not use aids],Yes,2000000025,Patient does not use aiding devices
+HAQ05HAQ05SQ1,HAQ05[HAQ05SQ1]. 2b. Please tick any aids or devices that you usually use for any of these activities [I do not use aids],No,0,Not mapped
+HAQ05HAQ05SQ2,HAQ05[HAQ05SQ2]. 2b. Please tick any aids or devices that you usually use for any of these activities [Long-handled appliances for reach],Yes,2000000024,Patient uses long-handled appliances for reach
+HAQ05HAQ05SQ2,HAQ05[HAQ05SQ2]. 2b. Please tick any aids or devices that you usually use for any of these activities [Long-handled appliances for reach],No,0,Not mapped
+HAQ05HAQ05SQ3,HAQ05[HAQ05SQ3]. 2b. Please tick any aids or devices that you usually use for any of these activities [Raised toilet seat],Yes,2000000026,Patient uses raised toilet seat
+HAQ05HAQ05SQ3,HAQ05[HAQ05SQ3]. 2b. Please tick any aids or devices that you usually use for any of these activities [Raised toilet seat],No,0,Not mapped
+HAQ05HAQ05SQ4,HAQ05[HAQ05SQ4]. 2b. Please tick any aids or devices that you usually use for any of these activities [ Bath seat],Yes,2000000027,Patient uses bath seat
+HAQ05HAQ05SQ4,HAQ05[HAQ05SQ4]. 2b. Please tick any aids or devices that you usually use for any of these activities [ Bath seat],No,0,Not mapped
+HAQ05HAQ05SQ5,HAQ05[HAQ05SQ5]. 2b. Please tick any aids or devices that you usually use for any of these activities [Jar opener (for jars previously opened) ],Yes,2000000028,Patient uses jar opener
+HAQ05HAQ05SQ5,HAQ05[HAQ05SQ5]. 2b. Please tick any aids or devices that you usually use for any of these activities [Jar opener (for jars previously opened) ],No,0,Not mapped
+HAQ06HAQ06SQ1,HAQ06[HAQ06SQ1]. 2c. Please tick any categories for which you usually need help from another person. [Hygiene],Yes,2000000035,Personal assistance needed - Hygiene
+HAQ06HAQ06SQ1,HAQ06[HAQ06SQ1]. 2c. Please tick any categories for which you usually need help from another person. [Hygiene],No,0,Not mapped
+HAQ06HAQ06SQ2,HAQ06[HAQ06SQ2]. 2c. Please tick any categories for which you usually need help from another person. [Reach],Yes,2000000036,Personal assistance needed - Reach
+HAQ06HAQ06SQ2,HAQ06[HAQ06SQ2]. 2c. Please tick any categories for which you usually need help from another person. [Reach],No,0,Not mapped
+HAQ06HAQ06SQ3,HAQ06[HAQ06SQ3]. 2c. Please tick any categories for which you usually need help from another person. [Gripping & opening things],Yes,2000000037,Personal assistance needed - Gripping & opening
+HAQ06HAQ06SQ3,HAQ06[HAQ06SQ3]. 2c. Please tick any categories for which you usually need help from another person. [Gripping & opening things],No,0,Not mapped
+HAQ06HAQ06SQ4,HAQ06[HAQ06SQ4]. 2c. Please tick any categories for which you usually need help from another person. [Errands & housework],Yes,2000000038,Personal assistance needed - Errands & housework
+HAQ06HAQ06SQ4,HAQ06[HAQ06SQ4]. 2c. Please tick any categories for which you usually need help from another person. [Errands & housework],No,0,Not mapped
+HAQ06HAQ06SQ5,HAQ06[HAQ06SQ5]. 2c. Please tick any categories for which you usually need help from another person. [None of the above],No,2000000039,No need for personal assistance
+HAQ06HAQ06SQ5,HAQ06[HAQ06SQ5]. 2c. Please tick any categories for which you usually need help from another person. [None of the above],Yes,0,Not mapped
+SF04SF041,"SF04[SF041]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Cut down the amount of time you spent on work or other activities]",Yes,42869677,"As a result of your physical health, have you cut down the amount of time you spent on work or other activities in the past 4 weeks [Veterans RAND]"
+SF04SF041,"SF04[SF041]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Cut down the amount of time you spent on work or other activities]",No,0,Not mapped
+SF04SF042,"SF04[SF042]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Accomplished less than you would have liked]",Yes,42869676,"As a result of your physical health, have you accomplished less than you would like in the past 4 weeks [Veterans RAND]"
+SF04SF042,"SF04[SF042]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Accomplished less than you would have liked]",No,0,Not mapped
+SF04SF043,"SF04[SF043]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Were limited in the kind of work or other activities]",Yes,42869675,"As a result of your physical health, were you limited in the kind of work in the past 4 weeks [Veterans RAND]"
+SF04SF043,"SF04[SF043]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Were limited in the kind of work or other activities]",No,0,Not mapped
+SF04SF044,"SF04[SF044]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Had difficulty performing the work or other activities (for example,     it took extra effort)]",No,0,Not mapped
+SF04SF044,"SF04[SF044]. 4. During the past 4 weeks, have you had any of the following problems with your work or other daily activities as   a result of your physical health? [Had difficulty performing the work or other activities (for example,     it took extra effort)]",Yes,42869674,"As a result of your physical health, have you had difficulty performing the work or other activities - for example, it took extra effort in the past 4 weeks [Veterans RAND]"
+SF05SF051,"SF05[SF051]. 5. During the past 4 weeks, have you had any problems with your work or other regular daily activities as a result of any emotional problems (such as feeling depressed or anxious)? [Cut down the amount of time you spent on work or other activities]",Yes,42869673,"As a result of any emotional problems, have you cut down the amount of time you spent on work or other activities in the past 4 weeks [Veterans RAND]"
+SF05SF051,"SF05[SF051]. 5. During the past 4 weeks, have you had any problems with your work or other regular daily activities as a result of any emotional problems (such as feeling depressed or anxious)? [Cut down the amount of time you spent on work or other activities]",No,0,Not mapped
+SF05SF052,"SF05[SF052]. 5. During the past 4 weeks, have you had any problems with your work or other regular daily activities as a result of any emotional problems (such as feeling depressed or anxious)? [Accomplished less than you would have liked]",Yes,42869672,"As a result of any emotional problems, have you accomplished less than you would like in the past 4 weeks [Veterans RAND]"
+SF05SF052,"SF05[SF052]. 5. During the past 4 weeks, have you had any problems with your work or other regular daily activities as a result of any emotional problems (such as feeling depressed or anxious)? [Accomplished less than you would have liked]",No,0,Not mapped
+SF05SF053,"SF05[SF053]. 5. During the past 4 weeks, have you had any problems with your work or other regular daily activities as a result of any emotional problems (such as feeling depressed or anxious)? [Didn’t do work or other activities as carefully as usual]",Yes,42869671,"As a result of any emotional problems, you didn't do work or other activities as carefully as usual in the past 4 weeks [Veterans RAND]"
+SF05SF053,"SF05[SF053]. 5. During the past 4 weeks, have you had any problems with your work or other regular daily activities as a result of any emotional problems (such as feeling depressed or anxious)? [Didn’t do work or other activities as carefully as usual]",No,0,Not mapped
+WPAIQ1,WPAIQ1. 1. Are you currently employed (working for pay)?,Yes,42690180,Does paid work
+WPAIQ1,WPAIQ1. 1. Are you currently employed (working for pay)?,No,0,Not mapped
+Q2SQ001,"Q2[SQ001]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [No]",No,2000000164,"No hair dye, bleach, or perm in past 6 months"
+Q2SQ001,"Q2[SQ001]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [No]",Yes,0,Not mapped
+Q2SQ002,"Q2[SQ002]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, bleached ]",No,0,Not mapped
+Q2SQ002,"Q2[SQ002]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, bleached ]",Yes,2000000085,Hair Treatment in Past 6 Months - Bleached
+Q2SQ003,"Q2[SQ003]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, dyed ]",Yes,2000000086,Hair Treatment in Past 6 Months - Dyed
+Q2SQ003,"Q2[SQ003]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, dyed ]",No,0,Not mapped
+Q2SQ004,"Q2[SQ004]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, permed ]",No,2000000087,Hair Treatment in Past 6 Months - Permed
+Q2SQ004,"Q2[SQ004]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, permed ]",Yes,0,Not mapped
+Q2SQ005,"Q2[SQ005]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, straightened ]",No,2000000088,Hair Treatment in Past 6 Months - Straightened
+Q2SQ005,"Q2[SQ005]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, straightened ]",Yes,0,Not mapped
+Q2SQ006,"Q2[SQ006]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, otherwise:]",No,0,Not mapped
+Q2SQ006,"Q2[SQ006]. 2. Has your hair been dyed, bleached, or permed in the previous 6 months?  [Yes, otherwise:]",Yes,2000000089,Hair Treatment in Past 6 Months - Other
+Q5,Q5. 5. Do you regularly sweat excessively on your head?,No (or rarely),0,Not mapped
+Q5,Q5. 5. Do you regularly sweat excessively on your head?,Yes,2000000092,Regular Excessive Head Sweating
+Q8,"Q8. 8. Have  you use corticosteroids during the past three months (such as prednisone, advair, nasonex, symbicort, fluticasone , avamys, pulmicort, rhinocort, beclometasone, triamcinolon, daktacort , hydrocortisone)?",Yes,2000000095,Corticosteroid Use in Past 3 Months
+Q8,"Q8. 8. Have  you use corticosteroids during the past three months (such as prednisone, advair, nasonex, symbicort, fluticasone , avamys, pulmicort, rhinocort, beclometasone, triamcinolon, daktacort , hydrocortisone)?",No,0,Not mapped

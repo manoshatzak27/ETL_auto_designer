@@ -1,3 +1,21 @@
+export interface SourceFile {
+  filename: string
+  delimiter: string
+  encoding: string
+  columns: string[]
+  row_count: number
+  size_bytes?: number
+}
+
+export interface SourceFileContent {
+  filename: string
+  delimiter: string
+  encoding: string
+  columns: string[]
+  rows: Record<string, string>[]
+  row_count: number
+}
+
 export interface ProjectSummary {
   id: string
   name: string
@@ -6,6 +24,12 @@ export interface ProjectSummary {
   updated_at: string
   source_filename: string
   last_execution_status: string
+  // Enough of the project to show its wizard progress on the Dashboard.
+  generated_tables: string[]
+  enabled_tables: string[]
+  has_mapping_files: boolean
+  stale_scripts: string[]
+  mapping_files_stale: boolean
 }
 
 export interface Project {
@@ -19,33 +43,67 @@ export interface Project {
   source_encoding: string
   source_columns: string[]
   source_row_count: number
-  etl_config: Record<string, unknown>
+  etl_config: Record<string, { enabled?: boolean } & Record<string, unknown>>
   generated_code: string
   generated_scripts: Record<string, string>
+  generated_scripts_usage: Record<string, { used: number; limit: number }>
   last_execution_status: string
+  last_execution_log?: string
   output_files: string[]
   mapping_files: Record<string, string>
+  custom_vocabulary_id?: string
+  source_files: SourceFile[]
+  /** Tables whose script currently holds a change applied from the AI chat. */
+  chat_edited_tables?: string[]
+  /** Scripts whose settings changed since they were generated. */
+  stale_scripts?: string[]
+  /** The mapping CSVs were generated from different Concepts decisions. */
+  mapping_files_stale?: boolean
 }
 
 // ---- Per-table config shapes ----
 
-export interface PersonConfig {
-  enabled: boolean
+export interface PersonFileConfig {
   mappings: {
     person_id: FieldMapping
     gender_concept_id: FieldMappingWithValueMap
     year_of_birth: DateFieldMapping
     month_of_birth?: DateFieldMapping
     day_of_birth?: DateFieldMapping
-    race_concept_id?: ConstantMapping
-    ethnicity_concept_id?: ConstantMapping
+    race_concept_id?: RaceEthnicityMapping | ConstantMapping
+    ethnicity_concept_id?: RaceEthnicityMapping | ConstantMapping
+    location_id?: RaceEthnicityMapping
   }
+  birth_time_col?: string
+  birth_time_format?: string
+  required_source_cols?: string[]
+  // UI mode persistence
+  gender_mode?: 'column' | 'default'
+  race_mode?: 'column' | 'default'
+  ethnicity_mode?: 'column' | 'default'
+}
+
+export interface PersonConfig {
+  enabled: boolean
+  // Ordered list of selected source files; first = primary
+  source_files: string[]
+  // Per-file column mappings
+  file_configs: Record<string, PersonFileConfig>
   required_source_cols: string[]
+  // Legacy single-file fields kept for migration of old saved configs
+  mappings?: PersonFileConfig['mappings']
+  source_filename?: string
+  birth_time_col?: string
+  birth_time_format?: string
+  gender_mode?: 'column' | 'default'
+  race_mode?: 'column' | 'default'
+  ethnicity_mode?: 'column' | 'default'
 }
 
 export interface FieldMapping {
   source_col: string
   transform?: string
+  auto_increment?: boolean
 }
 
 export interface FieldMappingWithValueMap extends FieldMapping {
@@ -62,26 +120,213 @@ export interface ConstantMapping {
   constant: number
 }
 
+
+export interface RaceEthnicityMapping {
+  source_col: string
+  value_map: Record<string, number>
+  default: number
+}
+
 export interface VisitDefinition {
   label: string
   date_col: string
+  time_col?: string
+  end_date_col?: string
+  end_time_col?: string
+  date_format?: string
+  time_format?: string
+  // visit_concept_id: fixed concept or default when column mapping is used
   visit_concept_id: number
+  visit_concept_source_col?: string
+  visit_concept_value_map?: Record<string, number>
+  // type_concept_id: fixed concept or default when column mapping is used
   type_concept_id: number
-  source_value: string
+  visit_type_source_col?: string
+  visit_type_value_map?: Record<string, number>
   optional: boolean
+  // UI mode persistence
+  visit_concept_mode?: 'column' | 'default'
+  visit_type_mode?: 'column' | 'default'
+  // inpatient fields
+  admitted_from_concept_id?: number
+  admitted_from_source_col?: string
+  admitted_from_value_map?: Record<string, number>
+  admitted_from_source_value?: string
+  discharged_to_concept_id?: number
+  discharged_to_source_col?: string
+  discharged_to_value_map?: Record<string, number>
+  discharged_to_source_value?: string
+}
+
+export interface PerFileVisitConfig {
+  source_filename: string
+  visit_definitions: VisitDefinition[]
+  visit_source_col?: string
+  auto_number_visits?: boolean
 }
 
 export interface VisitOccurrenceConfig {
   enabled: boolean
+  file_configs?: PerFileVisitConfig[]
+  // Legacy single-file fields (preserved for backward compat):
   visit_definitions: VisitDefinition[]
+  visit_source_col?: string
+  auto_number_visits?: boolean
+}
+
+export interface ObsPeriodFallbackEntry {
+  type: 'column' | 'start_date' | 'today'
+  col?: string
+  source_filename?: string
 }
 
 export interface ObservationPeriodConfig {
   enabled: boolean
   start_date_col: string
+  start_date_file?: string
   end_date_col: string
-  end_date_fallback: 'start_date' | 'today'
+  end_date_file?: string
+  end_date_fallbacks?: ObsPeriodFallbackEntry[]
+  end_date_fallback?: 'start_date' | 'today'
   period_type_concept_id: number
+  date_format?: string
+}
+
+export interface LocationFileConfig {
+  // Patient identifier — used for cross-file deduplication in multi-source mode
+  person_id_col: string
+  // Person address columns
+  address_1_col: string
+  address_2_col: string
+  city_col: string
+  state_col: string
+  zip_col: string
+  county_col: string
+  county_source_value: string
+  country_col: string
+  country_source_value: string
+  latitude_col: string
+  longitude_col: string
+  // Care site address columns
+  cs_address_1_col: string
+  cs_address_2_col: string
+  cs_city_col: string
+  cs_state_col: string
+  cs_zip_col: string
+  cs_county_col: string
+  cs_county_source_value: string
+  cs_country_col: string
+  cs_country_source_value: string
+  cs_latitude_col: string
+  cs_longitude_col: string
+  // Country concept maps
+  country_concept_id_map: Record<string, number>
+  country_concept_id_default: number
+  cs_country_concept_id_map: Record<string, number>
+  cs_country_concept_id_default: number
+  // UI mode persistence
+  country_mode?: 'column' | 'default'
+  cs_country_mode?: 'column' | 'default'
+}
+
+export interface LocationConfig {
+  enabled: boolean
+  source_files: string[]
+  file_configs: Record<string, LocationFileConfig>
+  person_id_auto_increment?: boolean
+  // Legacy single-file fields kept for migration
+  person_id_col?: string
+  address_1_col?: string
+  address_2_col?: string
+  city_col?: string
+  state_col?: string
+  zip_col?: string
+  county_col?: string
+  county_source_value?: string
+  country_col?: string
+  country_source_value?: string
+  latitude_col?: string
+  longitude_col?: string
+  cs_address_1_col?: string
+  cs_address_2_col?: string
+  cs_city_col?: string
+  cs_state_col?: string
+  cs_zip_col?: string
+  cs_county_col?: string
+  cs_county_source_value?: string
+  cs_country_col?: string
+  cs_country_source_value?: string
+  cs_latitude_col?: string
+  cs_longitude_col?: string
+  country_concept_id_map?: Record<string, number>
+  country_concept_id_default?: number
+  cs_country_concept_id_map?: Record<string, number>
+  cs_country_concept_id_default?: number
+  country_mode?: 'column' | 'default'
+  cs_country_mode?: 'column' | 'default'
+  source_filename?: string
+}
+
+export interface CareSiteFileConfig {
+  // Patient identifier — used for cross-file deduplication in multi-source mode
+  person_id_col: string
+  care_site_name_col: string
+  place_of_service_col: string
+  place_of_service_value_map: Record<string, number>
+}
+
+export interface CareSiteConfig {
+  enabled: boolean
+  source_files: string[]
+  file_configs: Record<string, CareSiteFileConfig>
+  person_id_auto_increment?: boolean
+  // Legacy single-file fields kept for migration
+  care_site_name_col?: string
+  place_of_service_col?: string
+  place_of_service_value_map?: Record<string, number>
+  source_filename?: string
+}
+
+export interface ProviderFileConfig {
+  // Patient identifier — used for cross-file deduplication in multi-source mode
+  person_id_col: string
+  provider_name_col: string
+  npi_col: string
+  dea_col: string
+  specialty_concept_id?: number | null
+  specialty_concept_value_map?: Record<string, number>
+  prefix_specialty?: string
+  prefix_specialty_concept_id?: number | null
+  year_of_birth_col: string
+  gender_concept_value_map?: Record<string, number>
+  gender_concept_id_default?: number
+  specialty_source_value_col: string
+  gender_source_value_col: string
+  specialty_mode?: 'column' | 'prefix'
+  gender_mode?: 'column' | 'default'
+}
+
+export interface ProviderConfig {
+  enabled: boolean
+  source_files: string[]
+  file_configs: Record<string, ProviderFileConfig>
+  person_id_auto_increment?: boolean
+  // Legacy single-file fields kept for migration
+  provider_name_col?: string
+  npi_col?: string
+  dea_col?: string
+  specialty_concept_id?: number | null
+  specialty_concept_value_map?: Record<string, number>
+  prefix_specialty?: string
+  prefix_specialty_concept_id?: number | null
+  year_of_birth_col?: string
+  gender_concept_value_map?: Record<string, number>
+  gender_concept_id_default?: number
+  specialty_source_value_col?: string
+  gender_source_value_col?: string
+  specialty_mode?: 'column' | 'prefix'
+  gender_mode?: 'column' | 'default'
+  source_filename?: string
 }
 
 export interface StemTableOverride {
@@ -95,6 +340,8 @@ export interface StemTableOverride {
 export interface StemTableConfig {
   enabled: boolean
   variable_groups: Record<string, string[]>
+  visit_labels?: string[]
+  variable_visit_map?: Record<string, string>
   concept_mapping_csvs: {
     variable_mapping?: string
     value_mapping?: string
@@ -107,19 +354,21 @@ export interface DeathConfig {
   enabled: boolean
   filter_col: string
   filter_value: string
-  date_method: 'onset_plus_years' | 'direct_col'
-  onset_col?: string
-  years_offset?: number
-  date_col?: string
+  death_date_col: string
+  death_datetime_col: string
+  date_format?: string
   death_type_concept_id: number
+  cause_concept_id: number | null
+  cause_source_value_col: string
+  cause_source_concept_id: number | null
 }
 
-export interface ConceptLink {
-  concept_name: string
-  concept_code: string
-  concept_id: number
-  domain: string
-  vocabulary_id: string
-  score: number
-  justification?: string
+export interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  table?: string
+  code_updated?: boolean
+  /** What became of the script the AI returned in this message. Older messages
+   *  have only code_updated: their code was applied as soon as it arrived. */
+  code_status?: 'proposed' | 'applied' | 'discarded' | 'superseded'
 }

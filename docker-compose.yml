@@ -1,0 +1,200 @@
+# ──────────────────────────────────────────────────────────────────────────────
+# OMOP ETL Auto-Designer — full development stack.
+#
+#   docker compose up --build
+#
+# Services:
+#   postgres       Stores the OMOP CDM v5.4 data and (optionally) vocabulary.
+#   omop-init      One-shot. Applies DDL + primary keys on first run.
+#   conceptmatcher The staged OMOP matching pipeline behind HTTP — every concept
+#                  search, and the Concepts step's "Load concepts" button.
+#   backend        FastAPI server (port 8000), with hot reload.
+#   frontend       Vite dev server (port 5173), with HMR.
+#
+# Wizard state (SQLite) stays inside the backend container under /app/etl_designer.db.
+# Postgres is used only for the final OMOP data load.
+# ──────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: omop-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-omop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      POSTGRES_DB: ${POSTGRES_DB:-omop}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omop} -d ${POSTGRES_DB:-omop}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  omop-init:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omop-init
+    restart: "no"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PGHOST: postgres
+      PGUSER: ${POSTGRES_USER:-omop}
+      PGPASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      PGDATABASE: ${POSTGRES_DB:-omop}
+      OMOP_DB_HOST: postgres
+      OMOP_DB_PORT: 5432
+      OMOP_DB_NAME: ${POSTGRES_DB:-omop}
+      OMOP_DB_USER: ${POSTGRES_USER:-omop}
+      OMOP_DB_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      OMOP_DEFAULT_SCHEMA: ${OMOP_SCHEMA:-cdm}
+      OMOP_VOCAB_SCHEMA: ${OMOP_VOCAB_SCHEMA:-vocab}
+    volumes:
+      - ./backend:/app
+      - ./scripts/init-omop.sh:/init-omop.sh:ro
+    entrypoint: ["/bin/sh", "/init-omop.sh"]
+
+  # ────────────────────────────────────────────────────────────────────────
+  # The multi-stage concept matcher in ./conceptmatcher, run as `serve`
+  # (pipeline/service.py) instead of as a one-shot CLI.
+  #
+  # It reads the same Athena vocabulary as everything else here — the `vocab`
+  # schema in `postgres`, loaded by the Finalize step — filtering to standard,
+  # valid concepts itself, plus its own `pipeline` schema next to it. That
+  # schema is built by ./scripts/setup-conceptmatcher.sh, once the vocabulary
+  # is loaded and again after every reload; until then /health reports what is
+  # missing and the Concepts step says so.
+  #
+  # `image:` keeps the tag the matcher's standalone compose used, so an image
+  # built there is reused instead of building ~2GB of CPU torch again.
+  conceptmatcher:
+    build:
+      context: ./conceptmatcher
+      args:
+        WITH_EMBEDDINGS: ${CONCEPT_MATCHER_EMBEDDINGS:-1}
+    image: vocab-pipeline:latest
+    container_name: omop-conceptmatcher
+    restart: unless-stopped
+    command: ["serve"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      # Container-internal listen address, not the published host port below.
+      SERVICE_HOST: 0.0.0.0
+      SERVICE_PORT: 8000
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: ${POSTGRES_DB:-omop}
+      POSTGRES_USER: ${POSTGRES_USER:-omop}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      # Tuning overrides live in conceptmatcher/data/pipeline.json (copied from
+      # conceptmatcher/pipeline.example.json). config.py tolerates it being absent.
+      PIPELINE_CONFIG: /app/data/pipeline.json
+    volumes:
+      # The pipeline source, mounted read-only over the image's own copy, so a
+      # changed threshold, stopword list or scoring stage takes effect without
+      # rebuilding ~2GB of image. Without this the service runs whatever was
+      # baked in whenever the image was last built, which is silently stale the
+      # moment the matcher is worked on.
+      #
+      # This is a long-running process, so an edit needs
+      # `docker compose restart conceptmatcher` to be picked up. Dependency
+      # changes (requirements.txt) still need a rebuild.
+      - ./conceptmatcher/pipeline:/app/pipeline:ro
+      # Writable for conceptmatcher/pipeline.sh, which runs the CLI in this
+      # service and writes batch outputs there; the server itself only reads.
+      - ./conceptmatcher/data:/app/data
+      # ~90MB for the default MiniLM, downloaded once rather than on every
+      # container recreate.
+      - conceptmatcher_hf_cache:/cache/huggingface
+    ports:
+      - "${CONCEPT_MATCHER_PORT:-8002}:8000"
+    healthcheck:
+      # /health reports on the built matcher — the connection pool, the IDF index
+      # and the embedding model. The service warms all three up in the background
+      # at startup, but a probe that arrives mid-warmup blocks behind it, so both
+      # the timeout and the start period allow for a model load.
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health').read()"]
+      interval: 30s
+      timeout: 60s
+      retries: 5
+      start_period: 120s
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: omop-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      omop-init:
+        condition: service_completed_successfully
+      conceptmatcher:
+        condition: service_started
+    environment:
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o}
+      CONCEPT_MATCHER_URL: http://conceptmatcher:8000
+      OMOP_DB_HOST: postgres
+      OMOP_DB_PORT: 5432
+      OMOP_DB_NAME: ${POSTGRES_DB:-omop}
+      OMOP_DB_USER: ${POSTGRES_USER:-omop}
+      OMOP_DB_PASSWORD: ${POSTGRES_PASSWORD:-omop_pwd}
+      OMOP_DEFAULT_SCHEMA: ${OMOP_SCHEMA:-cdm}
+      OMOP_VOCAB_SCHEMA: ${OMOP_VOCAB_SCHEMA:-vocab}
+      ATHENA_BUNDLE_ROOT: /vocab
+      DATABASE_URL: sqlite:////app/etl_designer.db
+      UPLOAD_DIR: /app/uploads
+      OUTPUT_DIR: /app/outputs
+    volumes:
+      - ./backend:/app
+      - uploads_data:/app/uploads
+      - outputs_data:/app/outputs
+      - ${ATHENA_BUNDLE_PATH:-./vocab_bundle}:/vocab:ro
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: omop-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      VITE_API_TARGET: http://backend:8000
+      # Force Vite to poll the bind-mounted filesystem. Native inotify events
+      # don't propagate from a Windows host into a Linux container, nor through
+      # Docker Desktop's VirtioFS on Linux, so without this Vite never learns a
+      # file changed and keeps serving the transform it cached at startup —
+      # host-side edits appear to do nothing until the container is restarted.
+      #
+      # These are read by frontend/vite.config.ts, which passes them to
+      # server.watch. They used to work on their own, when Vite watched through
+      # chokidar and chokidar read them from the environment; Vite's own watcher
+      # does not, so the names are kept but the wiring is explicit now.
+      CHOKIDAR_USEPOLLING: "true"
+      CHOKIDAR_INTERVAL: "500"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    command: npm run dev -- --host 0.0.0.0
+
+volumes:
+  pgdata:
+  uploads_data:
+  outputs_data:
+  conceptmatcher_hf_cache:

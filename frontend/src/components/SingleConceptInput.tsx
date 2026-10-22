@@ -1,0 +1,218 @@
+import { useState, useEffect } from 'react'
+import { lookupConceptDomain, standardConceptError, invalidReasonLabel } from '../api/client'
+import DomainConceptSearch from './DomainConceptSearch'
+import { Loader2, AlertTriangle, CheckCircle, X, Search } from 'lucide-react'
+
+interface Props {
+  value: number | null | undefined
+  onChange: (v: number | null) => void
+  onConceptName?: (name: string | null) => void
+  placeholder?: string
+  className?: string
+  /** If set, concept IDs outside this domain are rejected instead of accepted. */
+  expectedDomain?: string
+  /** With expectedDomain (or searchDomain), enables a concept search beside the input. */
+  projectId?: string
+  /** The domain to search when the field accepts any domain (no expectedDomain),
+   *  e.g. cause of death → Condition. Does not restrict what can be set. */
+  searchDomain?: string
+}
+
+export default function SingleConceptInput({ value, onChange, onConceptName, placeholder = 'Concept ID', className, expectedDomain, projectId, searchDomain }: Props) {
+  const [searching, setSearching] = useState(false)
+  const [pending, setPending] = useState('')
+  const [lookingUp, setLookingUp] = useState(false)
+  const [domain, setDomain] = useState<string | null>(null)
+  const [conceptName, setConceptName] = useState<string | null>(null)
+  const [standardConcept, setStandardConcept] = useState<string | null>(null)
+  const [invalidReason, setInvalidReason] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [notFound, setNotFound] = useState(false)
+  const [commitError, setCommitError] = useState<string | null>(null)
+
+  const hasValue = value != null && value > 0
+
+  useEffect(() => {
+    if (!hasValue) {
+      setDomain(null)
+      setStandardConcept(null)
+      setInvalidReason(null)
+      setConceptName(null)
+      setFailed(false)
+      setNotFound(false)
+      return
+    }
+    setLookingUp(true)
+    setDomain(null)
+    setStandardConcept(null)
+    setInvalidReason(null)
+    setConceptName(null)
+    setFailed(false)
+    setNotFound(false)
+    lookupConceptDomain(value as number)
+      .then(res => {
+        if (res.found && res.domain_id) {
+          setDomain(res.domain_id)
+          setConceptName(res.concept_name ?? null)
+          setStandardConcept(res.standard_concept)
+          setInvalidReason(res.invalid_reason)
+          onConceptName?.(res.concept_name ?? null)
+        } else {
+          setDomain(null)
+          // No vocabulary to check against (empty / unreachable) ≠ "not found".
+          if (res.vocab_available) setNotFound(true)
+          else setFailed(true)
+          onConceptName?.(null)
+        }
+      })
+      .catch(() => setFailed(true))
+      .finally(() => setLookingUp(false))
+  }, [value, hasValue])
+
+  const mismatch = !!expectedDomain && !!domain && domain.toLowerCase() !== expectedDomain.toLowerCase()
+  const nonStandard = !!domain && standardConcept !== 'S'
+  const invalidConcept = !!domain && !!invalidReason
+
+  // Always look the id up: an unknown, invalid or non-standard concept must never be set.
+  const commit = async () => {
+    const id = parseInt(pending)
+    if (isNaN(id) || id < 1) return
+    setCommitError(null)
+    setLookingUp(true)
+    try {
+      const res = await lookupConceptDomain(id)
+      const err = standardConceptError(id, res)
+      if (err) {
+        setCommitError(err)
+        return
+      }
+      if (expectedDomain && res.domain_id && res.domain_id.toLowerCase() !== expectedDomain.toLowerCase()) {
+        setCommitError(`Concept ${id} belongs to domain "${res.domain_id}", expected "${expectedDomain}".`)
+        return
+      }
+      onChange(id)
+      onConceptName?.(res.concept_name ?? null)
+      setPending('')
+    } catch {
+      setCommitError("Couldn't verify this concept — please try again.")
+    } finally {
+      setLookingUp(false)
+    }
+  }
+
+  const searchIn = expectedDomain ?? searchDomain
+  const searchToggle = projectId && searchIn && (
+    <button
+      type="button"
+      onClick={() => setSearching(s => !s)}
+      className={`flex-shrink-0 ${searching ? 'text-primary' : 'text-muted-foreground hover:text-primary'}`}
+      title={`Search ${searchIn} concepts`}
+    >
+      <Search className="w-4 h-4" />
+    </button>
+  )
+  const searchPanel = projectId && searchIn && searching && (
+    <div className="max-w-md">
+      <DomainConceptSearch
+        projectId={projectId}
+        domain={searchIn}
+        onSelect={c => {
+          onChange(c.concept_id)
+          onConceptName?.(c.concept_name)
+          setPending('')
+          setCommitError(null)
+          setSearching(false)
+        }}
+        onClose={() => setSearching(false)}
+      />
+    </div>
+  )
+
+  if (hasValue) {
+    // Unverified (no vocabulary / lookup failed) isn't wrong, but it isn't a green check either.
+    const invalid = mismatch || notFound || invalidConcept || nonStandard || failed
+    return (
+      <div className={`flex flex-col gap-1 mt-1 ${className ?? ''}`}>
+        <div className="flex items-center gap-1.5">
+          <div className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs ${invalid ? 'bg-amber-50 border-amber-200 text-amber-800' : 'bg-green-50 border-green-200 text-green-800'}`}>
+            {invalid ? <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0" /> : <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+            <span className="font-semibold font-mono">{value}</span>
+            {conceptName && <span className="truncate" title={conceptName}>({conceptName})</span>}
+            {lookingUp ? (
+              <>
+                <Loader2 className="w-3 h-3 animate-spin flex-shrink-0 ml-1" />
+                <span className="ml-0.5">Looking up domain…</span>
+              </>
+            ) : domain ? (
+              <span className={`ml-1 text-[10px] px-1 rounded ${mismatch ? 'text-amber-700 bg-amber-100' : 'text-indigo-700 bg-indigo-100'}`}>{domain}</span>
+            ) : failed ? (
+              <>
+                <AlertTriangle className="w-3 h-3 flex-shrink-0 ml-1 text-amber-500" />
+                <span className="ml-0.5 text-amber-700">Not verified</span>
+              </>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onChange(null)}
+              className="ml-2 text-muted-foreground hover:text-destructive"
+              title="Clear"
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          {searchToggle}
+        </div>
+        {!lookingUp && mismatch && (
+          <p className="text-xs text-amber-700">
+            Wrong concept domain: expected "{expectedDomain}", got "{domain}". Clear it and set a valid concept.
+          </p>
+        )}
+        {!lookingUp && notFound && (
+          <p className="text-xs text-amber-700">Concept {value} was not found in the vocabulary. Clear it and set a valid concept.</p>
+        )}
+        {!lookingUp && failed && (
+          <p className="text-xs text-amber-700">
+            Couldn't check concept {value} — the OMOP vocabulary isn't loaded or the database is unreachable.
+          </p>
+        )}
+        {!lookingUp && !mismatch && !notFound && invalidConcept && (
+          <p className="text-xs text-amber-700">
+            Concept {value} is invalid — {invalidReasonLabel(invalidReason as string)}. Clear it and set a valid concept.
+          </p>
+        )}
+        {!lookingUp && !mismatch && !notFound && !invalidConcept && nonStandard && (
+          <p className="text-xs text-amber-700">
+            Concept {value} is not a standard concept. Clear it and set a valid concept.
+          </p>
+        )}
+        {searchPanel}
+      </div>
+    )
+  }
+
+  return (
+    <div className={`flex flex-col gap-1 mt-1 ${className ?? ''}`}>
+      <div className="flex items-center gap-1.5">
+        <input
+          type="number"
+          value={pending}
+          onChange={e => { setPending(e.target.value); setCommitError(null) }}
+          onKeyDown={e => e.key === 'Enter' && commit()}
+          placeholder={placeholder}
+          className="border border-border rounded px-2 py-1.5 text-sm w-40 focus:outline-none focus:ring-1 focus:ring-ring bg-background text-foreground"
+        />
+        <button
+          type="button"
+          onClick={commit}
+          disabled={!pending || lookingUp}
+          className="px-3 py-1.5 text-sm bg-primary text-primary-foreground rounded disabled:opacity-30 hover:bg-primary/90"
+        >
+          {lookingUp ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : 'Set'}
+        </button>
+        {searchToggle}
+      </div>
+      {commitError && <p className="text-xs text-destructive">{commitError}</p>}
+      {searchPanel}
+    </div>
+  )
+}

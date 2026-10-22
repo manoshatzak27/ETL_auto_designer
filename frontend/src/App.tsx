@@ -1,21 +1,56 @@
 import { BrowserRouter, Routes, Route, useParams, Navigate } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
+import { GenerationProvider } from './context/GenerationContext'
+import { StepFileSelectionContext } from './contexts/StepFileSelectionContext'
+import { AutoRunProvider } from './contexts/AutoRunContext'
+import { ConceptMatcherProvider } from './contexts/ConceptMatcherContext'
+import AutoRunBanner from './components/AutoRunBanner'
 import Dashboard from './pages/Dashboard'
-import Step1Upload from './pages/wizard/Step1_Upload'
-import Step2ConceptMapping from './pages/wizard/Step2_ConceptMapping'
-import Step3Person from './pages/wizard/Step2_Person'
-import Step4Visit from './pages/wizard/Step3_Visit'
-import Step5ObsPeriod from './pages/wizard/Step4_ObsPeriod'
-import Step6StemTable from './pages/wizard/Step5_StemTable'
-import Step7Death from './pages/wizard/Step6_Death'
-import Step8Generate from './pages/wizard/Step7_Generate'
+import SourceStep from './pages/wizard/SourceStep'
+import LocationStep from './pages/wizard/LocationStep'
+import CareSiteStep from './pages/wizard/CareSiteStep'
+import ProviderStep from './pages/wizard/ProviderStep'
+import PersonStep from './pages/wizard/PersonStep'
+import VisitStep from './pages/wizard/VisitStep'
+import ObsPeriodStep from './pages/wizard/ObsPeriodStep'
+import ConceptsStep from './pages/wizard/ConceptsStep'
+import StemTableStep from './pages/wizard/StemTableStep'
+import DeathStep from './pages/wizard/DeathStep'
+import FinalizeStep from './pages/wizard/FinalizeStep'
+import LogViewer from './pages/LogViewer'
+import ChatPanel from './components/ChatPanel'
+import { ConfirmProvider } from './components/ConfirmDialog'
 import { getProject } from './api/client'
 import type { Project } from './types'
+import { LEGACY_NUMERIC_SLUGS, type WizardSlug } from './wizard/steps'
+import { rememberStep } from './wizard/progress'
+
+// Map slugs → step components. Adding a new step? Register here and in
+// frontend/src/wizard/steps.ts (the ALL_STEPS registry).
+const STEP_COMPONENTS: Record<WizardSlug, React.ComponentType<{ project: Project; onUpdate: (p: Project) => void }>> = {
+  source:       SourceStep,
+  location:     LocationStep,
+  'care-site':  CareSiteStep,
+  provider:     ProviderStep,
+  person:       PersonStep,
+  visit:        VisitStep,
+  'obs-period': ObsPeriodStep,
+  death:        DeathStep,
+  concepts:     ConceptsStep,
+  'stem-table': StemTableStep,
+  finalize:     FinalizeStep,
+}
 
 function ProjectWizard() {
   const { projectId, step } = useParams<{ projectId: string; step: string }>()
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
+  const fileSelections = useRef({ indices: {} as Record<string, number>, configs: {} as Record<string, Record<string, unknown>> })
+
+  // The Dashboard reopens the project on the step it was last open on.
+  useEffect(() => {
+    if (projectId && step && step in STEP_COMPONENTS) rememberStep(projectId, step as WizardSlug)
+  }, [projectId, step])
 
   useEffect(() => {
     if (!projectId) return
@@ -36,29 +71,44 @@ function ProjectWizard() {
     return <Navigate to="/" replace />
   }
 
+  // Legacy numeric URLs (/step/1 … /step/12) redirect to their slug equivalent.
+  if (step && step in LEGACY_NUMERIC_SLUGS) {
+    return <Navigate to={`/project/${projectId}/step/${LEGACY_NUMERIC_SLUGS[step]}`} replace />
+  }
+
+  const Comp = step ? STEP_COMPONENTS[step as WizardSlug] : undefined
+  if (!Comp) {
+    return <Navigate to={`/project/${projectId}/step/source`} replace />
+  }
+
   const update = (p: Project) => setProject(p)
 
-  switch (step) {
-    case '1': return <Step1Upload project={project} onUpdate={update} />
-    case '2': return <Step2ConceptMapping project={project} onUpdate={update} />
-    case '3': return <Step3Person project={project} onUpdate={update} />
-    case '4': return <Step4Visit project={project} onUpdate={update} />
-    case '5': return <Step5ObsPeriod project={project} onUpdate={update} />
-    case '6': return <Step6StemTable project={project} onUpdate={update} />
-    case '7': return <Step7Death project={project} onUpdate={update} />
-    case '8': return <Step8Generate project={project} onUpdate={update} />
-    default:  return <Navigate to={`/project/${projectId}/step/1`} replace />
-  }
+  return (
+    <StepFileSelectionContext.Provider value={fileSelections}>
+      <GenerationProvider>
+        <AutoRunProvider projectId={project.id}>
+          <ConceptMatcherProvider>
+            <Comp project={project} onUpdate={update} />
+            <AutoRunBanner />
+            <ChatPanel project={project} onUpdate={update} />
+          </ConceptMatcherProvider>
+        </AutoRunProvider>
+      </GenerationProvider>
+    </StepFileSelectionContext.Provider>
+  )
 }
 
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/project/:projectId/step/:step" element={<ProjectWizard />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <ConfirmProvider>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/project/:projectId/step/:step" element={<ProjectWizard />} />
+          <Route path="/project/:projectId/log" element={<LogViewer />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </ConfirmProvider>
     </BrowserRouter>
   )
 }

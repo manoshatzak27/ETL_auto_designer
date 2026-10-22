@@ -1,0 +1,15 @@
+--postgresql CDM Foreign Key Constraints for OMOP Common Data Model 5.4
+--
+-- These constraints are intentionally NOT applied by `omop-init`. They require
+-- (a) the vocabulary loaded, (b) the ETL data loaded, and (c) all FK targets
+-- present. Apply them manually after the loaders complete:
+--
+--   sed "s/@cdmDatabaseSchema/cdm/g" \
+--     backend/omop_ddl/OMOPCDM_postgresql_5.4_constraints.sql \
+--     | psql -h localhost -U omop -d omop
+--
+-- The full upstream file lives at:
+--   https://github.com/OHDSI/CommonDataModel/blob/v5.4/inst/ddl/5.4/postgresql/OMOPCDM_postgresql_5.4_constraints.sql
+--
+-- It is omitted from this repository to keep the docker bootstrap fast and to
+-- avoid blocking partial loads during development.

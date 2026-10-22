@@ -1,15 +1,36 @@
 """
-API routes for the concept mapping step (Step 2).
+API routes for the concept mapping step (Concepts step).
 
 Endpoints:
+  GET  /projects/concept-lookup              → look up domain for a concept_id in CONCEPT.csv
+  GET  /projects/concept-matcher/health      → readiness of the bulk matching pipeline
+  POST /projects/{id}/match-concepts         → map a list of source columns to concepts in bulk
+  POST /projects/{id}/match-values           → map a column's distinct values, one domain per column
+  POST /projects/{id}/suggest-value-concepts → suggest a concept per value within a known domain
+  GET  /projects/{id}/search-concepts        → free-text concept search within one domain
+  GET  /projects/{id}/column-descriptions    → the project's data dictionary
+  PUT  /projects/{id}/column-descriptions    → replace it (also used for single-column edits)
+  POST /projects/{id}/column-descriptions/upload   → merge in an uploaded CSV/Excel dictionary
+  GET  /projects/{id}/column-descriptions/template → a pre-filled CSV to fill in and upload back
   GET  /projects/{id}/column-values          → unique values per source column
   GET  /projects/{id}/concept-decisions       → load saved decisions
   POST /projects/{id}/concept-decisions       → save decisions (full replace)
   POST /projects/{id}/generate-mapping-csvs  → generate the 3 CSVs from decisions
+  GET  /projects/{id}/download-mapping-files → download the generated mapping CSVs as a zip
+  GET  /projects/{id}/download-mapping-summary → download a human-readable Excel summary of all decisions
 """
+import csv
+import re
+import io
+import shutil
+import tempfile
+import zipfile
+from collections import Counter
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 import pandas as pd
@@ -17,10 +38,1354 @@ import pandas as pd
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectResponse
-from app.services.mapping_generator import generate_mapping_csvs
+from app.services.column_descriptions import parse_descriptions
+from app.services.mapping_generator import generate_mapping_csvs, generate_mapping_summary_excel
+from app.services import script_inputs
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["concept-mapping"])
+
+# ── Concept lookup (vocab.concept) ──────────────────────────────────────────
+
+# Deliberately uncached: the vocabulary can be (re)loaded while the backend
+# runs, and a cached answer would outlive it — a concept looked up before the
+# load would stay "not found", and one deprecated by a newer vocabulary would
+# stay standard/valid. A primary-key lookup is cheap enough to do every time.
+class VocabNotLoaded(Exception):
+    """vocab.concept exists but is empty — the OMOP DDL is applied (omop-init
+    does that on first run) but no vocabulary has been loaded into it yet."""
+
+
+def _get_concept_info(concept_id: int) -> "tuple[str, str, str | None, str | None] | None":
+    """Look up (domain_id, concept_name, standard_concept, invalid_reason) for an OMOP concept by
+    querying the loaded vocabulary in Postgres. Returns None when the concept
+    genuinely isn't there. Raises on connection/query errors instead of
+    swallowing them, and VocabNotLoaded when the concept table is empty, so
+    callers can tell "not found" from "couldn't check"."""
+    if concept_id is None or concept_id <= 0:
+        return None
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = settings.omop_vocab_schema or "vocab"
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT domain_id, concept_name, standard_concept, invalid_reason FROM {schema}.concept WHERE concept_id = %s"
+                ).format(schema=pgsql.Identifier(schema)),
+                (int(concept_id),),
+            )
+            row = cur.fetchone()
+            if row and row[0] is not None:
+                return (
+                    str(row[0]),
+                    str(row[1]) if row[1] is not None else "",
+                    str(row[2]) if row[2] is not None else None,
+                    # Loader stores '' as NULL, but normalise in case a vocab was loaded another way.
+                    (str(row[3]).strip() or None) if row[3] is not None else None,
+                )
+            # Not found — but an empty table would say that about every id.
+            # Only checked on a miss, so found concepts cost nothing extra.
+            cur.execute(
+                pgsql.SQL("SELECT EXISTS (SELECT 1 FROM {schema}.concept)").format(
+                    schema=pgsql.Identifier(schema)
+                )
+            )
+            if not cur.fetchone()[0]:
+                raise VocabNotLoaded(f"{schema}.concept is empty")
+            return None
+
+
+def _get_concept_names(concept_ids: "set[int]") -> dict[int, str]:
+    """concept_id → concept_name for many concepts in one query. Ids missing
+    from the vocabulary are simply absent. Raises on connection/query errors."""
+    ids = sorted(cid for cid in concept_ids if cid > 0)
+    if not ids:
+        return {}
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = settings.omop_vocab_schema or "vocab"
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_id, concept_name FROM {schema}.concept WHERE concept_id = ANY(%s)"
+                ).format(schema=pgsql.Identifier(schema)),
+                (ids,),
+            )
+            return {int(cid): str(name) for cid, name in cur.fetchall() if name is not None}
+
+
+@router.get("/concept-lookup/domain")
+def concept_lookup(concept_id: int):
+    """Return the domain_id, concept_name and standard_concept flag for a given
+    concept_id by querying the loaded OMOP vocabulary in Postgres (vocab.concept).
+    standard_concept is 'S' for standard concepts, 'C' for classification
+    concepts, and null/None for non-standard concepts — per OMOP convention.
+    invalid_reason is null for valid concepts, 'D' (deleted) or 'U' (upgraded)
+    otherwise. vocab_available is False when no vocabulary is loaded (empty
+    concept table) or the lookup couldn't run at all, so callers can tell
+    "this concept doesn't exist" apart from "couldn't check".
+    """
+    try:
+        info = _get_concept_info(concept_id)
+    except VocabNotLoaded:
+        return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "invalid_reason": None, "found": False, "vocab_available": False}
+    except Exception as exc:
+        # Vocab schema/table missing or Postgres unreachable.
+        print(f"[concept-lookup] vocab.concept query failed: {exc}")
+        return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "invalid_reason": None, "found": False, "vocab_available": False}
+    if info:
+        domain, concept_name, standard_concept, invalid_reason = info
+        return {"concept_id": concept_id, "domain_id": domain, "concept_name": concept_name, "standard_concept": standard_concept, "invalid_reason": invalid_reason, "found": True, "vocab_available": True}
+    return {"concept_id": concept_id, "domain_id": None, "concept_name": None, "standard_concept": None, "invalid_reason": None, "found": False, "vocab_available": True}
+
+
+# ── Column descriptions (the project's data dictionary) ─────────────────────
+
+
+def _project_columns(project: Project) -> list[tuple[str, str]]:
+    """Every source column as (column, file), in file order, first spelling wins.
+
+    Column names are treated as globally unique throughout the wizard —
+    concept_decisions is keyed by them — so a name appearing in two files is one
+    column here too, attributed to the first file that declares it.
+    """
+    out: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for entry in (project.source_files or []):
+        filename = entry.get("filename") or ""
+        for col in (entry.get("columns") or []):
+            if col not in seen:
+                seen.add(col)
+                out.append((col, filename))
+    for col in (project.source_columns or []):
+        if col not in seen:
+            seen.add(col)
+            out.append((col, project.source_filename or ""))
+    return out
+
+
+class ColumnDescriptionsPayload(BaseModel):
+    descriptions: dict[str, str]
+
+
+@router.get("/{project_id}/column-descriptions")
+def get_column_descriptions(project_id: str, db: Session = Depends(get_db)) -> dict[str, Any]:
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    return {"descriptions": project.column_descriptions or {}}
+
+
+@router.put("/{project_id}/column-descriptions")
+def put_column_descriptions(
+    project_id: str,
+    payload: ColumnDescriptionsPayload,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Replace the whole dictionary. Also how a single description is edited or
+    cleared — the map is small enough that a full replace is simpler than a
+    patch, and it makes "clear all" the same code path as an empty upload."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    cleaned = {
+        str(col): str(text).strip()
+        for col, text in (payload.descriptions or {}).items()
+        if str(text or "").strip()
+    }
+    project.column_descriptions = cleaned
+    db.commit()
+    return {"descriptions": cleaned}
+
+
+@router.post("/{project_id}/column-descriptions/upload")
+async def upload_column_descriptions(
+    project_id: str,
+    file: UploadFile = File(...),
+    replace: bool = False,
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    """Merge an uploaded data dictionary (CSV/TSV or Excel) into the project.
+
+    The file needs a header row naming a column and a description — several
+    spellings of each are accepted, see `services/column_descriptions.py`. Rows
+    whose column isn't in the project come back in `unmatched` rather than being
+    dropped quietly, since a near-miss in a column name is the usual cause and
+    the user is the only one who can resolve it.
+
+    `replace=true` discards the existing dictionary first; the default merges,
+    with the uploaded file winning on conflicts.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    known = [col for col, _ in _project_columns(project)]
+    if not known:
+        raise HTTPException(
+            status_code=400,
+            detail="This project has no source columns yet — upload a source file first.",
+        )
+
+    suffix = Path(file.filename or "upload.csv").suffix.lower() or ".csv"
+    tmp_path: Path | None = None
+    try:
+        # Spooled to disk because delimiter/encoding sniffing and pandas both
+        # want a real path, and a data dictionary is small.
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            shutil.copyfileobj(file.file, tmp)
+            tmp_path = Path(tmp.name)
+        parsed = parse_descriptions(tmp_path, known)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Couldn't read that file: {exc}")
+    finally:
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+
+    existing: dict[str, str] = {} if replace else dict(project.column_descriptions or {})
+    existing.update(parsed["descriptions"])
+    project.column_descriptions = existing
+    db.commit()
+
+    described = set(existing)
+    return {
+        "descriptions": existing,
+        "matched": parsed["matched"],
+        "unmatched": parsed["unmatched"],
+        "headers": parsed["headers"],
+        # Columns still without a description, so the UI can say what's left.
+        "missing": [col for col in known if col not in described],
+    }
+
+
+@router.get("/{project_id}/column-descriptions/template")
+def column_descriptions_template(project_id: str, db: Session = Depends(get_db)):
+    """A CSV of every source column, ready to fill in and upload back.
+
+    Pre-filled with any description the project already has, so the template
+    doubles as an export of the current dictionary.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    descriptions = project.column_descriptions or {}
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["name", "table", "description"])
+    for col, filename in _project_columns(project):
+        writer.writerow([col, filename, descriptions.get(col, "")])
+
+    # utf-8-sig: Excel opens a plain utf-8 CSV as mojibake, and this file exists
+    # to be opened in Excel.
+    data = buf.getvalue().encode("utf-8-sig")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{project_id}_column_descriptions.csv"'},
+    )
+
+
+# ── Bulk concept matching (the "new concept finding" pipeline) ──────────────
+
+# The matcher is the staged pipeline from the sibling project, behind HTTP
+# (pipeline/service.py there, the `conceptmatcher` compose service here). It is
+# the app's only concept finder: it maps a whole column list in one pass and
+# returns a decision per column (auto_accept / review / unmapped), and the
+# search boxes (/search-concepts below) use its ranked shortlist for one term.
+
+
+class MatchColumn(BaseModel):
+    name: str
+    description: str | None = None
+    table: str | None = None
+
+
+class MatchConceptsPayload(BaseModel):
+    columns: list[MatchColumn]
+    # Scopes any manual corrections recorded on the pipeline side; defaults to
+    # the project id so one project's overrides never leak into another's.
+    source_system: str | None = None
+    candidates: int = 5
+    # Restricts this run's candidates to these OMOP domains. None leaves the
+    # matcher on whatever it was configured with; [] lifts the restriction.
+    domains: list[str] | None = None
+
+
+async def _post_match(
+    columns: list[dict[str, Any]],
+    source_system: str,
+    note: str,
+    candidates: int,
+    domains: list[str] | None = None,
+    shortlist: bool = False,
+) -> dict[str, Any]:
+    """One POST to the matcher's /match, with its errors translated to ours.
+
+    `shortlist=True` asks the matcher to keep ranking alternatives behind an
+    exact-name hit instead of returning that one concept alone — for callers
+    that show a pick-list. The decision itself is unchanged by it. A matcher
+    that predates the flag ignores the key and behaves as before.
+
+    Shared by both matching endpoints so the domain-restricted value passes
+    below reach the pipeline exactly the way a plain column run does.
+    """
+    import httpx
+
+    body: dict[str, Any] = {
+        "columns": columns,
+        "source_system": source_system,
+        "note": note,
+        "candidates": candidates,
+    }
+    # Absent and empty mean different things to the matcher, so the key is only
+    # sent when the caller actually asked for a restriction.
+    if domains is not None:
+        body["domains"] = domains
+    if shortlist:
+        body["shortlist"] = True
+
+    try:
+        async with httpx.AsyncClient(timeout=settings.concept_matcher_timeout) as client:
+            resp = await client.post(
+                f"{settings.concept_matcher_url.rstrip('/')}/match", json=body,
+            )
+            resp.raise_for_status()
+            return resp.json()
+    except httpx.HTTPStatusError as exc:
+        # The matcher answers 400 for a malformed column list or an unknown
+        # domain name, and 503 when the vocabulary database is down — pass its
+        # own reason through rather than flattening both into a generic failure.
+        detail = exc.response.text
+        try:
+            detail = exc.response.json().get("detail", detail)
+        except Exception:
+            pass
+        raise HTTPException(status_code=exc.response.status_code, detail=detail)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Concept matcher unavailable: {exc}")
+
+
+_HEALTH_TIMEOUT = 10.0
+_RESTART_MATCHER = "docker compose restart conceptmatcher"
+_SETUP_MATCHER = "./scripts/setup-conceptmatcher.sh"
+
+
+def _matcher_status(status: str, reason: str, hint: str, commands: list[str], raw: str | None) -> dict:
+    return {"status": status, "reason": reason, "hint": hint, "commands": commands, "raw": raw}
+
+
+def _postgres_down(raw: str) -> dict:
+    return _matcher_status(
+        "unavailable", "The concept matcher cannot reach its database (omop-postgres).",
+        "Start Postgres, then re-check. If it still fails, restart the matcher.",
+        ["docker compose up -d postgres", _RESTART_MATCHER], raw)
+
+
+def _vocab_missing(raw: str) -> dict:
+    return _matcher_status(
+        "unavailable", "The vocabulary is not loaded.",
+        "Load the Athena vocabulary on the Finalize step, then build the matcher's tables and restart it.",
+        [_SETUP_MATCHER, _RESTART_MATCHER], raw)
+
+
+def _matcher_tables_missing(raw: str) -> dict:
+    return _matcher_status(
+        "unavailable", "The concept matcher's search tables have not been built.",
+        "Build them (about 5 minutes on a full vocabulary), then restart the matcher. "
+        "Needed again after every vocabulary reload.",
+        [_SETUP_MATCHER, _RESTART_MATCHER], raw)
+
+
+def classify_matcher_failure(exc: Exception) -> dict:
+    """Turn a failed GET /health into a status the user can act on.
+
+    Matched against what conceptmatcher/pipeline/service.py actually sends: any
+    exception while building its answer comes back as 503 {"detail": str(exc)}.
+    A check that times out is the matcher still loading its embedding model at
+    startup, or waiting (up to 30 s) for a database that isn't answering.
+    """
+    import httpx
+
+    raw = f"{type(exc).__name__}: {exc}"
+    if isinstance(exc, httpx.ConnectTimeout):
+        return _matcher_status(
+            "unavailable", "The concept matcher's host could not be reached.",
+            "Check that the conceptmatcher container is running.",
+            ["docker compose up -d conceptmatcher"], raw)
+    if isinstance(exc, httpx.TimeoutException):
+        return _matcher_status(
+            "starting", f"The concept matcher did not answer within {_HEALTH_TIMEOUT:.0f} s.",
+            "It loads its embedding model at startup, which takes a minute or so — wait, then re-check. "
+            "If it persists, check that omop-postgres is running and restart the matcher.",
+            [_RESTART_MATCHER], raw)
+    if isinstance(exc, httpx.ConnectError):
+        return _matcher_status(
+            "unavailable", "The concept matcher container is not running.",
+            "Start it from this project's directory.",
+            ["docker compose up -d conceptmatcher"], raw)
+    if isinstance(exc, httpx.HTTPStatusError):
+        resp = exc.response
+        detail = resp.text
+        try:
+            detail = resp.json().get("detail") or detail
+        except Exception:
+            pass
+        raw = f"HTTP {resp.status_code}: {detail}"
+        text = str(detail).lower()
+        # psycopg_pool closes the pool when the database isn't up within 30 s of
+        # the first connect. Older matchers kept the closed pool for good.
+        if "already closed" in text or "pool initialization incomplete" in text:
+            return _matcher_status(
+                "unavailable",
+                "The concept matcher started before its database was ready and gave up connecting.",
+                "Make sure omop-postgres is running, then restart the matcher.",
+                ["docker compose up -d postgres", _RESTART_MATCHER], raw)
+        if "does not exist" in text:
+            # A matcher that queried a missing table after check_ready().
+            return _vocab_missing(raw) if '"vocab.' in text else _matcher_tables_missing(raw)
+        if "connection refused" in text or "connection failed" in text \
+                or "couldn't get a connection" in text or "could not translate host" in text:
+            return _postgres_down(raw)
+        return _matcher_status(
+            "unavailable", f"The concept matcher answered HTTP {resp.status_code}.",
+            "Its logs say why.", ["docker compose logs --tail 50 conceptmatcher"], raw)
+    return _matcher_status(
+        "unavailable", "The concept matcher could not be checked.",
+        "Its logs say why.", ["docker compose logs --tail 50 conceptmatcher"], raw)
+
+
+def classify_matcher_problems(problems: list[str]) -> dict:
+    """A matcher that answered but isn't ready: what its check_ready() found."""
+    raw = "; ".join(problems) or "not ready"
+    if any(p.startswith("cannot connect") for p in problems):
+        return _postgres_down(raw)
+    if any("vocab.concept" in p for p in problems):
+        return _vocab_missing(raw)
+    return _matcher_tables_missing(raw)
+
+
+@router.get("/concept-matcher/health")
+async def concept_matcher_health():
+    """Whether the bulk matcher is reachable and its vocabulary is loaded.
+
+    Never raises: every wizard step polls this for its status indicator, so an
+    unreachable matcher is a normal answer, not an error. `status` is ready /
+    starting / unavailable / not_configured; `reason` and `hint` are for the
+    user, `commands` the copyable fix, `raw` the underlying error.
+    """
+    if not settings.concept_matcher_url:
+        return _matcher_status(
+            "not_configured", "CONCEPT_MATCHER_URL is not set.",
+            "Set CONCEPT_MATCHER_URL in the backend's environment and restart the backend.",
+            ["docker compose up -d backend"], None)
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=_HEALTH_TIMEOUT) as client:
+            resp = await client.get(f"{settings.concept_matcher_url.rstrip('/')}/health")
+            resp.raise_for_status()
+            info = resp.json()
+    except Exception as exc:
+        return classify_matcher_failure(exc)
+
+    if not info.get("ready"):
+        return classify_matcher_problems(info.get("problems") or [])
+    return {
+        **_matcher_status("ready", "The concept matcher is running and its vocabulary is loaded.", "", [], None),
+        **{k: info.get(k) for k in (
+            "vocabulary_version", "concepts", "embeddings", "embedding_model",
+            "auto_accept_threshold", "review_threshold",
+            # Every domain the matcher's vocabulary defines, most concepts
+            # first — the options of the search box's domain filter.
+            "domains",
+        )},
+    }
+
+
+@router.post("/{project_id}/match-concepts")
+async def match_concepts(
+    project_id: str,
+    payload: MatchConceptsPayload,
+    db: Session = Depends(get_db),
+):
+    """Map a list of source columns onto standard OMOP concepts in one pass.
+
+    Any column that arrives without a description is given the project's, from
+    the uploaded data dictionary. Filling it in here rather than at the caller
+    makes the dictionary authoritative: every path into the matcher gets the
+    same input, and the frontend cannot forget to send it.
+
+    Results come back in request order and each one echoes `column_name` and
+    `source_table`, so the caller can tie a result to its row even when the same
+    column name appears in more than one source file.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not settings.concept_matcher_url:
+        raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+    if not payload.columns:
+        return {"run_id": 0, "results": []}
+
+    described = project.column_descriptions or {}
+    columns = []
+    for column in payload.columns:
+        entry = column.model_dump()
+        if not (entry.get("description") or "").strip():
+            entry["description"] = described.get(entry["name"]) or None
+        columns.append(entry)
+
+    return await _post_match(
+        columns,
+        payload.source_system or project_id,
+        f"ETL Auto-Designer project {project_id}",
+        payload.candidates,
+        payload.domains,
+    )
+
+
+# ── Bulk value matching (the same pipeline, one domain per column) ───────────
+
+# A value concept is only ever routed through the stem table, which knows these
+# five domains — so the domain a column's values are forced into has to be one
+# of them for the result to be usable downstream (see ValueConceptRow in the
+# Concepts step, which rejects anything else when a value is mapped by hand).
+STEM_DOMAINS = ("Measurement", "Observation", "Drug", "Procedure", "Condition")
+
+# Values of one column per matcher request. The matcher caps a request at 2000
+# columns, and a narrower batch also keeps its corpus-adaptive stopwords (which
+# are computed over the whole batch) from being derived from an unwieldy one.
+VALUE_CHUNK = 500
+
+
+def _value_domain(result: dict[str, Any]) -> str | None:
+    """The OMOP domain a value's selected concept sits in, if one was selected."""
+    if result.get("error") or not result.get("concept_id"):
+        return None
+    return result.get("domain_id") or None
+
+
+# A yes/no column ("Swollen joints?" → Yes / No) carries its meaning in the
+# column, not in the values: matched on its own, "Yes" finds the literal answer
+# concept, never "Joint swelling". Such a column is recognised by every value
+# being one of these words (or a missing-data marker); "Yes" is then matched on
+# the column's name and description instead, and "No" is recorded as not mapped
+# (concept 0) — the absence of the finding produces no row.
+# Flags are also often coded 1 / 0 (1.0 / 0.0 when exported from a numeric
+# column).
+NUMERIC_AFFIRMATIVE_VALUES = frozenset({"1", "1.0"})
+NUMERIC_NEGATIVE_VALUES = frozenset({"0", "0.0"})
+AFFIRMATIVE_VALUES = frozenset({"yes", "y", "true", "present"}) | NUMERIC_AFFIRMATIVE_VALUES
+NEGATIVE_VALUES = frozenset({"no", "n", "false", "absent"}) | NUMERIC_NEGATIVE_VALUES
+MISSING_VALUES = frozenset({
+    "unknown", "unk", "not known", "don't know", "dont know",
+    "n/a", "na", "missing", "not applicable",
+})
+
+
+def _yes_no_split(values: list[str]) -> tuple[list[str], list[str], list[str]] | None:
+    """(yes, no, missing) values of a yes/no column, or None if it isn't one.
+    At least one affirmative value is required: a column of only "No" has
+    nothing for the column-name search to be applied to. A column answered
+    only in digits must hold both a 1 and a 0: a lone "1" is as likely a count
+    or a constant as a flag."""
+    yes, no, missing = [], [], []
+    for value in values:
+        key = value.strip().lower()
+        if key in AFFIRMATIVE_VALUES:
+            yes.append(value)
+        elif key in NEGATIVE_VALUES:
+            no.append(value)
+        elif key in MISSING_VALUES:
+            missing.append(value)
+        else:
+            return None
+    if not yes:
+        return None
+    numeric = NUMERIC_AFFIRMATIVE_VALUES | NUMERIC_NEGATIVE_VALUES
+    if not no and all(v.strip() in numeric for v in yes):
+        return None
+    return yes, no, missing
+
+
+def _fixed_value_result(value: str, concept_id: int | None, reason: str) -> dict[str, Any]:
+    """A value result decided here rather than by the matcher, in the matcher's
+    result shape so the caller handles it like any other."""
+    return {
+        "column_name": value,
+        "status": "auto_accept" if concept_id is not None else "unmapped",
+        "confidence": 100.0 if concept_id is not None else 0.0,
+        "concept_id": concept_id,
+        "concept_name": "Not mapped" if concept_id == 0 else None,
+        "domain_id": None, "vocabulary_id": None,
+        "concept_class_id": None, "concept_code": None,
+        "decision_reason": reason,
+        "ambiguous": False, "error": None, "candidates": [],
+    }
+
+
+class MatchValuesPayload(BaseModel):
+    # The columns whose distinct values should be matched. The values themselves
+    # are read from the source files here rather than posted, so the caller
+    # doesn't have to have loaded every file's values to run this.
+    columns: list[MatchColumn]
+    source_system: str | None = None
+    candidates: int = 5
+    # Values per column, in source order. A column with more distinct values
+    # than this is a poor "map values" candidate anyway, and matching thousands
+    # of them would dominate the run.
+    max_values: int = 500
+
+
+@router.post("/{project_id}/match-values")
+async def match_values(
+    project_id: str,
+    payload: MatchValuesPayload,
+    db: Session = Depends(get_db),
+):
+    """Map each listed column's distinct values onto concepts, one domain per column.
+
+    Two passes per column, which is what a column mapped by value needs and what
+    a single /match-concepts run cannot express: every value of one variable has
+    to land in the same OMOP domain (they all become rows of the same stem-table
+    domain), but which domain that is only becomes apparent once the values have
+    been looked up. So pass 1 matches every value unrestricted and counts the
+    domains that come back; the most frequent one — among the five stem domains
+    if any of them appear at all — wins. Pass 2 then discards every concept
+    outside that domain and searches those values again with the matcher
+    restricted to it, so a value whose best overall match was off-domain still
+    gets the best in-domain one instead of being dropped.
+
+    A yes/no column (see `_yes_no_split`) skips both passes: its affirmative
+    values are matched once on the column's name and description, and its
+    negative values come back as concept 0. It is flagged `yes_no`.
+
+    Per column the response carries the chosen domain, the vote it came from, and
+    one result per value in the matcher's own shape, keyed by the source value.
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not settings.concept_matcher_url:
+        raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+    if not payload.columns:
+        return {"columns": []}
+
+    described = project.column_descriptions or {}
+    all_values = _all_distinct_values(project, max_values=payload.max_values)
+    source_system = payload.source_system or project_id
+    note = f"ETL Auto-Designer project {project_id} (values)"
+
+    async def match_values_of(
+        column: MatchColumn, values: list[str], domains: list[str] | None,
+    ) -> list[dict[str, Any]]:
+        """One pass over `values`, in order, chunked. The value alone is the term
+        to match. The column's name or description is deliberately not sent as
+        context: the matcher folds it into the query, and on this study's value
+        columns it cost far more than it gave — an identifier like
+        PAT_MED_ARD_NAME_1 dragged exact drug names ("Prednison") below the
+        review threshold, and even written descriptions pulled in wrong concepts.
+        The column's domain is enforced by pass 2 below instead."""
+        results: list[dict[str, Any]] = []
+        for start in range(0, len(values), VALUE_CHUNK):
+            chunk = values[start:start + VALUE_CHUNK]
+            answer = await _post_match(
+                [{"name": v, "table": column.table} for v in chunk],
+                source_system, note, payload.candidates, domains,
+            )
+            # Results come back in request order, so they are paired positionally
+            # rather than by name — the matcher strips and normalizes what it is
+            # given, and a value is not guaranteed to survive that unchanged.
+            answered = answer.get("results") or []
+            if len(answered) != len(chunk):
+                # One result per term is the contract pairing relies on, so a
+                # mismatch is reported rather than silently misaligning values.
+                raise HTTPException(
+                    status_code=502,
+                    detail=(f"Matcher returned {len(answered)} results for {len(chunk)} "
+                            f"values of {column.name}"),
+                )
+            results.extend(answered)
+        return results
+
+    columns_out: list[dict[str, Any]] = []
+
+    for column in payload.columns:
+        values = all_values.get(column.name) or []
+        entry: dict[str, Any] = {
+            "column_name": column.name,
+            "source_table": column.table,
+            "values_requested": len(values),
+            "domain": None,
+            "domain_votes": {},
+            "rematched": 0,
+            "yes_no": False,
+            "results": {},
+        }
+        if not values:
+            columns_out.append(entry)
+            continue
+
+        split = _yes_no_split(values)
+        if split:
+            yes, no, missing = split
+            entry["yes_no"] = True
+            # The column itself is the term, as in a variable match; restricted
+            # to the stem domains because the answer becomes a stem-table row.
+            description = (column.description or "").strip() or described.get(column.name) or None
+            answer = await _post_match(
+                [{"name": column.name, "description": description, "table": column.table}],
+                source_system, note, payload.candidates, list(STEM_DOMAINS),
+            )
+            found = (answer.get("results") or [{}])[0]
+            entry["domain"] = _value_domain(found)
+            if entry["domain"]:
+                entry["domain_votes"] = {entry["domain"]: len(yes)}
+            results: dict[str, Any] = {}
+            for value in yes:
+                results[value] = {
+                    **found,
+                    "decision_reason": f"yes/no column, matched on the column · {found.get('decision_reason') or ''}",
+                }
+            for value in no:
+                results[value] = _fixed_value_result(
+                    value, 0, "negative answer in a yes/no column — not mapped")
+            for value in missing:
+                results[value] = _fixed_value_result(
+                    value, None, "missing-data marker in a yes/no column")
+            entry["results"] = results
+            columns_out.append(entry)
+            continue
+
+        first = await match_values_of(column, values, None)
+        votes = Counter(d for d in (_value_domain(r) for r in first) if d)
+        entry["domain_votes"] = dict(votes)
+        stem_votes = Counter({d: n for d, n in votes.items() if d in STEM_DOMAINS})
+        # most_common is insertion-ordered on ties, and insertion order here is
+        # the order the values appear in the source — so a tie goes to whichever
+        # domain the column's first values pointed at.
+        winner = (stem_votes or votes).most_common(1)[0][0] if votes else None
+        entry["domain"] = winner
+
+        results = dict(zip(values, first))
+        if winner:
+            # Pass 2: everything that didn't land in the winning domain is thrown
+            # away and searched again with the matcher confined to that domain.
+            stale = [v for v, r in results.items() if _value_domain(r) != winner]
+            if stale:
+                results.update(zip(stale, await match_values_of(column, stale, [winner])))
+                entry["rematched"] = len(stale)
+            # A candidate outside the chosen domain is not an option for this
+            # column, so it is dropped from the shortlists the caller offers.
+            for result in results.values():
+                result["candidates"] = [
+                    c for c in (result.get("candidates") or []) if c.get("domain_id") == winner
+                ]
+
+        entry["results"] = results
+        columns_out.append(entry)
+
+    return {"columns": columns_out}
+
+
+# ── Domain-bound value suggestions and search (table steps) ─────────────────
+
+# The table steps (person's gender/race/ethnicity, and later the others) map a
+# column's values into one domain that is known up front, unlike /match-values
+# which has to discover it. These two endpoints are that case: the value is
+# normalized for its domain (concept_normalizer), then matched with the matcher
+# confined to the domain. No description is sent — for short demographic terms
+# the column's description only drags the score down ("Greek" alone is an exact
+# match; "Greek" described as "ethnicity" is not).
+
+
+# OHDSI convention for person.race_concept_id: one of these five top-level
+# categories, with the original value kept in race_source_value. The Race
+# domain has ~1400 standard concepts, and a text match on "Black" lands on the
+# narrower 38003598 rather than 8516 — valid, but a `race_concept_id = 8516`
+# filter would miss it. So auto-fill rolls matches up to these five.
+TOP_LEVEL_RACES = {
+    8527: "White",
+    8516: "Black or African American",
+    8515: "Asian",
+    8657: "American Indian or Alaska Native",
+    8557: "Native Hawaiian or Other Pacific Islander",
+}
+
+
+@lru_cache(maxsize=1)
+def _race_rollup() -> dict[int, int]:
+    """Descendant concept_id → its top-level race, from vocab.concept_ancestor.
+
+    Only ~45 concepts sit under the five categories; the rest of the Race
+    domain (e.g. "Black African", "White Roma") has no top-level ancestor at
+    all. Raises when the vocabulary isn't loaded, so the failure isn't cached.
+    """
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = settings.omop_vocab_schema or "vocab"
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT descendant_concept_id, ancestor_concept_id FROM {schema}.concept_ancestor "
+                    "WHERE ancestor_concept_id = ANY(%s) AND descendant_concept_id <> ancestor_concept_id"
+                ).format(schema=pgsql.Identifier(schema)),
+                (list(TOP_LEVEL_RACES),),
+            )
+            return {int(d): int(a) for d, a in cur.fetchall()}
+
+
+def _roll_up_race(entry: dict[str, Any]) -> None:
+    """Move a race suggestion onto its top-level category, in place.
+
+    A concept with no top-level ancestor (or when the ancestry can't be read)
+    is demoted to a suggestion: still offered, never filled in on its own.
+    """
+    concept_id = entry.get("concept_id")
+    if not concept_id or concept_id in TOP_LEVEL_RACES:
+        return
+    try:
+        top = _race_rollup().get(concept_id)
+    except Exception as exc:
+        print(f"[suggest-value-concepts] concept_ancestor query failed: {exc}")
+        top = None
+    if top:
+        entry["detailed"] = {"concept_id": concept_id, "concept_name": entry.get("concept_name")}
+        entry["concept_id"] = top
+        entry["concept_name"] = TOP_LEVEL_RACES[top]
+    elif entry.get("status") == "auto_accept":
+        entry["status"] = "review"
+
+
+def _direct_parents(concept_ids: list[int]) -> dict[int, list[dict[str, Any]]]:
+    """concept_id → its direct parents (one level up in concept_ancestor) that
+    are valid standard concepts in the same domain, as search candidates."""
+    if not concept_ids:
+        return {}
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    schema = pgsql.Identifier(settings.omop_vocab_schema or "vocab")
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT a.descendant_concept_id, p.concept_id, p.concept_name, p.domain_id, "
+                    "p.vocabulary_id, p.concept_class_id, p.concept_code "
+                    "FROM {s}.concept_ancestor a "
+                    "JOIN {s}.concept c ON c.concept_id = a.descendant_concept_id "
+                    "JOIN {s}.concept p ON p.concept_id = a.ancestor_concept_id "
+                    "WHERE a.descendant_concept_id = ANY(%s) AND a.min_levels_of_separation = 1 "
+                    "AND p.standard_concept = 'S' AND p.invalid_reason IS NULL AND p.domain_id = c.domain_id "
+                    "ORDER BY a.descendant_concept_id, p.concept_id"
+                ).format(s=schema),
+                ([int(c) for c in concept_ids],),
+            )
+            out: dict[int, list[dict[str, Any]]] = {}
+            for child, *parent in cur.fetchall():
+                out.setdefault(int(child), []).append(dict(zip(
+                    ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code"),
+                    parent,
+                )))
+            return out
+
+
+def _parents_first(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Arrange search results as a tree of broader → narrower concepts.
+
+    Flat list, in display order. Every direct parent of a result joins the
+    tree (added if the search didn't find it), and chains nest as deep as they
+    go — Ambulance Visit › Ambulance › Ambulance - Land — so each concept sits
+    once under the concept it belongs to. Each row carries `depth` (0 = top),
+    `parent_id` (the row it is listed under, absent at the top) and
+    `is_parent` (it has rows under it). Trees come first, in the order of the
+    first result they contain, then the results with no parent or child among
+    them. A concept with two unrelated parents is listed under each; of two
+    parents where one is above the other, only the more specific is used.
+    Unchanged when the ancestry can't be read.
+    """
+    try:
+        parents = _direct_parents([c["concept_id"] for c in candidates if c.get("concept_id")])
+    except Exception as exc:
+        print(f"[search-concepts] concept_ancestor query failed: {exc}")
+        return candidates
+
+    def ancestors(cid: int) -> set[int]:
+        found: set[int] = set()
+        stack = [p["concept_id"] for p in parents.get(cid, [])]
+        while stack:
+            up = stack.pop()
+            if up not in found:
+                found.add(up)
+                stack.extend(p["concept_id"] for p in parents.get(up, []))
+        return found
+
+    # A parent that is itself an ancestor of another of the same child's
+    # parents adds nothing: Air Ambulance sits under both Ambulance and
+    # Ambulance - Air or Water, which is under Ambulance — list it once, under
+    # the more specific one.
+    for cid, ups in list(parents.items()):
+        ids = {p["concept_id"] for p in ups}
+        redundant = {a for u in ids for a in ancestors(u)} & ids
+        if redundant:
+            parents[cid] = [p for p in ups if p["concept_id"] not in redundant]
+
+    nodes: dict[int, dict[str, Any]] = {c["concept_id"]: c for c in candidates}
+    children: dict[int, list[int]] = {}
+    has_parent: set[int] = set()
+    for child in candidates:
+        for parent in parents.get(child["concept_id"], []):
+            nodes.setdefault(parent["concept_id"], {**parent, "score": None})
+            children.setdefault(parent["concept_id"], []).append(child["concept_id"])
+            has_parent.add(child["concept_id"])
+
+    def root_of(cid: int, seen: frozenset = frozenset()) -> int:
+        ups = parents.get(cid) or []
+        if not ups or cid in seen:
+            return cid
+        return root_of(ups[0]["concept_id"], seen | {cid})
+
+    out: list[dict[str, Any]] = []
+
+    def emit(cid: int, depth: int, under: int | None, path: frozenset) -> None:
+        row = dict(nodes[cid], depth=depth, is_parent=bool(children.get(cid)))
+        if under is not None:
+            row["parent_id"] = under
+        out.append(row)
+        for kid in children.get(cid, []):
+            if kid not in path:      # a cycle in the ancestry would never end
+                emit(kid, depth + 1, cid, path | {kid})
+
+    emitted_roots: set[int] = set()
+    lone: list[int] = []
+    for c in candidates:
+        root = root_of(c["concept_id"])
+        if root in emitted_roots:
+            continue
+        emitted_roots.add(root)
+        if children.get(root):
+            emit(root, 0, None, frozenset({root}))
+        elif root not in has_parent:
+            lone.append(root)
+    for cid in lone:
+        emit(cid, 0, None, frozenset({cid}))
+    return out
+
+
+def _suggestion(value: str, term: str, result: dict[str, Any] | None) -> dict[str, Any]:
+    """One value's answer, in the shape both endpoints below return."""
+    result = result or {}
+    return {
+        "value": value,
+        "term": term,
+        "source": "matcher",
+        "status": result.get("status") or "unmapped",
+        "confidence": result.get("confidence") or 0,
+        "concept_id": result.get("concept_id"),
+        "concept_name": result.get("concept_name"),
+        "candidates": result.get("candidates") or [],
+    }
+
+
+@lru_cache(maxsize=1)
+def _ucum_units() -> tuple[dict[str, tuple[int, str]], dict[str, list[tuple[str, int, str]]]]:
+    """Standard UCUM unit concepts by code: (exact code → concept, lower-cased
+    code → every concept sharing it). UCUM is case-sensitive — "G" is gauss,
+    "g" gram — so the folded index is only consulted when the exact code isn't
+    found. Raises when the vocabulary isn't loaded, so the failure isn't cached."""
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_code, concept_id, concept_name FROM {s}.concept "
+                    "WHERE domain_id = 'Unit' AND vocabulary_id = 'UCUM' "
+                    "AND standard_concept = 'S' AND invalid_reason IS NULL"
+                ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab")),
+            )
+            rows = cur.fetchall()
+    exact: dict[str, tuple[int, str]] = {}
+    folded: dict[str, list[tuple[str, int, str]]] = {}
+    for code, concept_id, name in rows:
+        exact[code] = (int(concept_id), name)
+        folded.setdefault(code.lower(), []).append((code, int(concept_id), name))
+    return exact, folded
+
+
+def _ucum_unit(value: str) -> dict[str, Any] | None:
+    """A unit value resolved by its UCUM code, or None to leave it to the matcher.
+
+    The matcher searches concept names ("milligram"), and a unit column holds
+    codes ("mg") — searched as text, "mg" lands on "nanomole per minute per mg of
+    protein". So units are looked up by code first, the way gender is resolved
+    by rule. Filled in outright only when the code is exact, or matches one
+    concept regardless of case ("mg/ml" → mg/mL); a case-ambiguous code ("MG")
+    or a value that also carries an amount ("2,5mg") is offered for review.
+    """
+    from app.services.concept_normalizer import unit_code
+
+    parsed = unit_code(value)
+    if parsed is None:
+        return None
+    code, had_amount = parsed
+    exact, folded = _ucum_units()
+    if code in exact:
+        hits, sure = [(code, *exact[code])], True
+    else:
+        hits = folded.get(code.lower(), [])
+        sure = len(hits) == 1
+        # Lower-case first: a shouted "MG" means milligram far more often than
+        # anything spelled with a capital.
+        hits = sorted(hits, key=lambda h: h[0] != h[0].lower())
+    if not hits:
+        return None
+    entry = _suggestion(value, code, None)
+    entry.update(
+        source="rule",
+        status="auto_accept" if sure and not had_amount else "review",
+        confidence=100.0,
+        concept_id=hits[0][1],
+        concept_name=hits[0][2],
+        candidates=[
+            {"concept_id": cid, "concept_name": name, "domain_id": "Unit", "vocabulary_id": "UCUM",
+             "concept_class_id": None, "concept_code": c, "score": 100.0}
+            for c, cid, name in hits
+        ],
+    )
+    return entry
+
+
+class ConceptPreference(BaseModel):
+    """Which concepts in the domain the field wants, when the domain alone is
+    too broad — e.g. visit_concept_id wants the Visit vocabulary (9201
+    Inpatient Visit), place of service wants CMS Place of Service (8717
+    Inpatient Hospital), and both are Visit-domain concepts that score within a
+    few points of each other for the same text."""
+    vocabularies: list[str] | None = None
+    concept_classes: list[str] | None = None
+
+
+class SuggestValueConceptsPayload(BaseModel):
+    domain: str
+    values: list[str]
+    candidates: int = 5
+    prefer: ConceptPreference | None = None
+
+
+# The matcher's own auto-accept threshold, applied to a preferred candidate
+# that replaces its pick.
+AUTO_ACCEPT_SCORE = 90.0
+
+
+def _exact_preferred(term: str, domain: str, prefer: ConceptPreference) -> dict[str, Any] | None:
+    """The single valid standard concept in `domain` named exactly `term`
+    (case-insensitively) that satisfies `prefer`, from the vocab schema.
+
+    The fallback for exact-name ties the matcher collapses to one arbitrary
+    concept: "Canada" comes back as the OSM place "Canadá", and the country
+    concept 41915371 Canada never reaches the shortlist. Returns None when
+    there is no such concept, or more than one.
+    """
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    conditions = [pgsql.SQL("lower(concept_name) = lower(%s) AND domain_id = %s "
+                            "AND standard_concept = 'S' AND invalid_reason IS NULL")]
+    params: list[Any] = [term, domain]
+    if prefer.vocabularies:
+        conditions.append(pgsql.SQL("vocabulary_id = ANY(%s)"))
+        params.append(list(prefer.vocabularies))
+    if prefer.concept_classes:
+        conditions.append(pgsql.SQL("concept_class_id = ANY(%s)"))
+        params.append(list(prefer.concept_classes))
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code "
+                    "FROM {s}.concept WHERE {where} LIMIT 2"
+                ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab"),
+                         where=pgsql.SQL(" AND ").join(conditions)),
+                params,
+            )
+            rows = cur.fetchall()
+    if len(rows) != 1:
+        return None
+    keys = ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code")
+    return {**dict(zip(keys, rows[0])), "score": 100.0}
+
+
+def _apply_preference(entry: dict[str, Any], prefer: ConceptPreference | None, domain: str) -> None:
+    """Swap a suggestion onto the best-scoring preferred candidate, in place.
+
+    With none of the candidates preferred, the matcher's pick stands but is
+    only offered, never filled in on its own.
+    """
+    if prefer is None or not entry.get("term"):
+        return
+    vocabularies = set(prefer.vocabularies or [])
+    classes = set(prefer.concept_classes or [])
+
+    def wanted(c: dict[str, Any]) -> bool:
+        return ((not vocabularies or c.get("vocabulary_id") in vocabularies)
+                and (not classes or c.get("concept_class_id") in classes))
+
+    preferred = [c for c in entry.get("candidates") or [] if wanted(c)]
+    if not preferred:
+        try:
+            exact = _exact_preferred(entry["term"], domain, prefer)
+        except Exception as exc:
+            print(f"[suggest-value-concepts] exact-name lookup failed: {exc}")
+            exact = None
+        if exact is None:
+            if entry.get("status") == "auto_accept":
+                entry["status"] = "review"
+            return
+        entry["candidates"] = [exact] + list(entry.get("candidates") or [])
+        preferred = [exact]
+    best = max(preferred, key=lambda c: c.get("score") or 0)
+    # The status is re-decided even when the matcher's pick is the preferred
+    # one: its "review" is often ambiguity between vocabularies (8717 Inpatient
+    # Hospital vs 9201 Inpatient Visit), which the preference has just settled.
+    entry.update(
+        concept_id=best["concept_id"], concept_name=best.get("concept_name"),
+        confidence=best.get("score") or 0,
+        status="auto_accept" if (best.get("score") or 0) >= AUTO_ACCEPT_SCORE else "review",
+    )
+    # Keep the chosen concept first, as the matcher's pick was.
+    entry["candidates"] = [best] + [c for c in entry["candidates"] if c is not best]
+
+
+@router.post("/{project_id}/suggest-value-concepts")
+async def suggest_value_concepts(
+    project_id: str,
+    payload: SuggestValueConceptsPayload,
+    db: Session = Depends(get_db),
+):
+    """Suggest a standard concept in `domain` for each source value.
+
+    `status` is the matcher's own verdict ("auto_accept" / "review" /
+    "unmapped"), or "auto_accept" with `source: "rule"` for a value the
+    normalizer resolved without it (gender). The caller decides what to fill in;
+    the intended use is auto_accept filled, review offered, unmapped left alone.
+
+    Race matches are rolled up to the five top-level OHDSI categories
+    (`detailed` then keeps the concept actually matched); a race concept
+    outside that hierarchy comes back as "review" at best. `prefer` narrows the
+    domain to the vocabularies / concept classes the field wants (see
+    ConceptPreference).
+    """
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    results = await suggest_concepts_for_values(
+        project_id, payload.domain, payload.values, payload.prefer, payload.candidates,
+    )
+    return {"domain": payload.domain, "results": results}
+
+
+async def suggest_concepts_for_values(
+    project_id: str,
+    domain: str,
+    values: list[str],
+    prefer: ConceptPreference | None = None,
+    candidates: int = 5,
+) -> dict[str, dict[str, Any]]:
+    """The work of `suggest_value_concepts`, for callers that already hold the
+    project — column auto-match checks a column by how many of its values map."""
+    from app.services.concept_normalizer import (
+        GENDER_FEMALE, GENDER_MALE, gender_concept, is_no_value, normalize_term,
+    )
+
+    payload = SuggestValueConceptsPayload(domain=domain, values=values, candidates=candidates, prefer=prefer)
+    values = list(dict.fromkeys(v for v in payload.values if str(v).strip()))
+    out: dict[str, dict[str, Any]] = {}
+    pending: dict[str, list[str]] = {}   # term → the source values it came from
+
+    for value in values:
+        if is_no_value(value):
+            # "Unknown", "Other", "N/A" have no concept to find; recorded as not
+            # mapped (0), the CDM's convention for exactly this, instead of
+            # left open or matched to whatever shares the word ("Other" →
+            # "Native Hawaiian or Other Pacific Islander").
+            entry = _suggestion(value, value, None)
+            entry.update(source="rule", status="auto_accept", confidence=100.0,
+                         concept_id=0, concept_name="Not mapped")
+            out[value] = entry
+            continue
+        if payload.domain.lower() == "gender":
+            concept_id = gender_concept(value)
+            if concept_id:
+                entry = _suggestion(value, value, None)
+                entry.update(
+                    source="rule", status="auto_accept", confidence=100.0, concept_id=concept_id,
+                    concept_name="MALE" if concept_id == GENDER_MALE else "FEMALE",
+                )
+                out[value] = entry
+                continue
+        if payload.domain.lower() == "unit":
+            try:
+                entry = _ucum_unit(value)
+            except Exception as exc:
+                print(f"[suggest-value-concepts] UCUM lookup failed: {exc}")
+                entry = None
+            if entry is not None:
+                out[value] = entry
+                continue
+            if not re.search(r"[^\W\d_]", value):
+                # A number or a date in a unit column: no unit to find, and a
+                # text match would only offer something like "gram per 5 hours".
+                out[value] = _suggestion(value, value, None)
+                continue
+        pending.setdefault(normalize_term(value, payload.domain), []).append(value)
+
+    if pending:
+        if not settings.concept_matcher_url:
+            raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+        terms = list(pending)
+        for start in range(0, len(terms), VALUE_CHUNK):
+            chunk = terms[start:start + VALUE_CHUNK]
+            answer = await _post_match(
+                [{"name": t} for t in chunk], project_id,
+                f"ETL Auto-Designer project {project_id} ({payload.domain} values)",
+                # A preference picks from the shortlist, so it needs a longer one.
+                max(payload.candidates, 10) if payload.prefer else payload.candidates,
+                [payload.domain],
+                # Alternatives behind an exact hit: they are what the
+                # "Suggested" list and a vocabulary preference choose from.
+                shortlist=True,
+            )
+            answered = answer.get("results") or []
+            if len(answered) != len(chunk):
+                raise HTTPException(
+                    status_code=502,
+                    detail=f"Matcher returned {len(answered)} results for {len(chunk)} terms",
+                )
+            for term, result in zip(chunk, answered):
+                for value in pending[term]:
+                    out[value] = _suggestion(value, term, result)
+                    _apply_preference(out[value], payload.prefer, payload.domain)
+                    if payload.domain.lower() == "race":
+                        _roll_up_race(out[value])
+
+    return {v: out[v] for v in values}
+
+
+def _name_search(term: str, domains: list[str] | None, limit: int) -> list[dict[str, Any]]:
+    """Valid standard concepts in any of `domains` (any domain at all when None)
+    whose name contains every word of `term`, from the vocab schema — exact name
+    first, then earliest match, then shortest name.
+
+    Tops up the matcher's shortlist, which is deliberately short: an exact
+    concept name ends its search at Stage 1 with that one concept, so searching
+    "ambulance" returned NUCC "Ambulance" and never "Ambulance - Land" (8668),
+    the CMS Place of Service concept a place-of-service field actually wants.
+    A partial word ("hisp") gets nothing from the matcher at all.
+    """
+    from app.services.db import connect
+    from psycopg2 import sql as pgsql
+
+    words = [w for w in re.split(r"\s+", term.strip()) if w]
+    if not words:
+        return []
+    # LIKE wildcards in the user's text are dropped rather than escaped.
+    like = ["%" + re.sub(r"[%_\\]", "", w) + "%" for w in words]
+    # `%s IS NULL OR …` rather than two queries: a NULL domain list matches any.
+    with connect() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                pgsql.SQL(
+                    "SELECT concept_id, concept_name, domain_id, vocabulary_id, concept_class_id, concept_code "
+                    "FROM {s}.concept WHERE (%s::text[] IS NULL OR domain_id = ANY(%s)) AND standard_concept = 'S' "
+                    "AND invalid_reason IS NULL AND concept_name ILIKE ALL(%s) "
+                    "ORDER BY lower(concept_name) = lower(%s) DESC, "
+                    "strpos(lower(concept_name), lower(%s)) = 0, strpos(lower(concept_name), lower(%s)), "
+                    "length(concept_name), concept_id LIMIT %s"
+                ).format(s=pgsql.Identifier(settings.omop_vocab_schema or "vocab")),
+                (domains, domains, like, term, words[0], words[0], limit),
+            )
+            keys = ("concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code")
+            return [{**dict(zip(keys, row)), "score": None} for row in cur.fetchall()]
+
+
+@router.get("/{project_id}/search-concepts")
+async def search_concepts(
+    project_id: str,
+    query: str,
+    domain: str | None = None,
+    domains: list[str] | None = Query(None),
+    limit: int = 15,
+    db: Session = Depends(get_db),
+):
+    """Ranked standard concepts in `domain` for a free-text query — the search
+    box beside every concept field, so the user never has to go to Athena.
+
+    `domain` is the one domain a field fixes. `domains` (repeatable) is the
+    user's own filter in the Concepts step's per-variable search, handed to the
+    matcher as its domain restriction. With neither, the search is not restricted
+    to a domain, and each result's `domain_id` says where it landed.
+
+    The matcher's ranked shortlist comes first, topped up to `limit` with a
+    plain name search over the vocabulary (see _name_search); both are grouped
+    under their direct parents (see _parents_first). The name search runs
+    alongside the matcher call, and if the vocab schema isn't loaded the
+    matcher's results are returned on their own.
+    """
+    import asyncio
+    from app.services.concept_normalizer import normalize_term
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not settings.concept_matcher_url:
+        raise HTTPException(status_code=503, detail="CONCEPT_MATCHER_URL is not configured")
+    if not query.strip():
+        return {"term": "", "results": []}
+
+    wanted = [domain] if domain else [d for d in (domains or []) if d.strip()] or None
+    term = normalize_term(query, domain) if domain else query.strip()
+    limit = max(1, min(limit, 25))
+
+    async def by_name() -> list[dict[str, Any]]:
+        try:
+            return await asyncio.to_thread(_name_search, term, wanted, limit)
+        except Exception as exc:
+            print(f"[search-concepts] vocabulary name search failed: {exc}")
+            return []
+
+    answer, named = await asyncio.gather(
+        _post_match(
+            [{"name": term}], project_id, f"ETL Auto-Designer project {project_id} (search)",
+            # None leaves the matcher's own domain settings in force.
+            limit, wanted, shortlist=True,
+        ),
+        by_name(),
+    )
+    result = (answer.get("results") or [{}])[0]
+    candidates = list(result.get("candidates") or [])
+    # The selected concept normally heads the candidate list; keep it first
+    # even if the matcher trimmed it out.
+    if result.get("concept_id") and all(c.get("concept_id") != result["concept_id"] for c in candidates):
+        candidates.insert(0, {
+            k: result.get(k) for k in (
+                "concept_id", "concept_name", "domain_id", "vocabulary_id", "concept_class_id", "concept_code",
+            )
+        } | {"score": result.get("confidence")})
+    seen = {c.get("concept_id") for c in candidates}
+    candidates += [c for c in named if c["concept_id"] not in seen][:max(0, limit - len(candidates))]
+    return {"term": term, "results": _parents_first(candidates)}
 
 
 # ── Column unique values ────────────────────────────────────────────────────
@@ -28,7 +1393,8 @@ router = APIRouter(prefix="/projects", tags=["concept-mapping"])
 @router.get("/{project_id}/column-values")
 def get_column_values(
     project_id: str,
-    max_values: int = 200,
+    max_values: int = 1000,
+    filename: str | None = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -39,16 +1405,30 @@ def get_column_values(
     project = db.query(Project).filter(Project.id == project_id).first()
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
-    if not project.source_path or not Path(project.source_path).exists():
-        raise HTTPException(status_code=400, detail="Source file not uploaded yet")
 
-    df = pd.read_csv(
-        project.source_path,
-        sep=project.source_delimiter or ",",
-        encoding=project.source_encoding or "utf-8",
-        dtype=str,
-        on_bad_lines="skip",
-    )
+    # Multi-file: read from the specified file when provided
+    if filename and project.source_files:
+        file_entry = next((f for f in project.source_files if f.get("filename") == filename), None)
+        if file_entry and Path(file_entry["path"]).exists():
+            df = pd.read_csv(
+                file_entry["path"],
+                sep=file_entry.get("delimiter", ","),
+                encoding=file_entry.get("encoding", "utf-8"),
+                dtype=str,
+                on_bad_lines="skip",
+            )
+        else:
+            return {}
+    else:
+        if not project.source_path or not Path(project.source_path).exists():
+            return {}
+        df = pd.read_csv(
+            project.source_path,
+            sep=project.source_delimiter or ",",
+            encoding=project.source_encoding or "utf-8",
+            dtype=str,
+            on_bad_lines="skip",
+        )
 
     total_rows = len(df)
     result: dict[str, dict] = {}
@@ -115,7 +1495,11 @@ def generate_csvs(project_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="No concept decisions saved yet")
 
     output_dir = str(settings.get_upload_path() / project_id / "mappings")
-    files = generate_mapping_csvs(project.concept_decisions, output_dir)
+    files = generate_mapping_csvs(
+        project.concept_decisions,
+        output_dir,
+        custom_vocabulary_id=project.custom_vocabulary_id or "CUSTOM",
+    )
 
     if not files:
         raise HTTPException(
@@ -124,6 +1508,169 @@ def generate_csvs(project_id: str, db: Session = Depends(get_db)):
         )
 
     project.mapping_files = files
+    script_inputs.record_mapping_files(project, script_inputs.mapping_files_fingerprint(project))
     db.commit()
     db.refresh(project)
     return project
+
+
+# ── Download mapping CSVs as a zip ──────────────────────────────────────────
+
+@router.get("/{project_id}/download-mapping-files")
+def download_mapping_files(project_id: str, db: Session = Depends(get_db)):
+    """Bundle the CSVs listed in project.mapping_files into a zip for download."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    files: dict = project.mapping_files or {}
+    existing = [Path(p) for p in files.values() if p and Path(p).is_file()]
+    if not existing:
+        raise HTTPException(
+            status_code=404,
+            detail="No mapping files generated yet. Generate them first.",
+        )
+
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for path in existing:
+            zf.write(path, arcname=path.name)
+    buf.seek(0)
+
+    zip_name = f"{project_id}_mapping_files.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{zip_name}"'},
+    )
+
+
+# ── Download mapping summary as Excel ───────────────────────────────────────
+
+# Last answer from _all_distinct_values, as (key, values). One entry is enough:
+# the callers that repeat (the Concepts step matches one column's values per
+# request, so a run makes one call per column) all ask about the same project
+# back to back, and re-reading every source CSV per column would dominate the run.
+_distinct_values_cache: "tuple[tuple, dict[str, list[str]]] | None" = None
+
+
+def _all_distinct_values(project: Project, max_values: int = 1000) -> dict[str, list[str]]:
+    """Distinct source values for every column across every uploaded source file
+    (unlike get_column_values above, which only reads the one currently-selected
+    file). Lets the mapping summary list every value a column actually has, not
+    just the ones the user happened to assign a concept to."""
+    global _distinct_values_cache
+
+    file_entries = project.source_files or (
+        [{"path": project.source_path, "delimiter": project.source_delimiter, "encoding": project.source_encoding}]
+        if project.source_path else []
+    )
+
+    # Keyed on what the answer actually depends on, mtime and size included, so a
+    # re-uploaded source is never served from a stale entry.
+    def stat_key(path: str | None) -> tuple:
+        try:
+            st = Path(path).stat() if path else None
+        except OSError:
+            return (path, None, None)
+        return (path, st.st_mtime_ns, st.st_size) if st else (path, None, None)
+
+    key = (project.id, max_values, tuple(stat_key(e.get("path")) for e in file_entries))
+    if _distinct_values_cache and _distinct_values_cache[0] == key:
+        return _distinct_values_cache[1]
+
+    result: dict[str, list[str]] = {}
+    for entry in file_entries:
+        path = entry.get("path")
+        if not path or not Path(path).exists():
+            continue
+        df = pd.read_csv(
+            path,
+            sep=entry.get("delimiter") or ",",
+            encoding=entry.get("encoding") or "utf-8",
+            dtype=str,
+            on_bad_lines="skip",
+        )
+        for col in df.columns:
+            if col in result:
+                continue
+            result[col] = [str(v) for v in df[col].dropna().unique().tolist()[:max_values]]
+
+    _distinct_values_cache = (key, result)
+    return result
+
+
+def _ordered_decisions(project: Project) -> dict:
+    """Re-key project.concept_decisions to follow the column order of the
+    uploaded source file(s), instead of dict/insertion order — which is
+    whatever order the user happened to touch columns in, not a meaningful
+    order to read a report in. Any decision whose column isn't in a known
+    file (e.g. its file was later removed) is appended at the end, in its
+    original order, so nothing gets silently dropped."""
+    decisions = project.concept_decisions or {}
+    order: list[str] = []
+    seen: set[str] = set()
+    for entry in (project.source_files or []):
+        for col in (entry.get("columns") or []):
+            if col not in seen:
+                order.append(col)
+                seen.add(col)
+    for col in (project.source_columns or []):
+        if col not in seen:
+            order.append(col)
+            seen.add(col)
+
+    ordered = {col: decisions[col] for col in order if col in decisions}
+    for col, d in decisions.items():
+        if col not in ordered:
+            ordered[col] = d
+    return ordered
+
+
+@router.get("/{project_id}/download-mapping-summary")
+def download_mapping_summary(project_id: str, db: Session = Depends(get_db)):
+    """Build and download an Excel summary of every variable's mapping decisions
+    (included or not, mapped or skipped) — variable/value concept ids and names,
+    unit/route/type concepts, and start/end datetime columns. For human review,
+    unlike generate-mapping-csvs which only emits ETL-ready rows."""
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+    if not project.concept_decisions:
+        raise HTTPException(status_code=400, detail="No concept decisions saved yet")
+
+    # The summary only needs names for bare ids — the per-column unit/route
+    # mappings, which keep just {source value: concept_id}. Fetch them all at once.
+    def as_id(cid: Any) -> int | None:
+        try:
+            return int(cid)
+        except (TypeError, ValueError):
+            return None
+
+    bare_ids: set[int] = set()
+    for decision in project.concept_decisions.values():
+        decision = decision or {}
+        for mapping_key, concepts_key in (("unit_mapping", "unit_concepts"), ("route_mapping", "route_concepts")):
+            for cid in ((decision.get(mapping_key) or {}).get(concepts_key) or {}).values():
+                if (i := as_id(cid)) is not None:
+                    bare_ids.add(i)
+    try:
+        names = _get_concept_names(bare_ids)
+    except Exception as exc:
+        # Vocab not loaded / Postgres unreachable: export without those names.
+        print(f"[mapping-summary] concept name lookup failed: {exc}")
+        names = {}
+
+    def lookup_name(cid: Any) -> str:
+        i = as_id(cid)
+        return names.get(i, "") if i is not None else ""
+
+    column_values = _all_distinct_values(project)
+    buf = generate_mapping_summary_excel(_ordered_decisions(project), lookup_name, column_values)
+
+    file_name = f"{project_id}_mapping_summary.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{file_name}"'},
+    )

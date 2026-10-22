@@ -10,6 +10,8 @@ with engine.connect() as conn:
         "concept_decisions": "ALTER TABLE projects ADD COLUMN concept_decisions JSON",
         "mapping_files": "ALTER TABLE projects ADD COLUMN mapping_files JSON",
         "generated_scripts": "ALTER TABLE projects ADD COLUMN generated_scripts JSON",
+        "chat_history": "ALTER TABLE projects ADD COLUMN chat_history JSON",
+        "source_files": "ALTER TABLE projects ADD COLUMN source_files JSON",
     }
 
     for col, ddl in needed.items():

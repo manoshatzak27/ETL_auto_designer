@@ -1,0 +1,118 @@
+{
+  "_comment": [
+    "Stage 0.7 stopwords, split by why they are noise.",
+    "",
+    "The hard rule from the spec: do NOT remove domain-bearing words such as",
+    "'pressure', 'test', 'level', 'rate', 'count' — they are what distinguishes",
+    "'blood pressure' from 'blood glucose'. Those live in 'keep_always' below,",
+    "which is applied as a veto over every other list, so no future edit can",
+    "accidentally strip them.",
+    "",
+    "'corpus_adaptive' words are only dropped when they exceed the",
+    "stopword_corpus_threshold in the config (default 0.8 = present in 80%+ of",
+    "the batch being mapped) — the spec's 80% rule."
+  ],
+
+  "generic": [
+    "value", "values", "result", "results", "number", "measurement",
+    "measurements", "reading", "readings", "finding", "findings", "data",
+    "field", "column", "code", "codes", "flag", "indicator", "info",
+    "information", "detail", "details", "item", "entry", "text", "desc",
+    "description", "name", "type", "category", "status", "amount", "qty",
+    "quantity", "unit", "units", "measure", "measured", "observed",
+    "observation_value", "raw", "clean", "final", "tmp"
+  ],
+  "_temp_comment": [
+    "'temp' is NOT a stopword. In an ETL schema it can mean 'temporary', but in",
+    "a clinical column name it almost always means temperature — and treating",
+    "it as noise stripped the only content from 'temp_c'. It is an abbreviation",
+    "instead; see abbreviations.json."
+  ],
+
+  "metadata": [
+    "patient", "patients", "subject", "subjects", "person", "persons",
+    "visit", "visits", "encounter", "encounters",
+    "record", "records", "documented", "document", "documentation",
+    "reported", "report", "chart", "charted", "note", "notes", "form",
+    "questionnaire", "survey", "study", "trial", "site", "source", "system",
+    "provider", "clinician", "physician", "nurse", "staff", "user",
+    "hospital", "clinic", "ward", "department", "id", "identifier", "key",
+    "pk", "fk", "index", "seq", "sequence", "row", "table",
+    "loinc", "snomed", "snomedct", "icd", "icd9", "icd10", "rxnorm", "rxcui",
+    "cpt", "cpt4", "hcpcs", "ndc", "atc", "omop", "vocabulary"
+  ],
+
+  "instrument_boilerplate": [
+    "tick", "circle", "please", "namely", "specify", "eg", "ie", "etc",
+    "following", "above", "below", "question", "questions", "answer",
+    "answers", "option", "options", "choose", "select", "selected",
+    "indicate", "describes", "describe", "best", "usually", "usual",
+    "considering", "regarding", "overall", "general", "average"
+  ],
+  "_instrument_boilerplate_comment": [
+    "Applied to the QUERY only, never to a concept name — see",
+    "Preprocessor.concept_tokens. These words are noise in a survey export's",
+    "item text but meaning in a concept name: stripping them made 'Height",
+    "above average' and 'General finding of height' tokenize to exactly",
+    "{height}, so both scored a perfect Jaccard 1.0 against the column",
+    "'height' while the correct 'Body height' scored LOWER for carrying the",
+    "extra word 'body'. A finding about a variable outranked the variable.",
+    "",
+    "Questionnaire scaffolding. A survey export's item text is mostly",
+    "instructions — 'Tick the one response which best describes your usual",
+    "abilities over the past week' — and every one of those tokens dilutes",
+    "both the FTS query and the Jaccard union without ever distinguishing one",
+    "concept from another. Note 'ability' is NOT here: 'Ability to walk' is a",
+    "real concept name."
+  ],
+
+  "structural": [
+    "of", "the", "for", "with", "at", "from", "in", "on", "to", "by", "and",
+    "or", "a", "an", "as", "is", "was", "were", "be", "been", "this", "that",
+    "these", "those", "it", "its", "per", "via", "into", "onto", "upon",
+    "any", "all", "both", "each", "other", "than", "then", "there", "here",
+    "if", "not", "no", "yes",
+    "how", "what", "when", "where", "which", "who", "whom", "whose", "why",
+    "much", "many", "does", "do", "did", "has", "have", "had", "will", "would",
+    "can", "could", "should", "may", "might", "must", "about", "over", "under",
+    "between", "during", "after", "before", "while", "such", "very", "more",
+    "most", "less", "least", "same", "also", "only", "just", "so", "up", "out"
+  ],
+  "_question_word_comment": [
+    "Question and quantifier words matter more than they look. A description",
+    "like 'how tall the patient is' left 'how' in the token set, so Stage 2",
+    "searched for concepts containing 'how' AND 'tall' — and 'Body height',",
+    "sharing no token with the query, never entered the shortlist at all.",
+    "Stage 5 can only rerank what Stage 2 found, so no embedding model can",
+    "recover from that.",
+    "",
+    "Personal and possessive pronouns are deliberately NOT here, though the",
+    "argument for adding them looks identical. Postgres already drops them,",
+    "so Stage 2 is unaffected either way; what changes is Stages 3 and 4.",
+    "Adding you/your/my/their cost 2 agreed-on-meaning and 2 more unmapped",
+    "columns on the 206-column curated set, because a questionnaire item",
+    "('Are you able to shampoo your hair') matches a questionnaire concept",
+    "partly ON those pronouns — question shape is real signal when both",
+    "sides are questions. They are harmless in Stage 3 now that a stopword",
+    "is weighted 0 rather than as the rarest token in the corpus."
+  ],
+
+  "corpus_adaptive": [
+    "test", "level", "levels", "rate", "count", "score", "index", "ratio",
+    "concentration", "total", "serum", "plasma", "blood", "urine"
+  ],
+
+  "keep_always": [
+    "pressure", "test", "level", "levels", "rate", "count", "counts",
+    "volume", "flow", "output", "input", "intake", "weight", "height",
+    "temperature", "saturation", "fraction", "concentration", "ratio",
+    "index", "score", "scale", "time", "duration", "onset", "age", "sex",
+    "gender", "race", "ethnicity", "dose", "dosage", "frequency", "route",
+    "blood", "serum", "plasma", "urine", "csf", "arterial", "venous",
+    "systolic", "diastolic", "mean", "peak", "trough", "max", "min",
+    "left", "right", "upper", "lower", "anterior", "posterior",
+    "admission", "admissions", "discharge", "transfer", "death", "birth",
+    "total", "free", "direct", "indirect", "absolute", "relative",
+    "positive", "negative", "normal", "abnormal", "high", "low"
+  ]
+}

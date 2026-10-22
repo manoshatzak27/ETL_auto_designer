@@ -11,6 +11,7 @@ class ProjectCreate(BaseModel):
 class ProjectUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
+    custom_vocabulary_id: str | None = None
 
 
 class ProjectResponse(BaseModel):
@@ -27,22 +28,42 @@ class ProjectResponse(BaseModel):
     etl_config: dict[str, Any] = {}
     generated_code: str
     generated_scripts: dict[str, Any] = {}
+    generated_scripts_usage: dict[str, Any] = {}
     last_execution_status: str
+    last_execution_log: str = ""
     output_files: list[str] = []
     mapping_files: dict[str, Any] = {}
+    custom_vocabulary_id: str = "CUSTOM"
+    source_files: list[dict[str, Any]] = []
+    # Tables whose script currently holds a change applied from the chat.
+    chat_edited_tables: list[str] = []
+    # Scripts whose settings changed since they were generated, and whether
+    # the mapping CSVs lag behind the Concepts decisions.
+    stale_scripts: list[str] = []
+    mapping_files_stale: bool = False
 
     model_config = {"from_attributes": True}
 
     # Coerce NULL DB values to safe defaults so existing rows don't 500
-    @field_validator("etl_config", "generated_scripts", "mapping_files", mode="before")
+    @field_validator("etl_config", "generated_scripts", "generated_scripts_usage", "mapping_files", mode="before")
     @classmethod
     def _dict_or_empty(cls, v: Any) -> dict:
         return v if isinstance(v, dict) else {}
 
-    @field_validator("source_columns", "output_files", mode="before")
+    @field_validator("source_columns", "output_files", "source_files", mode="before")
     @classmethod
     def _list_or_empty(cls, v: Any) -> list:
         return v if isinstance(v, list) else []
+
+
+class UploadConflict(BaseModel):
+    column: str
+    reason: str
+
+
+class UploadSourcesResponse(BaseModel):
+    project: ProjectResponse
+    conflicts: list[UploadConflict] = []
 
 
 class ProjectSummary(BaseModel):
@@ -53,6 +74,12 @@ class ProjectSummary(BaseModel):
     updated_at: datetime
     source_filename: str
     last_execution_status: str
+    # Enough of the project to show its wizard progress on the Dashboard.
+    generated_tables: list[str] = []
+    enabled_tables: list[str] = []
+    has_mapping_files: bool = False
+    stale_scripts: list[str] = []
+    mapping_files_stale: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -64,9 +91,3 @@ class ETLConfigUpdate(BaseModel):
 
 class GenerateCodeRequest(BaseModel):
     tables: list[str] | None = None
-
-
-class ConceptSearchRequest(BaseModel):
-    query: str
-    top_k: int = 20
-    use_reranker: bool = False

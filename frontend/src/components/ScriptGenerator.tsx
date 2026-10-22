@@ -4,13 +4,18 @@
  * so the user can generate, review, and optionally regenerate before moving on.
  */
 import { useState, useEffect, useRef } from 'react'
-import { generateTableScript } from '../api/client'
+import { generateTableScript, getGenerateProgress } from '../api/client'
+import { useGeneration } from '../context/GenerationContext'
 import type { Project } from '../types'
 import {
   Sparkles, RefreshCw, Copy, Check,
   ChevronDown, ChevronUp, CheckCircle, FileCode2,
 } from 'lucide-react'
 import clsx from 'clsx'
+import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { useConfirm } from '../contexts/confirm'
+import { chatEditsOverwritten, chatEditsWarning } from './chatEdits'
 
 interface Props {
   project: Project
@@ -18,34 +23,100 @@ interface Props {
   onUpdate: (p: Project) => void
   /** Called before every generate/regenerate to flush unsaved form state to the backend */
   beforeGenerate?: () => Promise<void>
+  /** Extra classes for the generate/regenerate button (e.g. a fixed width for uniform rows) */
+  buttonClassName?: string
+  /** When true, hides AI-specific labels (table is generated deterministically) */
+  deterministic?: boolean
+  /** Open and scroll to the code whenever the script changes (a chat change
+   *  applied, say). When false, only after this card's own button. */
+  revealChanges?: boolean
 }
 
-export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate }: Props) {
+export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName, deterministic = false, revealChanges = true }: Props) {
   const scripts: Record<string, string> = project.generated_scripts || {}
   const script = scripts[table] || null
+  const usage = project.generated_scripts_usage?.[table] || null
 
+  const { isAnyGenerating, acquireLock, releaseLock } = useGeneration()
+  const confirm = useConfirm()
+  const chatEdited = chatEditsOverwritten(project, [table])
+  const stale = !!script && !!project.stale_scripts?.includes(table)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
   const [copied, setCopied] = useState(false)
+  const [liveUsage, setLiveUsage] = useState<{ used: number; limit: number } | null>(null)
+  const [liveContent, setLiveContent] = useState('')
 
   const prevScriptRef = useRef<string | null>(script)
+  const revealNextRef = useRef(false)
   const previewRef = useRef<HTMLDivElement>(null)
+  const codeScrollRef = useRef<HTMLDivElement>(null)
+
+  // While a generate/regenerate is in flight, poll the AI patch's live token
+  // count + partial code so the badge and preview update in real time instead
+  // of only appearing once the whole request finishes.
+  useEffect(() => {
+    if (!generating) {
+      setLiveUsage(null)
+      setLiveContent('')
+      return
+    }
+    setOpen(true)
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout>
+    const tick = async () => {
+      try {
+        const p = await getGenerateProgress(project.id, table)
+        if (!cancelled) {
+          // The backend's progress store is keyed by project+table, so a second
+          // concurrent generation for the same table (another tab) can interleave
+          // updates with this one. Never let the displayed count/code jump backward.
+          setLiveUsage(prev =>
+            !p.active ? null
+            : prev && prev.limit === p.limit && p.used < prev.used ? prev
+            : { used: p.used, limit: p.limit }
+          )
+          setLiveContent(prev => (p.active && p.content.length >= prev.length) ? p.content : prev)
+        }
+      } catch {
+        // transient — keep showing the last known value
+      }
+      if (!cancelled) timer = setTimeout(tick, 300)
+    }
+    tick()
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
+  }, [generating, project.id, table])
+
+  // Follow the tail of the live code preview as new lines stream in.
+  useEffect(() => {
+    if (generating && codeScrollRef.current) {
+      codeScrollRef.current.scrollTop = codeScrollRef.current.scrollHeight
+    }
+  }, [liveContent, generating])
 
   // Auto-expand and scroll into view when a new script arrives
   useEffect(() => {
     if (script && script !== prevScriptRef.current) {
       prevScriptRef.current = script
+      const reveal = revealChanges || revealNextRef.current
+      revealNextRef.current = false
+      if (!reveal) return
       setOpen(true)
       setTimeout(() => previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
     }
-  }, [script])
+  }, [script, revealChanges])
 
   const handleGenerate = async () => {
+    if (chatEdited.length > 0 && !(await confirm(chatEditsWarning(chatEdited)))) return
+    if (!acquireLock()) return
+    revealNextRef.current = true
     setGenerating(true)
     setError('')
     try {
-      // Flush unsaved form state (extra_instructions, mappings, etc.) before generating
       if (beforeGenerate) await beforeGenerate()
       const updated = await generateTableScript(project.id, table)
       onUpdate(updated)
@@ -54,6 +125,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
       setError(err?.response?.data?.detail || `Failed to generate ${table}.py`)
     } finally {
       setGenerating(false)
+      releaseLock()
     }
   }
 
@@ -65,93 +137,121 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   }
 
   const lineCount = script ? script.split('\n').length : 0
+  const displayUsage = generating ? liveUsage : usage
+  const previewCode = generating && liveContent ? liveContent : script
+  const previewLineCount = previewCode ? previewCode.split('\n').length : 0
 
   return (
     <div ref={previewRef} className="flex flex-col gap-3">
       {/* Generator card */}
-      <div className={clsx(
-        'border rounded-xl overflow-hidden',
-        script ? 'border-green-200' : 'border-blue-200',
+      <Card className={clsx(
+        'overflow-hidden p-0',
+        script ? 'border-green-200' : 'border-border',
       )}>
         {/* Header */}
         <div className={clsx(
           'flex items-center gap-3 px-5 py-4',
-          script ? 'bg-green-50' : 'bg-blue-50',
+          script ? 'bg-green-50' : 'bg-secondary/60',
         )}>
           <div className={clsx(
             'w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0',
-            script ? 'bg-green-100' : 'bg-blue-100',
+            script ? 'bg-green-100' : 'bg-accent',
           )}>
             {generating
-              ? <RefreshCw className="w-4 h-4 text-blue-500 animate-spin" />
+              ? <RefreshCw className="w-4 h-4 text-primary animate-spin" />
               : script
                 ? <CheckCircle className="w-4 h-4 text-green-500" />
-                : <FileCode2 className="w-4 h-4 text-blue-500" />
+                : <FileCode2 className="w-4 h-4 text-primary" />
             }
           </div>
 
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-semibold text-gray-800 font-mono">{table}.py</p>
-            <p className="text-xs text-gray-500 mt-0.5">
+            <p className="text-sm font-semibold text-foreground font-mono">{table}.py</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
               {generating
-                ? 'GPT-4o is writing the transformation script…'
+                ? (deterministic
+                    ? 'Building script from template…'
+                    : liveContent
+                      ? `GPT-4o is writing the transformation script… · ${previewLineCount} lines so far`
+                      : 'GPT-4o is writing the transformation script…')
                 : script
-                  ? `Generated · ${lineCount} lines · based on VOLABIOS reference`
+                  ? (deterministic ? `Generated · ${lineCount} lines` : `Generated · ${lineCount} lines · based on VOLABIOS reference`)
                   : 'Click Generate to create the Python ETL script for this table'
               }
             </p>
+            {!generating && stale && (
+              <p className="text-[11px] font-medium text-amber-700 mt-0.5">
+                Out of date: the settings changed since this script was generated. Regenerate it.
+              </p>
+            )}
+            {!generating && chatEdited.length > 0 && (
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                {chatEdited.map(t => `${t}.py`).join(', ')} {chatEdited.length > 1 ? 'hold' : 'holds'} changes
+                applied from the AI chat; Regenerate would replace them.
+              </p>
+            )}
+            {displayUsage && (
+              <p className="text-[11px] text-muted-foreground/80 mt-0.5 tabular-nums">
+                AI tokens used: {displayUsage.used.toLocaleString()} / {displayUsage.limit.toLocaleString()}
+                {displayUsage.used / displayUsage.limit > 0.9 && (
+                  <span className="text-amber-600 font-medium"> · near limit</span>
+                )}
+              </p>
+            )}
           </div>
 
           <div className="flex items-center gap-2 flex-shrink-0">
             {script && (
-              <button
+              <Button
+                variant="outline"
+                size="sm"
                 onClick={() => setOpen(o => !o)}
-                className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 px-2.5 py-1.5 border border-gray-200 bg-white rounded-lg hover:bg-gray-50 transition-colors"
+                className="text-xs h-7 px-2.5"
               >
                 {open ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                 {open ? 'Collapse' : 'View code'}
-              </button>
+              </Button>
             )}
 
-            <button
+            <Button
+              variant={script ? 'outline' : 'default'}
+              size="sm"
               onClick={handleGenerate}
-              disabled={generating}
-              className={clsx(
-                'flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-xs font-medium transition-colors',
-                script
-                  ? 'border border-blue-200 bg-white text-blue-600 hover:bg-blue-50'
-                  : 'bg-blue-600 text-white hover:bg-blue-700',
-                generating && 'opacity-60 cursor-not-allowed',
-              )}
+              disabled={isAnyGenerating}
+              className={clsx('text-xs h-7 px-4', buttonClassName)}
             >
               {generating
                 ? <><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Generating…</>
-                : <><Sparkles className="w-3.5 h-3.5" />{script ? 'Regenerate' : `Generate ${table}.py`}</>
+                : <><Sparkles className="w-3.5 h-3.5 text-amber-500" />{script ? 'Regenerate' : `Generate ${table}.py`}</>
               }
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Error */}
         {error && (
-          <div className="px-5 py-3 bg-red-50 border-t border-red-100 text-xs text-red-700">
+          <div className="px-5 py-3 bg-destructive/10 border-t border-destructive/30 text-xs text-destructive">
             {error}
           </div>
         )}
 
         {/* Code preview */}
-        {open && script && (
-          <div className="border-t border-gray-100">
+        {open && previewCode && (
+          <div className="border-t border-border">
             {/* Toolbar */}
             <div className="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-700">
               <div className="flex items-center gap-2">
                 <span className="text-xs text-gray-400 font-mono">{table}.py</span>
                 <span className="text-xs text-gray-600">·</span>
-                <span className="text-xs text-gray-500">{lineCount} lines</span>
+                <span className="text-xs text-gray-500">{previewLineCount} lines</span>
+                {generating && (
+                  <span className="text-xs text-amber-500 animate-pulse">· live</span>
+                )}
               </div>
               <button
                 onClick={handleCopy}
-                className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded hover:bg-gray-700 transition-colors"
+                disabled={!script}
+                className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-200 px-2 py-1 rounded hover:bg-gray-700 transition-colors disabled:opacity-40 disabled:hover:bg-transparent"
               >
                 {copied
                   ? <><Check className="w-3 h-3 text-green-400" /><span className="text-green-400">Copied!</span></>
@@ -161,16 +261,19 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
             </div>
 
             {/* Code with line numbers */}
-            <div className="bg-gray-950 overflow-auto max-h-[520px]">
+            <div ref={codeScrollRef} className="bg-gray-950 overflow-auto max-h-[520px]">
               <table className="w-full text-xs font-mono border-collapse">
                 <tbody>
-                  {script.split('\n').map((line, i) => (
+                  {previewCode.split('\n').map((line, i, arr) => (
                     <tr key={i} className="hover:bg-gray-800/40">
                       <td className="select-none text-right pr-4 pl-3 py-0.5 text-gray-600 w-10 border-r border-gray-800 align-top leading-5">
                         {i + 1}
                       </td>
                       <td className="pl-4 pr-4 py-0.5 text-gray-100 whitespace-pre align-top leading-5">
                         {line || ' '}
+                        {generating && i === arr.length - 1 && (
+                          <span className="inline-block w-1.5 h-3 -mb-0.5 ml-0.5 bg-amber-400 animate-pulse" />
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -179,14 +282,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
             </div>
           </div>
         )}
-      </div>
-
-      {/* Hint when not yet generated */}
-      {!script && !generating && (
-        <p className="text-xs text-gray-400 px-1">
-          You can also skip and generate all scripts at once from the final step.
-        </p>
-      )}
+      </Card>
     </div>
   )
 }

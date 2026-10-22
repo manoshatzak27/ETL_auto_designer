@@ -1,117 +1,174 @@
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ChevronRight, ArrowLeft } from 'lucide-react'
-
-const STEPS = [
-  { label: 'Source', short: '1' },
-  { label: 'Concepts', short: '2' },
-  { label: 'Person', short: '3' },
-  { label: 'Visit', short: '4' },
-  { label: 'Obs. Period', short: '5' },
-  { label: 'Stem Table', short: '6' },
-  { label: 'Death', short: '7' },
-  { label: 'Generate', short: '8' },
-]
+import { AlertCircle, ArrowLeft, Check, Loader2 } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import ConceptMatcherIndicator from '../../components/ConceptMatcherIndicator'
+import type { StepAutosave } from '../../hooks/useStepAutosave'
+import type { Project } from '../../types'
+import { getActiveSteps, type WizardSlug } from '../../wizard/steps'
 
 interface Props {
-  projectId?: string
-  projectName: string
-  currentStep: number
+  project: Project
+  currentSlug: WizardSlug
   children: ReactNode
   onNext?: () => void
   onBack?: () => void
+  /** Runs before leaving the step; defaults to `autosave.flush`. A rejection keeps the user on the step. */
+  onBeforeStepChange?: () => Promise<void>
+  /** The step's autosave, shown in the header. */
+  autosave?: StepAutosave
   nextLabel?: string
   nextDisabled?: boolean
   saving?: boolean
+  /** Overrides the content column's max-width class (default max-w-4xl). */
+  contentWidthClassName?: string
 }
 
 export default function WizardLayout({
-  projectName,
-  currentStep,
+  project,
+  currentSlug,
   children,
   onNext,
   onBack,
+  onBeforeStepChange,
+  autosave,
   nextLabel = 'Next',
   nextDisabled,
   saving,
+  contentWidthClassName = 'max-w-4xl',
 }: Props) {
   const navigate = useNavigate()
+  const activeSteps = getActiveSteps(project)
+
+  const beforeLeave = onBeforeStepChange ?? autosave?.flush
+  // A failed save keeps the user here; the step or the header shows the error.
+  const leave = async (go: () => void) => {
+    try {
+      await beforeLeave?.()
+    } catch {
+      return
+    }
+    go()
+  }
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col">
+    <div className="flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-secondary/60">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center gap-4">
-        <button onClick={() => navigate('/')} className="text-gray-400 hover:text-gray-600">
-          <ArrowLeft className="w-5 h-5" />
-        </button>
+      <header className="flex items-center gap-3 border-b border-border bg-card/60 px-6 py-4">
+        <Button
+          variant="ghost"
+          size="icon"
+          aria-label="Back to projects"
+          onClick={() => leave(() => navigate('/'))}
+          className="text-muted-foreground hover:text-foreground"
+        >
+          <ArrowLeft />
+        </Button>
         <div>
-          <h1 className="text-lg font-semibold text-gray-900">{projectName}</h1>
-          <p className="text-xs text-gray-500">OMOP ETL Designer</p>
+          <h1 className="text-lg font-bold tracking-tight text-primary">
+            {project.name}
+          </h1>
+          <p className="text-xs text-muted-foreground">
+            <span className="font-semibold text-primary">OMOP</span> ETL Designer
+          </p>
+        </div>
+        <div className="ml-auto flex items-center gap-4">
+          {autosave && <AutosaveStatus autosave={autosave} />}
+          <ConceptMatcherIndicator />
         </div>
       </header>
 
       {/* Step progress */}
-      <div className="bg-white border-b border-gray-200 px-6 py-3">
-        <div className="flex items-center gap-1 overflow-x-auto">
-          {STEPS.map((step, i) => {
-            const idx = i + 1
-            const done = idx < currentStep
-            const active = idx === currentStep
+      <div className="px-6 pt-5">
+        <div className="flex items-stretch gap-2 pb-3">
+          {activeSteps.map(step => {
+            const active = step.slug === currentSlug
+            const complete = step.isComplete(project)
+            const stale = complete && !!step.isStale?.(project)
+            const done = !active && complete && !stale
+            const outdated = !active && stale
             return (
-              <div key={step.label} className="flex items-center gap-1 flex-shrink-0">
-                <div
+              <button
+                key={step.slug}
+                onClick={() => leave(() => navigate(`/project/${project.id}/step/${step.slug}`))}
+                title={stale
+                  ? (step.slug === 'concepts'
+                    ? 'Decisions changed since the mapping CSVs were generated: press Next on this step to rebuild them'
+                    : step.slug === 'finalize'
+                      ? 'Some scripts are out of date: regenerate them here'
+                      : 'Settings changed since the script was generated: regenerate it')
+                  : undefined}
+                className={clsx(
+                  'flex flex-1 min-w-0 items-center justify-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium shadow-sm transition-all',
+                  active && 'border-primary bg-primary text-primary-foreground shadow-md',
+                  done && 'border-border bg-card text-secondary-foreground hover:-translate-y-0.5 hover:shadow-md',
+                  outdated && 'border-amber-300 bg-card text-secondary-foreground hover:-translate-y-0.5 hover:shadow-md',
+                  !active && !done && !outdated && 'border-border bg-card text-muted-foreground hover:-translate-y-0.5 hover:shadow-md',
+                )}
+              >
+                <span
                   className={clsx(
-                    'flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium transition-colors',
-                    active && 'bg-blue-600 text-white',
-                    done && 'bg-green-100 text-green-700',
-                    !active && !done && 'text-gray-400',
+                    'flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold',
+                    active && 'bg-card text-primary',
+                    done && 'bg-primary text-primary-foreground',
+                    outdated && 'bg-amber-400 text-white',
+                    !active && !done && !outdated && 'bg-muted text-muted-foreground',
                   )}
                 >
-                  <span
-                    className={clsx(
-                      'w-5 h-5 rounded-full flex items-center justify-center text-xs font-bold',
-                      active && 'bg-white text-blue-600',
-                      done && 'bg-green-500 text-white',
-                      !active && !done && 'bg-gray-200 text-gray-500',
-                    )}
-                  >
-                    {done ? '✓' : step.short}
-                  </span>
-                  <span className="hidden sm:inline">{step.label}</span>
-                </div>
-                {i < STEPS.length - 1 && <ChevronRight className="w-4 h-4 text-gray-300 flex-shrink-0" />}
-              </div>
+                  {done ? '✓' : outdated ? '!' : step.short}
+                </span>
+                <span className="hidden sm:inline">{step.label}</span>
+              </button>
             )
           })}
         </div>
       </div>
 
       {/* Content */}
-      <main className="flex-1 px-6 py-8 max-w-4xl mx-auto w-full">
+      <main className={clsx('mx-auto w-full flex-1 px-6 py-8', contentWidthClassName)}>
         {children}
       </main>
 
       {/* Footer navigation */}
-      <footer className="bg-white border-t border-gray-200 px-6 py-4 flex justify-between items-center">
-        <button
-          onClick={onBack}
+      <footer className="flex items-center justify-between border-t border-border bg-card/60 px-6 py-4">
+        <Button
+          variant="outline"
+          onClick={() => leave(() => onBack?.())}
           disabled={!onBack}
-          className="px-4 py-2 text-sm text-gray-600 border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-40 disabled:cursor-not-allowed"
         >
           Back
-        </button>
+        </Button>
         {onNext && (
-          <button
-            onClick={onNext}
-            disabled={nextDisabled || saving}
-            className="px-6 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-          >
-            {saving && <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />}
+          <Button onClick={onNext} disabled={nextDisabled || saving}>
+            {saving && <Loader2 className="animate-spin" />}
             {nextLabel}
-          </button>
+          </Button>
         )}
       </footer>
     </div>
+  )
+}
+
+function AutosaveStatus({ autosave }: { autosave: StepAutosave }) {
+  const { state, error, flush } = autosave
+  if (state === 'idle') return null
+  if (state === 'error') {
+    return (
+      <span role="alert" className="flex items-center gap-1.5 text-xs text-destructive" title={error}>
+        <AlertCircle className="h-3.5 w-3.5" />
+        Save failed
+        <button type="button" onClick={() => flush().catch(() => {})} className="font-medium underline underline-offset-2">
+          Retry
+        </button>
+      </span>
+    )
+  }
+  return (
+    <span aria-live="polite" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      {state === 'saving'
+        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving…</>
+        : <><Check className="h-3.5 w-3.5" />All changes saved</>}
+    </span>
   )
 }

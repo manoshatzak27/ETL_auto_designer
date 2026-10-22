@@ -1,0 +1,17 @@
+# Stage 5 — semantic / embedding similarity. Optional.
+#
+# Install the CPU build of torch unless you have a CUDA GPU; the default
+# wheel pulls ~2.5GB of CUDA libraries this pipeline never uses:
+#
+#   .venv/bin/pip install --index-url https://download.pytorch.org/whl/cpu torch
+#   .venv/bin/pip install -r requirements-embeddings.txt
+#
+# The model itself downloads on first use (~90MB for the default MiniLM) and is
+# cached under ~/.cache/huggingface. For a biomedical model instead, set
+# embedding_model in pipeline.json, e.g.:
+#   "embedding_model": "pritamdeka/S-PubMedBert-MS-MARCO"
+# and then run `python -m pipeline.cli refresh --full` to drop the embedding
+# cache, since cached vectors are keyed by model name and dimension.
+
+torch>=2.0
+sentence-transformers>=3.0

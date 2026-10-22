@@ -1,17 +1,52 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { listProjects, createProject, deleteProject } from '../api/client'
+import { listProjects, createProject, deleteProject, copyProject, renameProject } from '../api/client'
 import type { ProjectSummary } from '../types'
-import { Plus, Trash2, ChevronRight, Database, Clock } from 'lucide-react'
-import clsx from 'clsx'
+import { forgetStep, projectProgress } from '../wizard/progress'
+import { cn } from '@/lib/utils'
+import {
+  Plus,
+  Trash2,
+  Copy,
+  Pencil,
+  ChevronRight,
+  Database,
+  Clock,
+  Search,
+  Loader2,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Badge } from '@/components/ui/badge'
+import { Card } from '@/components/ui/card'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogFooter,
+  DialogTitle,
+  DialogDescription,
+} from '@/components/ui/dialog'
 
 export default function Dashboard() {
   const navigate = useNavigate()
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [loading, setLoading] = useState(true)
+  const [query, setQuery] = useState('')
+
+  const [showForm, setShowForm] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
-  const [showForm, setShowForm] = useState(false)
+  const [nameError, setNameError] = useState('')
+
+  const [deleteTarget, setDeleteTarget] = useState<ProjectSummary | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [copyingId, setCopyingId] = useState<string | null>(null)
+
+  const [renameTarget, setRenameTarget] = useState<ProjectSummary | null>(null)
+  const [renameValue, setRenameValue] = useState('')
+  const [renameError, setRenameError] = useState('')
+  const [renaming, setRenaming] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -20,136 +55,383 @@ export default function Dashboard() {
       .finally(() => setLoading(false))
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return projects
+    return projects.filter(p => p.name.toLowerCase().includes(q))
+  }, [projects, query])
+
+  const openCreate = () => {
+    setNewName('')
+    setNameError('')
+    setShowForm(true)
+  }
 
   const handleCreate = async () => {
     if (!newName.trim()) return
     setCreating(true)
-    const p = await createProject(newName.trim())
-    setCreating(false)
-    setNewName('')
-    setShowForm(false)
-    navigate(`/project/${p.id}/step/1`)
+    setNameError('')
+    try {
+      const p = await createProject(newName.trim())
+      setShowForm(false)
+      navigate(`/project/${p.id}/step/source`)
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        setNameError('This project name is already taken')
+      } else {
+        setNameError('Failed to create project')
+      }
+    } finally {
+      setCreating(false)
+    }
   }
 
-  const handleDelete = async (e: React.MouseEvent, id: string) => {
-    e.stopPropagation()
-    if (!confirm('Delete this project?')) return
-    await deleteProject(id)
-    load()
+  const handleCopy = async (p: ProjectSummary) => {
+    setCopyingId(p.id)
+    try {
+      await copyProject(p.id)
+      load()
+    } finally {
+      setCopyingId(null)
+    }
   }
 
-  const statusColor = (s: string) => {
-    if (s === 'success') return 'text-green-600 bg-green-50'
-    if (s === 'error') return 'text-red-600 bg-red-50'
-    return 'text-gray-500 bg-gray-100'
+  const openRename = (p: ProjectSummary) => {
+    setRenameValue(p.name)
+    setRenameError('')
+    setRenameTarget(p)
+  }
+
+  const renameChanged =
+    !!renameTarget && !!renameValue.trim() && renameValue.trim() !== renameTarget.name
+
+  const handleRename = async () => {
+    if (!renameTarget || !renameChanged) return
+    setRenaming(true)
+    setRenameError('')
+    try {
+      await renameProject(renameTarget.id, renameValue.trim())
+      setRenameTarget(null)
+      load()
+    } catch (err: any) {
+      if (err?.response?.status === 409) {
+        setRenameError('This project name is already taken')
+      } else {
+        setRenameError('Failed to rename project')
+      }
+    } finally {
+      setRenaming(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return
+    setDeleting(true)
+    try {
+      await deleteProject(deleteTarget.id)
+      forgetStep(deleteTarget.id)
+      setDeleteTarget(null)
+      load()
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  const statusVariant = (s: string): 'success' | 'destructive' | 'muted' => {
+    if (s === 'success') return 'success'
+    if (s === 'error') return 'destructive'
+    return 'muted'
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-background via-background to-secondary/60">
       {/* Header */}
-      <header className="bg-white border-b border-gray-200 px-8 py-5">
-        <div className="max-w-5xl mx-auto flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">OMOP ETL Designer</h1>
-            <p className="text-sm text-gray-500 mt-0.5">Code-less ETL builder with AI-powered code generation</p>
+      <header className="border-b border-border bg-card/60 px-8 py-5">
+        <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
+              <Database className="size-5" />
+            </div>
+            <div>
+              <h1 className="text-3xl font-bold tracking-tight text-foreground">
+                <span className="text-primary">OMOP</span> ETL Designer
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Code-less ETL builder with AI-powered code generation
+              </p>
+            </div>
           </div>
-          <button
-            onClick={() => setShowForm(true)}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4" /> New Project
-          </button>
+          <Button onClick={openCreate}>
+            <Plus /> New Project
+          </Button>
         </div>
       </header>
 
-      <main className="max-w-5xl mx-auto px-8 py-8">
-        {/* New project form */}
-        {showForm && (
-          <div className="bg-white border border-blue-200 rounded-xl p-5 mb-6 flex items-center gap-3">
-            <input
-              autoFocus
-              type="text"
-              value={newName}
-              onChange={e => setNewName(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && handleCreate()}
-              placeholder="Project name…"
-              className="flex-1 border border-gray-300 rounded-md px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+      <main className="mx-auto max-w-5xl px-8 py-8">
+        {/* Toolbar */}
+        <div className="mb-6 flex items-center gap-3">
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              placeholder="Search projects…"
+              className="pl-9"
             />
-            <button
-              onClick={handleCreate}
-              disabled={creating || !newName.trim()}
-              className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
-            >
-              {creating ? 'Creating…' : 'Create'}
-            </button>
-            <button onClick={() => setShowForm(false)} className="text-sm text-gray-400 hover:text-gray-600">Cancel</button>
           </div>
-        )}
+          <Badge variant="muted" className="px-3 py-1.5 text-sm">
+            {filtered.length} {filtered.length === 1 ? 'project' : 'projects'}
+          </Badge>
+        </div>
 
         {loading && (
-          <div className="flex items-center justify-center py-20 text-gray-400">
-            <span className="w-6 h-6 border-2 border-gray-300 border-t-blue-500 rounded-full animate-spin mr-3" />
+          <div className="flex items-center justify-center py-20 text-muted-foreground">
+            <Loader2 className="mr-3 size-5 animate-spin" />
             Loading projects…
           </div>
         )}
 
-        {!loading && projects.length === 0 && (
-          <div className="text-center py-20">
-            <Database className="w-12 h-12 text-gray-300 mx-auto mb-4" />
-            <h2 className="text-lg font-medium text-gray-600">No projects yet</h2>
-            <p className="text-sm text-gray-400 mt-1">Create a new project to start building your OMOP ETL</p>
-            <button
-              onClick={() => setShowForm(true)}
-              className="mt-4 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700"
-            >
-              Create First Project
-            </button>
+        {!loading && filtered.length === 0 && (
+          <div className="flex flex-col items-center py-20 text-center">
+            <div className="mb-4 flex size-14 items-center justify-center rounded-2xl bg-secondary">
+              <Database className="size-6 text-primary" />
+            </div>
+            <h2 className="text-lg font-semibold text-foreground">
+              {query ? 'No matching projects' : 'No projects yet'}
+            </h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {query
+                ? 'Try a different search term'
+                : 'Create a new project to start building your OMOP ETL'}
+            </p>
+            {!query && (
+              <Button onClick={openCreate} className="mt-5">
+                <Plus /> Create First Project
+              </Button>
+            )}
           </div>
         )}
 
-        <div className="grid gap-4">
-          {projects.map(p => (
-            <div
-              key={p.id}
-              onClick={() => navigate(`/project/${p.id}/step/1`)}
-              className="bg-white border border-gray-200 rounded-xl p-5 flex items-center gap-4 cursor-pointer hover:border-blue-300 hover:shadow-sm transition-all group"
-            >
-              <div className="w-10 h-10 bg-blue-50 rounded-lg flex items-center justify-center flex-shrink-0">
-                <Database className="w-5 h-5 text-blue-500" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2">
-                  <h3 className="font-semibold text-gray-900 truncate">{p.name}</h3>
-                  {p.last_execution_status && (
-                    <span className={clsx('px-2 py-0.5 rounded-full text-xs font-medium', statusColor(p.last_execution_status))}>
-                      {p.last_execution_status}
+        {!loading && filtered.length > 0 && (
+          <div className="grid gap-3">
+            {filtered.map(p => {
+              const progress = projectProgress(p)
+              return (
+              <Card
+                key={p.id}
+                role="link"
+                tabIndex={0}
+                onClick={() => navigate(`/project/${p.id}/step/${progress.resume.slug}`)}
+                onKeyDown={e => {
+                  // Only the card itself: Enter on one of its buttons does that button's action.
+                  if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
+                  e.preventDefault()
+                  navigate(`/project/${p.id}/step/${progress.resume.slug}`)
+                }}
+                title={`Open at ${progress.resume.label}`}
+                className="group flex cursor-pointer items-center gap-4 px-5 py-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg focus-visible:border-primary/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-lg bg-secondary">
+                  <Database className="size-5 text-primary" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <h3 className="truncate text-lg font-bold text-primary">
+                      {p.name}
+                    </h3>
+                    {p.last_execution_status && (
+                      <Badge variant={statusVariant(p.last_execution_status)}>
+                        {p.last_execution_status}
+                      </Badge>
+                    )}
+                  </div>
+                  <div className="mt-1 flex items-center gap-4">
+                    {p.source_filename && (
+                      <span className="truncate font-mono text-xs text-muted-foreground">
+                        {p.source_filename}
+                      </span>
+                    )}
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <Clock className="size-3" />
+                      {new Date(p.updated_at + 'Z').toLocaleDateString()} {new Date(p.updated_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                     </span>
-                  )}
+                  </div>
+                  {/* Wizard progress: one segment per step, as in the wizard's step bar. */}
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className="flex w-40 flex-shrink-0 gap-0.5" aria-hidden>
+                      {progress.steps.map(s => (
+                        <span
+                          key={s.step.slug}
+                          title={`${s.step.label}: ${s.done ? 'done' : s.stale ? 'out of date' : 'not done'}`}
+                          className={cn('h-1.5 flex-1 rounded-full', s.done ? 'bg-primary' : s.stale ? 'bg-amber-400' : 'bg-muted')}
+                        />
+                      ))}
+                    </div>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {progress.doneCount} of {progress.steps.length} steps done
+                      {progress.staleCount > 0 && <span className="text-amber-700"> · {progress.staleCount} out of date</span>}
+                    </span>
+                  </div>
                 </div>
-                <div className="flex items-center gap-4 mt-1">
-                  {p.source_filename && (
-                    <span className="text-xs text-gray-500 font-mono truncate max-w-xs">{p.source_filename}</span>
-                  )}
-                  <span className="flex items-center gap-1 text-xs text-gray-400">
-                    <Clock className="w-3 h-3" />
-                    {new Date(p.updated_at).toLocaleDateString()}
-                  </span>
+                <div className="flex flex-shrink-0 items-center gap-1">
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Rename project"
+                    onClick={e => {
+                      e.stopPropagation()
+                      openRename(p)
+                    }}
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                  >
+                    <Pencil />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Duplicate project"
+                    disabled={copyingId === p.id}
+                    onClick={e => {
+                      e.stopPropagation()
+                      handleCopy(p)
+                    }}
+                    className="text-muted-foreground opacity-0 transition hover:text-primary group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                  >
+                    {copyingId === p.id ? <Loader2 className="animate-spin" /> : <Copy />}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    title="Delete project"
+                    onClick={e => {
+                      e.stopPropagation()
+                      setDeleteTarget(p)
+                    }}
+                    className="text-muted-foreground opacity-0 transition hover:text-destructive group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                  >
+                    <Trash2 />
+                  </Button>
+                  <ChevronRight className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
                 </div>
-              </div>
-              <div className="flex items-center gap-2 flex-shrink-0">
-                <button
-                  onClick={e => handleDelete(e, p.id)}
-                  className="p-1.5 text-gray-300 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-                <ChevronRight className="w-4 h-4 text-gray-400 group-hover:text-blue-500" />
-              </div>
-            </div>
-          ))}
-        </div>
+              </Card>
+              )
+            })}
+          </div>
+        )}
       </main>
+
+      {/* Create project dialog */}
+      <Dialog open={showForm} onOpenChange={setShowForm}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-primary">New Project</DialogTitle>
+            <DialogDescription>
+              Give your ETL project a name to get started.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Input
+              autoFocus
+              value={newName}
+              onChange={e => {
+                setNewName(e.target.value)
+                setNameError('')
+              }}
+              onKeyDown={e => e.key === 'Enter' && handleCreate()}
+              placeholder="Project name…"
+              className={nameError ? 'border-destructive focus-visible:ring-destructive' : ''}
+            />
+            {nameError && (
+              <p className="mt-1.5 text-xs text-destructive">{nameError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowForm(false)}>
+              Cancel
+            </Button>
+            <Button onClick={handleCreate} disabled={creating || !newName.trim()}>
+              {creating && <Loader2 className="animate-spin" />}
+              {creating ? 'Creating…' : 'Create'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Rename project dialog */}
+      <Dialog
+        open={!!renameTarget}
+        onOpenChange={open => !open && setRenameTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold text-primary">Rename Project</DialogTitle>
+            <DialogDescription>
+              Only the display name changes; the project's ID and links stay the same.
+            </DialogDescription>
+          </DialogHeader>
+          <div>
+            <Input
+              autoFocus
+              value={renameValue}
+              onChange={e => {
+                setRenameValue(e.target.value)
+                setRenameError('')
+              }}
+              onKeyDown={e => e.key === 'Enter' && handleRename()}
+              placeholder="Project name…"
+              className={renameError ? 'border-destructive focus-visible:ring-destructive' : ''}
+            />
+            {renameError && (
+              <p className="mt-1.5 text-xs text-destructive">{renameError}</p>
+            )}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameTarget(null)}>
+              Cancel
+            </Button>
+            <Button onClick={handleRename} disabled={renaming || !renameChanged}>
+              {renaming && <Loader2 className="animate-spin" />}
+              {renaming ? 'Renaming…' : 'Rename'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete confirmation dialog */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={open => !open && setDeleteTarget(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete project</DialogTitle>
+            <DialogDescription>
+              Are you sure you want to delete{' '}
+              <span className="font-medium text-foreground">
+                {deleteTarget?.name}
+              </span>
+              ? This action cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDeleteTarget(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={handleDelete}
+              disabled={deleting}
+            >
+              {deleting && <Loader2 className="animate-spin" />}
+              {deleting ? 'Deleting…' : 'Delete'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
