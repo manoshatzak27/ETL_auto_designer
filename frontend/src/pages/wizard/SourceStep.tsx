@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import VocabLoaderCard from '../../components/VocabLoaderCard'
 import SourceFileGridEditor from '../../components/SourceFileGridEditor'
 import AutoMapAllCard from '../../components/AutoMapAllCard'
+import { useConfirm } from '../../contexts/confirm'
 import clsx from 'clsx'
 
 const WARN_ROW_THRESHOLD = 20
@@ -57,6 +58,7 @@ const PICKER_ENTRIES: { table: OptionalTable; label: string; description: string
 export default function SourceStep({ project, onUpdate }: Props) {
   const navigate = useNavigate()
   const [dragging, setDragging] = useState(false)
+  const confirm = useConfirm()
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
   const [conflicts, setConflicts] = useState<UploadConflict[]>([])
@@ -115,6 +117,18 @@ export default function SourceStep({ project, onUpdate }: Props) {
   }, [handleFiles])
 
   const handleDelete = async (index: number) => {
+    const file = sourceFiles[index]
+    const ok = await confirm({
+      title: 'Delete source file?',
+      description: (
+        <>
+          <p><span className="font-mono text-foreground">{file?.filename}</span> will be removed from the project and deleted from the server.</p>
+          <p>Mappings in later steps that use its columns will no longer find them. Download a copy first if you may need it again.</p>
+        </>
+      ),
+      confirmLabel: 'Delete file',
+    })
+    if (!ok) return
     setDeletingIndex(index)
     try {
       const updated = await deleteSourceFile(project.id, index)
@@ -124,6 +138,19 @@ export default function SourceStep({ project, onUpdate }: Props) {
     } finally {
       setDeletingIndex(null)
     }
+  }
+
+  // Escape, a click outside and the dialog's × land here; the grid's own
+  // Cancel button asks by itself.
+  const [gridDirty, setGridDirty] = useState(false)
+  const closeGrid = async () => {
+    if (gridDirty && !(await confirm({
+      title: 'Discard unsaved changes?',
+      description: `Your edits to ${openFile?.file.filename} will be lost.`,
+      confirmLabel: 'Discard changes',
+    }))) return
+    setGridDirty(false)
+    setOpenFile(null)
   }
 
   const handleView = (file: SourceFile) => {
@@ -451,7 +478,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
       </Dialog>
 
       {/* Grid editor */}
-      <Dialog open={!!openFile} onOpenChange={open => { if (!open) setOpenFile(null) }}>
+      <Dialog open={!!openFile} onOpenChange={open => { if (!open) closeGrid() }}>
         <DialogContent className="max-w-6xl w-[95vw] h-[85vh] overflow-hidden flex flex-col">
           {openFile && (
             <SourceFileGridEditor
@@ -460,6 +487,7 @@ export default function SourceStep({ project, onUpdate }: Props) {
               previewRowLimit={openFile.preview ? PREVIEW_ROW_LIMIT : undefined}
               onClose={() => setOpenFile(null)}
               onSaved={onUpdate}
+              onDirtyChange={setGridDirty}
             />
           )}
         </DialogContent>

@@ -8,17 +8,22 @@ import { useEffect, useState } from 'react'
 import { Loader2, Plus, Trash2 } from 'lucide-react'
 import { getSourceFileContent, updateSourceFileContent } from '../api/client'
 import type { Project } from '../types'
+import { useConfirm } from '../contexts/confirm'
 
 interface Props {
   projectId: string
   filename: string
   onClose: () => void
   onSaved: (project: Project) => void
+  /** Told whenever the grid gains or loses unsaved edits, so the dialog that
+   *  holds it can ask before Escape or a click outside throws them away. */
+  onDirtyChange?: (dirty: boolean) => void
   previewRowLimit?: number
 }
 
-export default function SourceFileGridEditor({ projectId, filename, onClose, onSaved, previewRowLimit }: Props) {
+export default function SourceFileGridEditor({ projectId, filename, onClose, onSaved, onDirtyChange, previewRowLimit }: Props) {
   const isPreview = !!previewRowLimit
+  const confirm = useConfirm()
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [saving, setSaving] = useState(false)
@@ -27,6 +32,8 @@ export default function SourceFileGridEditor({ projectId, filename, onClose, onS
   const [originalColumns, setOriginalColumns] = useState<string[]>([])
   const [totalRowCount, setTotalRowCount] = useState(0)
   const [dirty, setDirty] = useState(false)
+
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
 
   useEffect(() => {
     let cancelled = false
@@ -56,7 +63,13 @@ export default function SourceFileGridEditor({ projectId, filename, onClose, onS
     setDirty(true)
   }
 
-  const deleteRow = (rowIdx: number) => {
+  const deleteRow = async (rowIdx: number) => {
+    const ok = await confirm({
+      title: `Delete row ${rowIdx + 1}?`,
+      description: 'The row is removed from the file when you save.',
+      confirmLabel: 'Delete row',
+    })
+    if (!ok) return
     setRows(prev => prev.filter((_, i) => i !== rowIdx))
     setDirty(true)
   }
@@ -92,11 +105,17 @@ export default function SourceFileGridEditor({ projectId, filename, onClose, onS
     setDirty(true)
   }
 
-  const deleteColumn = (col: string) => {
+  const deleteColumn = async (col: string) => {
     if (columns.length <= 1) {
       window.alert('At least one column is required.')
       return
     }
+    const ok = await confirm({
+      title: `Delete column "${col}"?`,
+      description: 'The column and its values in every row are removed from the file when you save.',
+      confirmLabel: 'Delete column',
+    })
+    if (!ok) return
     setColumns(prev => prev.filter(c => c !== col))
     setRows(prev => prev.map(r => {
       const { [col]: _removed, ...rest } = r
@@ -105,21 +124,34 @@ export default function SourceFileGridEditor({ projectId, filename, onClose, onS
     setDirty(true)
   }
 
-  const handleCancel = () => {
-    if (dirty && !window.confirm('Discard unsaved changes?')) return
+  const handleCancel = async () => {
+    if (dirty && !(await confirm({
+      title: 'Discard unsaved changes?',
+      description: `Your edits to ${filename} will be lost.`,
+      confirmLabel: 'Discard changes',
+    }))) return
     onClose()
   }
 
   const handleSave = async () => {
     const removedOrRenamed = originalColumns.filter(c => !columns.includes(c))
-    if (removedOrRenamed.length > 0) {
-      const proceed = window.confirm(
-        'Renaming or removing columns here may leave stale mapping decisions on the ' +
-        'Concepts step for: ' + removedOrRenamed.join(', ') + '.\n\n' +
-        'You may need to revisit that step afterwards. Continue?',
-      )
-      if (!proceed) return
-    }
+    const ok = await confirm({
+      title: `Overwrite ${filename}?`,
+      description: (
+        <>
+          <p>The file on the server is replaced with this version. The original can't be restored, so download a copy first if you may need it.</p>
+          {removedOrRenamed.length > 0 && (
+            <p>
+              Renamed or removed columns may leave stale mappings on later steps for{' '}
+              <span className="font-mono text-foreground">{removedOrRenamed.join(', ')}</span>.
+              You may need to revisit those steps afterwards.
+            </p>
+          )}
+        </>
+      ),
+      confirmLabel: 'Save and overwrite',
+    })
+    if (!ok) return
     setSaving(true)
     setError('')
     try {

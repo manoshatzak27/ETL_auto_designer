@@ -74,6 +74,26 @@ def extract_code(text: str) -> str | None:
     return None
 
 
+def chat_edited_tables(project) -> list[str]:
+    """Tables whose current script is a change applied from the chat.
+
+    Regenerating such a table rebuilds it from the wizard settings and loses the
+    change, which the UI warns about. Messages without code_status predate
+    proposals; their code was applied as soon as it arrived.
+    """
+    scripts: dict = project.generated_scripts or {}
+    latest: dict[str, str] = {}
+    for msg in project.chat_history or []:
+        table = msg.get("table")
+        status = msg.get("code_status")
+        applied = status == "applied" or (status is None and msg.get("code_updated"))
+        if table and applied:
+            code = extract_code(msg.get("content", ""))
+            if code is not None:
+                latest[table] = code
+    return [t for t, code in latest.items() if scripts.get(t) == code]
+
+
 def _estimate_tokens(text: str) -> int:
     # JSON and code run at roughly 3–4 characters per token; err on the high side.
     return len(text) // 3 + 1

@@ -14,6 +14,7 @@ import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../component
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import { useStepAutosave } from '../../hooks/useStepAutosave'
+import { useConfirm } from '../../contexts/confirm'
 import {
   PLACE_OF_SERVICE_CONCEPTS,
   VISIT_CONCEPTS as VISIT_VOCABULARY,
@@ -298,7 +299,15 @@ export default function VisitStep({ project, onUpdate }: Props) {
     setTypeModes(prev => [...prev, 'column'])
   }
 
-  const removeVisit = (i: number) => {
+  const confirm = useConfirm()
+  const removeVisit = async (i: number) => {
+    const label = cfg.visit_definitions[i]?.label?.trim()
+    const ok = await confirm({
+      title: `Delete ${label ? `visit "${label}"` : `visit ${i + 1}`}?`,
+      description: 'All of its settings are removed. Variables assigned to this visit on the Stem Table step will no longer be linked to it.',
+      confirmLabel: 'Delete visit',
+    })
+    if (!ok) return
     // Suggestions are keyed by visit index, which shifts on removal.
     autoFill.clear()
     autoMatch.clear()
@@ -663,7 +672,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
                     {isMultiRow ? 'Visit Template' : `Visit ${i + 1}`}
                   </p>
                   {cfg.visit_definitions.length > 1 && (
-                    <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive">
+                    <button onClick={() => removeVisit(i)} className="shrink-0 text-destructive/60 hover:text-destructive" title="Delete visit" aria-label="Delete visit">
                       <Trash2 className="w-4 h-4" />
                     </button>
                   )}

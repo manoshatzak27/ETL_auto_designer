@@ -4,7 +4,7 @@
 // scrollable page with sticky section headers. No new API calls — every
 // control here uses the same endpoints those two pages used.
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   executeProject,
@@ -16,6 +16,7 @@ import {
   getDbHealth,
   getLoadStatus,
   getOutputPreview,
+  generateTableScript,
   loadDatabase,
   type DbHealth,
   type ExecutionLogPreview,
@@ -31,10 +32,13 @@ import LogStream, { RunStatusBadge } from '../../components/LogStream'
 import ErrorBanner from '../../components/ErrorBanner'
 import ExecutionStatsTable from '../../components/ExecutionStatsTable'
 import OmopTablePreview from '../../components/OmopTablePreview'
+import { useConfirm } from '../../contexts/confirm'
+import { chatEditsOverwritten, chatEditsWarning } from '../../components/chatEdits'
+import { useGeneration } from '../../context/GenerationContext'
 import { getAdjacentSlugs, OPTIONAL_TABLES, isOptionalTableEnabled, type OptionalTable } from '../../wizard/steps'
 import {
   PlayCircle, Download, RefreshCw, CheckCircle, AlertCircle, AlertTriangle,
-  Database, Loader2, Server, Code2, Play, Eye, ExternalLink,
+  Database, Loader2, Server, Code2, Play, Eye, ExternalLink, Sparkles,
 } from 'lucide-react'
 import { basename } from '../../utils'
 import { Card } from '@/components/ui/card'
@@ -218,6 +222,37 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
   const anyGenerated   = generatedCount > 0
   const missingTables  = activeTables.filter(t => !scripts[t.key]).map(t => t.key)
 
+  // ── Generate several scripts in one go ───────────────────────────────────
+  const confirm = useConfirm()
+  const { isAnyGenerating, acquireLock, releaseLock } = useGeneration()
+  const [bulk, setBulk] = useState<{ done: number; total: number; current: string } | null>(null)
+  const [bulkFailures, setBulkFailures] = useState<{ table: string; error: string }[]>([])
+
+  const generateMany = async (tables: string[]) => {
+    if (tables.length === 0) return
+    const overwritten = chatEditsOverwritten(project, tables)
+    if (overwritten.length > 0 && !(await confirm(chatEditsWarning(overwritten)))) return
+    if (!acquireLock()) return
+    setBulkFailures([])
+    const failures: { table: string; error: string }[] = []
+    try {
+      for (let i = 0; i < tables.length; i++) {
+        setBulk({ done: i, total: tables.length, current: tables[i] })
+        try {
+          // Each response is the whole project, so the last one carries every script.
+          onUpdate(await generateTableScript(project.id, tables[i]))
+        } catch (e: unknown) {
+          const err = e as { response?: { data?: { detail?: string } } }
+          failures.push({ table: tables[i], error: err?.response?.data?.detail || 'Generation failed.' })
+        }
+      }
+    } finally {
+      setBulk(null)
+      setBulkFailures(failures)
+      releaseLock()
+    }
+  }
+
   const handleExecute = async () => {
     setExecuting(true)
     setExecError('')
@@ -335,32 +370,63 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
   // ── Initial fetch + polling ──────────────────────────────────────────────
   useEffect(() => { refreshHealth() }, [])
 
-  useEffect(() => {
-    let timer: number | null = null
-    const tick = async () => {
-      try {
-        const s = await getLoadStatus(project.id)
-        setStatus(s)
-        if (s.overall === 'success' || s.overall === 'error') refreshHealth()
-      } catch { /* ignore */ }
-    }
-    tick()
-    timer = window.setInterval(tick, 1500)
-    return () => { if (timer !== null) window.clearInterval(timer) }
+  const fetchLoadStatus = useCallback(async () => {
+    try {
+      setStatus(await getLoadStatus(project.id))
+    } catch { /* ignore */ }
   }, [project.id])
 
+  // Once on open, to show the last load's result (or pick up one still running).
+  useEffect(() => { fetchLoadStatus() }, [fetchLoadStatus])
+
   const etlRunning = status?.overall === 'running'
+
+  // Polled only while a load runs: the backend keeps the last load's result
+  // until it restarts, so polling regardless would never stop.
+  useEffect(() => {
+    if (!etlRunning) return
+    const timer = window.setInterval(fetchLoadStatus, 1500)
+    return () => window.clearInterval(timer)
+  }, [etlRunning, fetchLoadStatus])
+
+  // The row counts in the health card change when a load finishes, so refresh
+  // it then — once, not on every later poll that still sees "finished".
+  const prevOverallRef = useRef(status?.overall)
+  useEffect(() => {
+    const prev = prevOverallRef.current
+    prevOverallRef.current = status?.overall
+    if (prev === 'running' && (status?.overall === 'success' || status?.overall === 'error')) refreshHealth()
+  }, [status?.overall])
   const canLoadEtl = project.last_execution_status === 'success' && health?.connected === true
 
+  const targetSchema = schemaName.trim() || (schemaMode === 'shared' ? 'cdm' : `cdm_${project.id.replace(/-/g, '_')}`)
+
   const handleLoadEtl = async () => {
-    if (applyIndices && (health?.vocab_rows ?? 0) === 0) {
-      const proceed = window.confirm(
-        'Vocabulary tables are empty.\n\n' +
-        'FK constraints reference vocab.concept and will fail to apply against an empty ' +
-        'vocabulary. Load the vocabulary first or untick "Apply indices and FK constraints" ' +
-        'before proceeding.\n\nContinue anyway?',
-      )
-      if (!proceed) return
+    const emptyVocabWithFks = applyIndices && (health?.vocab_rows ?? 0) === 0
+    if (truncate || emptyVocabWithFks) {
+      const ok = await confirm({
+        title: truncate ? `Empty and reload the tables in ${targetSchema}?` : 'Load with an empty vocabulary?',
+        description: (
+          <>
+            {truncate && (
+              <p>
+                Every OMOP table this project loads into <span className="font-mono text-foreground">{targetSchema}</span> is
+                emptied first (TRUNCATE … CASCADE), so all rows already there are deleted, including
+                {schemaMode === 'shared' ? ' rows other projects loaded into this shared schema,' : ''} and
+                rows of any table that references them. This can't be undone.
+              </p>
+            )}
+            {emptyVocabWithFks && (
+              <p>
+                The vocabulary tables are empty. FK constraints reference vocab.concept and will fail
+                to apply. Load the vocabulary first or untick "Apply indices and FK constraints".
+              </p>
+            )}
+          </>
+        ),
+        confirmLabel: truncate ? 'Empty and load' : 'Load anyway',
+      })
+      if (!ok) return
     }
     setStarting(true)
     setLoadError('')
@@ -371,6 +437,8 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
         truncate,
         apply_indices: applyIndices,
       })
+      // The backend marks the load running before it answers, so this starts the polling.
+      await fetchLoadStatus()
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { detail?: string } } })?.response?.data?.detail
       setLoadError(typeof msg === 'string' ? msg : 'Failed to start load')
@@ -432,13 +500,51 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
               })}
             </div>
 
-            {!allGenerated && (
+            {!allGenerated && !bulk && (
               <div className="flex items-start gap-2 text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2.5">
                 <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
                 <span>
                   Missing: <span className="font-mono font-semibold">{missingTables.join(', ')}</span>.
-                  Regenerate below, or go back to the corresponding wizard step.
+                  Generate them here, or go back to the corresponding wizard step.
                 </span>
+              </div>
+            )}
+
+            <div className="flex flex-wrap items-center gap-2">
+              {missingTables.length > 0 && (
+                <Button size="sm" onClick={() => generateMany(missingTables)} disabled={isAnyGenerating}>
+                  <Sparkles className="w-3.5 h-3.5" />
+                  Generate missing ({missingTables.length})
+                </Button>
+              )}
+              {anyGenerated && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => generateMany(activeTables.map(t => t.key))}
+                  disabled={isAnyGenerating}
+                  title="Build every script again from the current wizard settings"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Regenerate all ({activeTables.length})
+                </Button>
+              )}
+              {bulk && (
+                <span className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  Generating <span className="font-mono text-foreground">{bulk.current}.py</span> · {bulk.done + 1} of {bulk.total}
+                </span>
+              )}
+            </div>
+
+            {bulkFailures.length > 0 && (
+              <div className="flex flex-col gap-1 text-xs text-destructive bg-destructive/10 border border-destructive/30 rounded-lg px-3 py-2.5">
+                <p className="font-semibold">
+                  {bulkFailures.length} script{bulkFailures.length > 1 ? 's' : ''} could not be generated:
+                </p>
+                {bulkFailures.map(f => (
+                  <p key={f.table}><span className="font-mono">{f.table}.py</span>: {f.error}</p>
+                ))}
               </div>
             )}
           </Card>
@@ -446,7 +552,7 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
           <div className="flex flex-col gap-3">
             <h3 className="text-sm font-semibold text-foreground">Generate / regenerate per table</h3>
             {activeTables.map(t => (
-              <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" deterministic />
+              <ScriptGenerator key={t.key} project={project} table={t.key} onUpdate={onUpdate} buttonClassName="min-w-[17rem] justify-center" deterministic revealChanges={false} />
             ))}
           </div>
         </section>

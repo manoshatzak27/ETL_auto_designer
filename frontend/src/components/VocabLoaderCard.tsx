@@ -17,6 +17,7 @@ import {
   type VocabLoadStatus,
 } from '../api/client'
 import ErrorBanner from './ErrorBanner'
+import { useConfirm } from '../contexts/confirm'
 import {
   Loader2, RefreshCw, CheckCircle, AlertCircle, PlayCircle, BookOpen, Server,
 } from 'lucide-react'
@@ -65,6 +66,7 @@ function formatBytes(n: number): string {
 
 export default function VocabLoaderCard() {
   // Health
+  const confirm = useConfirm()
   const [health, setHealth] = useState<DbHealth | null>(null)
   const [healthError, setHealthError] = useState('')
   const [refreshingHealth, setRefreshingHealth] = useState(false)
@@ -152,6 +154,23 @@ export default function VocabLoaderCard() {
   const handleLoadVocab = async () => {
     const path = (bundlePath || DEFAULT_VOCAB_PATH).trim()
     if (!path) return
+    const loaded = health?.vocab_rows ?? 0
+    if (loaded > 0 && !(await confirm({
+      title: 'Reload the vocabulary?',
+      description: (
+        <>
+          <p>
+            The vocabulary tables already hold {loaded.toLocaleString()} concepts. They are emptied
+            (TRUNCATE … CASCADE) and loaded again from <span className="font-mono text-foreground">{path}</span>.
+          </p>
+          <p>
+            CASCADE also empties every table that references them through a foreign key, including
+            clinical data already loaded with FK constraints applied. This can't be undone.
+          </p>
+        </>
+      ),
+      confirmLabel: 'Reload vocabulary',
+    }))) return
     setVocabStarting(true)
     setVocabError('')
     try {

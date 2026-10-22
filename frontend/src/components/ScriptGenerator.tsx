@@ -14,6 +14,8 @@ import {
 import clsx from 'clsx'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { useConfirm } from '../contexts/confirm'
+import { chatEditsOverwritten, chatEditsWarning } from './chatEdits'
 
 interface Props {
   project: Project
@@ -25,14 +27,19 @@ interface Props {
   buttonClassName?: string
   /** When true, hides AI-specific labels (table is generated deterministically) */
   deterministic?: boolean
+  /** Open and scroll to the code whenever the script changes (a chat change
+   *  applied, say). When false, only after this card's own button. */
+  revealChanges?: boolean
 }
 
-export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName, deterministic = false }: Props) {
+export default function ScriptGenerator({ project, table, onUpdate, beforeGenerate, buttonClassName, deterministic = false, revealChanges = true }: Props) {
   const scripts: Record<string, string> = project.generated_scripts || {}
   const script = scripts[table] || null
   const usage = project.generated_scripts_usage?.[table] || null
 
   const { isAnyGenerating, acquireLock, releaseLock } = useGeneration()
+  const confirm = useConfirm()
+  const chatEdited = chatEditsOverwritten(project, [table])
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
@@ -41,6 +48,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   const [liveContent, setLiveContent] = useState('')
 
   const prevScriptRef = useRef<string | null>(script)
+  const revealNextRef = useRef(false)
   const previewRef = useRef<HTMLDivElement>(null)
   const codeScrollRef = useRef<HTMLDivElement>(null)
 
@@ -93,13 +101,18 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   useEffect(() => {
     if (script && script !== prevScriptRef.current) {
       prevScriptRef.current = script
+      const reveal = revealChanges || revealNextRef.current
+      revealNextRef.current = false
+      if (!reveal) return
       setOpen(true)
       setTimeout(() => previewRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
     }
-  }, [script])
+  }, [script, revealChanges])
 
   const handleGenerate = async () => {
+    if (chatEdited.length > 0 && !(await confirm(chatEditsWarning(chatEdited)))) return
     if (!acquireLock()) return
+    revealNextRef.current = true
     setGenerating(true)
     setError('')
     try {
@@ -165,6 +178,12 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
                   : 'Click Generate to create the Python ETL script for this table'
               }
             </p>
+            {!generating && chatEdited.length > 0 && (
+              <p className="text-[11px] text-amber-700 mt-0.5">
+                {chatEdited.map(t => `${t}.py`).join(', ')} {chatEdited.length > 1 ? 'hold' : 'holds'} changes
+                applied from the AI chat; Regenerate would replace them.
+              </p>
+            )}
             {displayUsage && (
               <p className="text-[11px] text-muted-foreground/80 mt-0.5 tabular-nums">
                 AI tokens used: {displayUsage.used.toLocaleString()} / {displayUsage.limit.toLocaleString()}

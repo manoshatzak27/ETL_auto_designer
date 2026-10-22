@@ -19,6 +19,7 @@ import DeathStep from './pages/wizard/DeathStep'
 import FinalizeStep from './pages/wizard/FinalizeStep'
 import LogViewer from './pages/LogViewer'
 import ChatPanel from './components/ChatPanel'
+import { ConfirmProvider } from './components/ConfirmDialog'
 import { getProject } from './api/client'
 import type { Project } from './types'
 import { LEGACY_NUMERIC_SLUGS, type WizardSlug } from './wizard/steps'
@@ -94,12 +95,14 @@ function ProjectWizard() {
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<Dashboard />} />
-        <Route path="/project/:projectId/step/:step" element={<ProjectWizard />} />
-        <Route path="/project/:projectId/log" element={<LogViewer />} />
-        <Route path="*" element={<Navigate to="/" replace />} />
-      </Routes>
+      <ConfirmProvider>
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/project/:projectId/step/:step" element={<ProjectWizard />} />
+          <Route path="/project/:projectId/log" element={<LogViewer />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </ConfirmProvider>
     </BrowserRouter>
   )
 }

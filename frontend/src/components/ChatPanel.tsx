@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { useConfirm } from '../contexts/confirm'
 
 const TABLES = [
   { key: 'location',             label: 'location.py' },
@@ -113,7 +114,14 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   // it survives a reload or a switch to another table and back.
   const hasProposal = visibleMessages.some(m => m.code_status === 'proposed')
 
+  const confirm = useConfirm()
+
   const resolveProposal = async (apply: boolean) => {
+    if (!apply && !(await confirm({
+      title: 'Discard the proposed change?',
+      description: `${table}.py stays as it is. The proposal can't be applied later; you would have to ask for it again.`,
+      confirmLabel: 'Discard',
+    }))) return
     setResolving(true)
     setError('')
     try {
@@ -160,7 +168,11 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   }
 
   const handleClear = async () => {
-    if (!confirm('Clear all chat history for this project?')) return
+    if (!(await confirm({
+      title: 'Clear the chat history?',
+      description: "Every table's conversation in this project is deleted, including any change still waiting to be applied. Scripts already changed stay as they are.",
+      confirmLabel: 'Clear history',
+    }))) return
     await clearChatHistory(project.id)
     setMessages([])
   }

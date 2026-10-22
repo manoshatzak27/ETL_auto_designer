@@ -47,6 +47,8 @@ export interface Project {
   mapping_files: Record<string, string>
   custom_vocabulary_id?: string
   source_files: SourceFile[]
+  /** Tables whose script currently holds a change applied from the AI chat. */
+  chat_edited_tables?: string[]
 }
 
 // ---- Per-table config shapes ----

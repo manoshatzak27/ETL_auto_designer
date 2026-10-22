@@ -35,6 +35,8 @@ class ProjectResponse(BaseModel):
     mapping_files: dict[str, Any] = {}
     custom_vocabulary_id: str = "CUSTOM"
     source_files: list[dict[str, Any]] = []
+    # Tables whose script currently holds a change applied from the chat.
+    chat_edited_tables: list[str] = []
 
     model_config = {"from_attributes": True}
 

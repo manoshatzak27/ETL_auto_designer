@@ -17,6 +17,7 @@ import { ColumnAutoMatchControls, ColumnAutoMatchSummary, ColumnSuggestion } fro
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
 import { useStepAutosave } from '../../hooks/useStepAutosave'
+import { useConfirm } from '../../contexts/confirm'
 import { Plus, X } from 'lucide-react'
 
 interface Props {
@@ -118,7 +119,14 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
     setCfg(prev => ({ ...prev, end_date_fallbacks: [...(prev.end_date_fallbacks ?? []), newEntry] }))
   }
 
-  const removeFallback = (idx: number) => {
+  const confirm = useConfirm()
+  const removeFallback = async (idx: number) => {
+    const ok = await confirm({
+      title: `Remove fallback ${idx + 1}?`,
+      description: 'Rows without an end date will no longer use it; the fallbacks after it move up.',
+      confirmLabel: 'Remove',
+    })
+    if (!ok) return
     setCfg(prev => ({
       ...prev,
       end_date_fallbacks: (prev.end_date_fallbacks ?? []).filter((_, i) => i !== idx),
@@ -320,6 +328,8 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
                   <button
                     type="button"
                     onClick={() => removeFallback(idx)}
+                    title="Remove fallback"
+                    aria-label="Remove fallback"
                     className="ml-auto rounded p-1 text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors shrink-0"
                   >
                     <X className="size-3.5" />

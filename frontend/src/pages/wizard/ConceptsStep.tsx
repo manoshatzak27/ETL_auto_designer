@@ -42,6 +42,7 @@ import { ConceptMatcherFix } from '../../components/ConceptMatcherIndicator'
 import { useConceptMatcherStatus } from '../../contexts/conceptMatcher'
 import { useConceptAutoFill, type AutoFillSuggestions, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import type { ValueConceptSuggestion } from '../../api/client'
+import { useConfirm } from '../../contexts/confirm'
 
 interface Props {
   project: Project
@@ -4385,6 +4386,7 @@ function BatchPanel({
   const [strategy, setStrategy] = useState<Strategy>('map_variable')
   const [batchConcept, setBatchConcept] = useState<ConceptRef | null>(null)
   const [overwrite, setOverwrite] = useState(false)
+  const confirm = useConfirm()
 
   // For value mapping batch: check if all selected cols share same distinct values
   const valSets = selectedCols.map(c =>
@@ -4397,14 +4399,25 @@ function BatchPanel({
 
   const [valueConcepts, setValueConcepts] = useState<Record<string, ConceptRef>>({})
 
-  const apply = () => {
+  const isMapped = (d: VariableDecision) => !!d.variable_concept || Object.keys(d.value_concepts).length > 0
+
+  const apply = async () => {
+    const replaced = overwrite ? selectedCols.filter(c => isMapped(decisions[c])) : []
+    if (replaced.length > 0 && !(await confirm({
+      title: `Replace the mappings of ${replaced.length} variable${replaced.length > 1 ? 's' : ''}?`,
+      description: (
+        <>
+          <p>Their current concepts are replaced with this batch's:</p>
+          <p className="font-mono text-foreground break-words">{replaced.join(', ')}</p>
+        </>
+      ),
+      confirmLabel: 'Replace mappings',
+    }))) return
+
     const updates: Record<string, VariableDecision> = {}
     for (const col of selectedCols) {
       const existing = decisions[col]
-      if (!overwrite && (
-        existing.variable_concept ||
-        Object.keys(existing.value_concepts).length > 0
-      )) continue
+      if (!overwrite && isMapped(existing)) continue
 
       const variable_concept = (strategy === 'map_variable' || strategy === 'map_both') ? batchConcept : null
       const value_concepts = (strategy === 'map_values' || strategy === 'map_both') ? { ...valueConcepts } : {}
@@ -4537,7 +4550,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [selectedCols, setSelectedCols] = useState<string[]>([])
 
   // Filter
-  const [filter, setFilter] = useState<'all' | 'mapped' | 'review' | 'skipped'>('all')
+  const [filter, setFilter] = useState<'all' | 'todo' | 'mapped' | 'review' | 'skipped'>('all')
   const [domainFilter, setDomainFilter] = useState<'all' | number>('all')
   const [search, setSearch] = useState('')
 
@@ -4577,6 +4590,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const [valueProgress, setValueProgress] = useState<{ done: number; total: number } | null>(null)
 
   // Data dictionary — what the matcher actually matches on
+  const confirm = useConfirm()
   const [descriptions, setDescriptions] = useState<Record<string, string>>({})
   const [dictOpen, setDictOpen] = useState(false)
   const [uploadingDict, setUploadingDict] = useState(false)
@@ -4592,6 +4606,15 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   }, [project.id])
 
   const handleUploadDictionary = async (file: File) => {
+    const existing = Object.keys(descriptions).length
+    if (replaceDict && existing > 0 && !(await confirm({
+      title: `Replace all ${existing} column descriptions?`,
+      description: `"Replace instead of merge" is ticked: every description not in ${file.name} is removed, including ones typed by hand.`,
+      confirmLabel: 'Replace descriptions',
+    }))) {
+      if (dictFileRef.current) dictFileRef.current.value = ''
+      return
+    }
     setUploadingDict(true)
     setDictError('')
     setDictResult(null)
@@ -4635,7 +4658,11 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   const clearDictionary = async () => {
     if (Object.keys(descriptions).length === 0) return
-    if (!window.confirm(`Remove all ${Object.keys(descriptions).length} column descriptions?`)) return
+    if (!(await confirm({
+      title: `Remove all ${Object.keys(descriptions).length} column descriptions?`,
+      description: 'Uploaded and hand-typed descriptions are both removed. "Load concepts" will match on column names alone.',
+      confirmLabel: 'Remove all',
+    }))) return
     setDictError('')
     setDictResult(null)
     try {
@@ -5176,7 +5203,11 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // Stats
   const mappedCount = enabledConceptCols.filter(isColumnMapped).length
   const reviewCount = enabledConceptCols.filter(c => awaitingReview(decisions[c])).length
-  const skippedCount = enabledConceptCols.filter(c => !drugFieldClaims[c] && decisions[c]?.strategy === 'skip').length
+  const isSkipped = (col: string) => !drugFieldClaims[col] && decisions[col]?.strategy === 'skip'
+  const skippedCount = enabledConceptCols.filter(isSkipped).length
+  // Still needing work: included, not skipped, and not yet fully mapped.
+  const isToMap = (col: string) => decisions[col]?.enabled !== false && !isSkipped(col) && !isColumnMapped(col)
+  const toMapCount = enabledConceptCols.filter(isToMap).length
   const idsAddedCount = enabledConceptCols.reduce((sum, c) => {
     const d = decisions[c]
     if (!d || d.strategy === 'skip') return sum
@@ -5299,14 +5330,16 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
 
   // Delete a custom concept everywhere: drops the pre-registration (if any) and
   // unmaps every column/value that used it, same as clearing that concept by hand.
-  const deleteCustomConcept = useCallback((entry: CustomConceptEntry) => {
-    if (entry.usages.length > 0) {
-      const n = entry.usages.length
-      const proceed = window.confirm(
-        `Delete "${entry.concept_name}" (${entry.concept_id})? It's used in ${n} place${n > 1 ? 's' : ''} — ${n > 1 ? 'those' : 'that'} will be unmapped.`,
-      )
-      if (!proceed) return
-    }
+  const deleteCustomConcept = useCallback(async (entry: CustomConceptEntry) => {
+    const n = entry.usages.length
+    const ok = await confirm({
+      title: `Delete custom concept "${entry.concept_name}" (${entry.concept_id})?`,
+      description: n > 0
+        ? `It's used in ${n} place${n > 1 ? 's' : ''}; ${n > 1 ? 'those' : 'that'} will be unmapped.`
+        : 'It isn\'t used anywhere yet.',
+      confirmLabel: 'Delete concept',
+    })
+    if (!ok) return
     setManualCustomConcepts(prev => prev.filter(m => m.concept_id !== entry.concept_id))
     setDecisions(prev => {
       const next: Record<string, VariableDecision> = {}
@@ -5327,7 +5360,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
       return next
     })
     setEditingConcept(prev => prev?.concept_id === entry.concept_id ? null : prev)
-  }, [])
+  }, [confirm])
 
   // Filter + search
   // A quoted search ("PAT_MED_HIST") matches that column name exactly, so a
@@ -5342,7 +5375,8 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     // carry no meaningful domain_id), so picking a domain implies "mapped" and
     // overrides the all/mapped/skipped status filter.
     if (domainFilter !== 'all') return isColumnMapped(col) && decisionMatchesDomain(decisions[col], domainFilter)
-    if (filter === 'skipped') return !drugFieldClaims[col] && decisions[col]?.strategy === 'skip'
+    if (filter === 'skipped') return isSkipped(col)
+    if (filter === 'todo') return isToMap(col)
     if (filter === 'mapped') return isColumnMapped(col)
     if (filter === 'review') return awaitingReview(decisions[col])
     return true
@@ -5814,7 +5848,7 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
         {/* Stats */}
         <div className="grid grid-cols-4 gap-3">
           <div className="bg-card border border-border rounded-lg p-3 text-center">
-            <p className="text-xl font-bold text-foreground">{enabledConceptCols.length - mappedCount}</p>
+            <p className="text-xl font-bold text-foreground">{toMapCount}</p>
             <p className="text-xs text-muted-foreground">Variables to map</p>
           </div>
           <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
@@ -5877,23 +5911,28 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
             className="border border-border rounded-md px-3 py-1.5 text-sm w-44 focus:outline-none focus:ring-2 focus:ring-ring bg-background text-foreground"
           />
           <div className="flex gap-1">
-            {(['all', 'mapped', 'review', 'skipped'] as const).map(f => {
-              const count = f === 'review' ? reviewCount : 0
-              return (
-                <button
-                  key={f}
-                  onClick={() => { setFilter(f); if (f !== 'mapped') setDomainFilter('all') }}
-                  className={clsx(
-                    'px-2.5 py-1.5 rounded-md text-xs font-medium capitalize',
-                    filter === f
-                      ? 'bg-primary text-primary-foreground'
-                      : f === 'review' && count > 0
-                        ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                        : 'bg-muted text-muted-foreground hover:bg-muted/80',
-                  )}
-                >{f}{f === 'review' && count > 0 ? ` (${count})` : ''}</button>
-              )
-            })}
+            {([
+              ['all', 'All', null, 'Every variable'],
+              ['todo', 'To map', toMapCount, 'Included variables that are neither skipped nor fully mapped yet'],
+              ['mapped', 'Mapped', null, 'Fully mapped variables'],
+              ['review', 'Review', reviewCount, '"Load concepts" offered candidates that still need a pick'],
+              ['skipped', 'Skipped', null, 'Variables set to Skip'],
+            ] as const).map(([f, label, count, hint]) => (
+              <button
+                key={f}
+                title={hint}
+                aria-pressed={filter === f}
+                onClick={() => { setFilter(f); if (f !== 'mapped') setDomainFilter('all') }}
+                className={clsx(
+                  'px-2.5 py-1.5 rounded-md text-xs font-medium',
+                  filter === f
+                    ? 'bg-primary text-primary-foreground'
+                    : f === 'review' && reviewCount > 0
+                      ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
+                      : 'bg-muted text-muted-foreground hover:bg-muted/80',
+                )}
+              >{label}{count !== null && count > 0 ? ` (${count})` : ''}</button>
+            ))}
           </div>
           {filter === 'mapped' && (
             <select

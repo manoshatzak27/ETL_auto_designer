@@ -63,5 +63,10 @@ class Project(Base):
     # applied  {table_name: {"used": int, "limit": int}}
     generated_scripts_usage: Mapped[dict] = mapped_column(JSON, default=dict)
 
-    # Chat history for AI code assistant  [{role, content, table?, code_updated?}]
+    # Chat history for AI code assistant  [{role, content, table?, code_updated?, code_status?}]
     chat_history: Mapped[list] = mapped_column(JSON, default=list)
+
+    @property
+    def chat_edited_tables(self) -> list[str]:
+        from app.services.chat_service import chat_edited_tables
+        return chat_edited_tables(self)
