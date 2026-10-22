@@ -664,6 +664,63 @@ def infer_date_format(values: list[str], allow_year: bool = False) -> DateFormat
     return DateFormatGuess(best, best_rate, alternative)
 
 
+_TIME_TOKENS = ("%H", "%I", "%M", "%S", "%f", "%p", "%X")
+
+
+def preview_date_format(counts: dict[str, int], fmt: str, allow_year: bool = False) -> dict[str, Any]:
+    """How `fmt` reads a column, given its values and how many rows hold each.
+
+    Values are parsed the way the generated scripts parse them (strptime on the
+    stripped value), so the preview shows what a run would do. Returns the rows
+    parsed out of the rows checked, a few values with what they become, the
+    values that fail, and a format that reads more rows when there is one.
+    """
+    has_time = any(tok in fmt for tok in _TIME_TOKENS)
+    total = sum(counts.values())
+    parsed_rows = 0
+    examples: list[dict[str, str]] = []
+    failures: list[str] = []
+    format_error: str | None = None
+    for value, n in counts.items():
+        try:
+            dt = datetime.strptime(value, fmt)
+        except ValueError as e:
+            # A bad directive ("%Q") fails every value the same way.
+            if "directive" in str(e):
+                format_error = str(e)
+                break
+            if len(failures) < 5:
+                failures.append(value)
+            continue
+        parsed_rows += n
+        if len(examples) < 3:
+            examples.append({"value": value, "parsed": (dt.isoformat(sep=" ") if has_time else dt.date().isoformat())})
+
+    result: dict[str, Any] = {
+        "rows": total, "parsed_rows": 0 if format_error else parsed_rows,
+        "examples": [] if format_error else examples, "failures": [] if format_error else failures,
+        "format_error": format_error, "suggestion": None, "ambiguous": False,
+    }
+    if not total:
+        return result
+
+    def rows_parsed(f: str) -> int:
+        return sum(n for v, n in counts.items() if _parses(v, f))
+
+    if format_error or parsed_rows < total:
+        guess = infer_date_format(list(counts), allow_year=allow_year)
+        if guess.format and guess.format != fmt:
+            better = rows_parsed(guess.format)
+            if better > result["parsed_rows"]:
+                result["suggestion"] = {"format": guess.format, "parsed_rows": better}
+    elif "%d" in fmt and "%m" in fmt:
+        # Every value also reads with day and month swapped: nothing in the
+        # data shows which one the format should use.
+        swapped = fmt.replace("%d", "\0").replace("%m", "%d").replace("\0", "%m")
+        result["ambiguous"] = rows_parsed(swapped) == total
+    return result
+
+
 def _downgrade(match: dict[str, Any], warning: str) -> None:
     if match["status"] == "auto":
         match["status"] = "suggest"

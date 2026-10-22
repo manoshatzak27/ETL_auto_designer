@@ -9,6 +9,7 @@ import FieldMapper from '../../components/FieldMapper'
 import ValueConceptMapper from '../../components/ValueConceptMapper'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import DateFormatPreview from '../../components/DateFormatPreview'
 import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/ConceptAutoFill'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
@@ -770,6 +771,12 @@ export default function VisitStep({ project, onUpdate }: Props) {
                       </>
                     )}
                   </p>
+                  <DateFormatPreview
+                    projectId={project.id}
+                    format={vd.date_format ?? '%Y-%m-%d'}
+                    columns={[vd.date_col, vd.end_date_col ?? ''].map(column => ({ column, filename: activeFilename || null }))}
+                    onUseFormat={fmt => updateVisit(i, 'date_format', fmt)}
+                  />
                 </Card>
 
                 {/* ── Group 2: visit_concept_id ───────────────────────────── */}

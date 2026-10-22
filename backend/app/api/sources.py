@@ -678,3 +678,79 @@ def detect_column_type(project_id: str, column: str, filename: str | None = None
         column,
     )
     return {"column": column, "transform": transform}
+
+
+# ── Date format preview ─────────────────────────────────────────────────────
+
+class DateColumnRef(BaseModel):
+    column: str
+    # The source file holding the column; the project's first file when omitted.
+    filename: str | None = None
+
+
+class DateFormatPreviewRequest(BaseModel):
+    format: str
+    columns: List[DateColumnRef]
+    # A date of birth may be a year only, so "%Y" can be suggested for it.
+    allow_year: bool = False
+
+
+def _source_entry(project: Project, filename: str | None) -> dict | None:
+    files = [f for f in (project.source_files or []) if isinstance(f, dict)]
+    if files:
+        if not filename:
+            return files[0]
+        return next((f for f in files if f.get("filename") == filename), None)
+    if project.source_path:
+        return {
+            "filename": Path(project.source_path).name, "path": project.source_path,
+            "delimiter": project.source_delimiter or ",", "encoding": project.source_encoding or "utf-8",
+        }
+    return None
+
+
+@router.post("/{project_id}/date-format-preview")
+def date_format_preview(project_id: str, payload: DateFormatPreviewRequest, db: Session = Depends(get_db)):
+    """Parse the given date columns with `format`, as the generated scripts
+    would, so the wizard can show how their values are read before a run."""
+    from app.services.column_matcher import preview_date_format
+
+    project = db.query(Project).filter(Project.id == project_id).first()
+    if not project:
+        raise HTTPException(status_code=404, detail="Project not found")
+
+    # One read per file, of just the columns asked for.
+    wanted: dict[str, set[str]] = {}
+    entries: dict[str, dict] = {}
+    for ref in payload.columns:
+        entry = _source_entry(project, ref.filename)
+        if entry:
+            entries[entry["filename"]] = entry
+            wanted.setdefault(entry["filename"], set()).add(ref.column)
+    frames: dict[str, pd.DataFrame] = {}
+    for fname, cols in wanted.items():
+        entry = entries[fname]
+        try:
+            frames[fname] = pd.read_csv(
+                entry["path"], sep=entry.get("delimiter", ","), encoding=entry.get("encoding", "utf-8"),
+                dtype=str, on_bad_lines="skip", usecols=lambda c: c in cols,
+            )
+        except Exception:
+            continue
+
+    results = []
+    for ref in payload.columns:
+        entry = _source_entry(project, ref.filename)
+        df = frames.get(entry["filename"]) if entry else None
+        if df is None or ref.column not in df.columns:
+            results.append({"column": ref.column, "filename": ref.filename, "missing": True})
+            continue
+        # The scripts strip each value and skip empty ones before parsing.
+        values = df[ref.column].dropna().astype(str).str.strip()
+        values = values[(values != "") & (values != "nan")]
+        counts = {str(k): int(v) for k, v in values.value_counts(sort=False).items()}
+        results.append({
+            "column": ref.column, "filename": entry["filename"], "missing": False,
+            **preview_date_format(counts, payload.format, allow_year=payload.allow_year),
+        })
+    return {"format": payload.format, "columns": results}

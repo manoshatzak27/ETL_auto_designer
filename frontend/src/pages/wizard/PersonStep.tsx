@@ -10,6 +10,7 @@ import ValueConceptMapper from '../../components/ValueConceptMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import DateFormatPreview from '../../components/DateFormatPreview'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -801,6 +802,13 @@ export default function PersonStep({ project, onUpdate }: Props) {
                 Python strptime formats. Missing or empty birth time → birth_datetime defaults to midnight (00:00:00).
                 Examples: <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>, <code className="bg-muted px-1 rounded">%H:%M</code>.
               </p>
+              <DateFormatPreview
+                projectId={project.id}
+                format={activeCfg.mappings.year_of_birth.date_format}
+                columns={[{ column: activeCfg.mappings.year_of_birth.source_col, filename: activeFilename || null }]}
+                allowYear
+                onUseFormat={setDobFormat}
+              />
             </Card>
 
             {/* Race */}

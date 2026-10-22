@@ -47,6 +47,36 @@ export const uploadMappingCsv = (projectId: string, mappingType: string, file: F
 export const loadMappingsFromDir = (projectId: string, directory: string) =>
   api.post(`/projects/${projectId}/load-mappings-from-dir`, { directory }).then(r => r.data)
 
+// How a date format reads the mapped date columns, parsed as the scripts would.
+export interface DateColumnPreview {
+  column: string
+  filename: string | null
+  /** The column isn't in its source file. */
+  missing: boolean
+  rows?: number
+  parsed_rows?: number
+  examples?: { value: string; parsed: string }[]
+  failures?: string[]
+  format_error?: string | null
+  /** A format that reads more of the rows. */
+  suggestion?: { format: string; parsed_rows: number } | null
+  /** Every value also reads with day and month swapped. */
+  ambiguous?: boolean
+}
+
+export const previewDateFormat = (
+  projectId: string,
+  format: string,
+  columns: { column: string; filename?: string | null }[],
+  allowYear = false,
+  signal?: AbortSignal,
+) =>
+  api.post<{ format: string; columns: DateColumnPreview[] }>(
+    `/projects/${projectId}/date-format-preview`,
+    { format, columns, allow_year: allowYear },
+    { signal },
+  ).then(r => r.data)
+
 // ---- Concept mapping (Concepts step) ----
 export const getColumnValues = (projectId: string, filename?: string) =>
   api.get(`/projects/${projectId}/column-values`, { params: { ...(filename ? { filename } : {}) } }).then(r => r.data)

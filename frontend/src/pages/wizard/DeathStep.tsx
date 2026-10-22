@@ -9,6 +9,7 @@ import FieldMapper from '../../components/FieldMapper'
 import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import DateFormatPreview from '../../components/DateFormatPreview'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -208,6 +209,12 @@ export default function DeathStep({ project, onUpdate }: Props) {
             <p className="mt-1 text-xs text-muted-foreground">
               Python strptime format applied to the death date column (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code> for <code className="bg-muted px-1 rounded">14/7/2021</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code> for <code className="bg-muted px-1 rounded">20210714</code>). Parsed and re-emitted as ISO so Postgres COPY accepts it.
             </p>
+            <DateFormatPreview
+              projectId={project.id}
+              format={cfg.date_format ?? '%Y-%m-%d'}
+              columns={[cfg.death_date_col, cfg.death_datetime_col].map(column => ({ column, filename: selectedFile?.filename }))}
+              onUseFormat={fmt => setCfg(prev => ({ ...prev, date_format: fmt }))}
+            />
           </div>
         </Card>
 

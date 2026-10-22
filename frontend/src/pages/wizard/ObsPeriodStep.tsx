@@ -8,6 +8,7 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import SingleConceptInput from '../../components/SingleConceptInput'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
+import DateFormatPreview from '../../components/DateFormatPreview'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Input } from '@/components/ui/input'
@@ -378,6 +379,18 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
             <p className="mt-1 text-xs text-muted-foreground">
               Python strptime format applied to all date columns (e.g. <code className="bg-muted px-1 rounded">%d/%m/%Y</code>, <code className="bg-muted px-1 rounded">%Y%m%d</code>).
             </p>
+            <DateFormatPreview
+              projectId={project.id}
+              format={cfg.date_format ?? '%Y-%m-%d'}
+              columns={[
+                { column: cfg.start_date_col, filename: isMultiFile ? cfg.start_date_file : files[0]?.filename },
+                { column: cfg.end_date_col, filename: isMultiFile ? cfg.end_date_file : files[0]?.filename },
+                ...fallbacks
+                  .filter(fb => fb.type === 'column')
+                  .map(fb => ({ column: fb.col ?? '', filename: isMultiFile ? fb.source_filename : files[0]?.filename })),
+              ]}
+              onUseFormat={fmt => setCfg(prev => ({ ...prev, date_format: fmt }))}
+            />
           </div>
 
           {/* Period type concept */}
