@@ -3833,7 +3833,21 @@ const VariableRow = memo(function VariableRow({
   }
 
   return (
-    <div className="flex items-start">
+    <div className="relative flex items-start">
+    {/* Batch mode's selection checkbox sits in the margin left of the card, so
+        it isn't mistaken for the "include in mapping" checkbox inside and the
+        card keeps its width. h-10 matches the header, centring it on the name. */}
+    {batchMode && (
+      <div className="absolute right-full top-0 mr-1.5 flex h-10 items-center">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={e => onCheck(e.target.checked)}
+          className="size-4 rounded accent-primary"
+          title="Select for batch mapping"
+        />
+      </div>
+    )}
     <div className={clsx(
       'flex-1 min-w-0 border rounded-lg transition-colors',
       !open && 'overflow-hidden',
@@ -3851,16 +3865,6 @@ const VariableRow = memo(function VariableRow({
           onClick={e => e.stopPropagation()}
           title="Include this variable in mapping"
         />
-
-        {batchMode && (
-          <input
-            type="checkbox"
-            checked={checked}
-            onChange={e => onCheck(e.target.checked)}
-            className="rounded accent-primary flex-shrink-0"
-            onClick={e => e.stopPropagation()}
-          />
-        )}
 
         <button
           className="flex items-center gap-2 flex-1 min-w-0 text-left"
