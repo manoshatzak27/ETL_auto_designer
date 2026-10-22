@@ -35,6 +35,31 @@ const TABLES = [
   { key: 'condition_occurrence', label: 'condition_occurrence.py' },
 ]
 
+// The panel is resized from its left and top edges (it's anchored bottom-right);
+// the size is a per-browser preference.
+const MIN_WIDTH = 380
+const MIN_HEIGHT = 360
+const SIZE_KEY = 'etl-designer:chat-size'
+
+type PanelSize = { width: number; height: number }
+type ResizeEdge = 'left' | 'top' | 'corner'
+
+function loadSize(): PanelSize | null {
+  try {
+    const s = JSON.parse(localStorage.getItem(SIZE_KEY) || 'null')
+    return s && typeof s.width === 'number' && typeof s.height === 'number' ? s : null
+  } catch {
+    return null
+  }
+}
+
+function saveSize(size: PanelSize | null) {
+  try {
+    if (size) localStorage.setItem(SIZE_KEY, JSON.stringify(size))
+    else localStorage.removeItem(SIZE_KEY)
+  } catch { /* storage unavailable: the size just isn't remembered */ }
+}
+
 interface Props {
   project: Project
   onUpdate: (p: Project) => void
@@ -58,8 +83,55 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
   const [error, setError] = useState('')
   const [resolving, setResolving] = useState(false)
   const [nearPageBottom, setNearPageBottom] = useState(false)
+  const [size, setSize] = useState<PanelSize | null>(loadSize)
   const bottomRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // Escape closes the panel, unless something inside it (a dropdown) or a
+  // dialog over it handled the key press first.
+  useEffect(() => {
+    if (!open) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) setOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [open])
+
+  const startResize = (edge: ResizeEdge) => (e: React.PointerEvent<HTMLDivElement>) => {
+    const panel = panelRef.current
+    if (!panel || e.button !== 0) return
+    e.preventDefault()
+    const rect = panel.getBoundingClientRect()
+    const startX = e.clientX
+    const startY = e.clientY
+    // The panel can grow up to the window's left and top edges, less a margin.
+    const maxWidth = rect.right - 16
+    const maxHeight = rect.bottom - 16
+    let next: PanelSize = { width: rect.width, height: rect.height }
+    const onMove = (ev: PointerEvent) => {
+      next = {
+        width: edge === 'top' ? rect.width : Math.min(maxWidth, Math.max(MIN_WIDTH, rect.width + startX - ev.clientX)),
+        height: edge === 'left' ? rect.height : Math.min(maxHeight, Math.max(MIN_HEIGHT, rect.height + startY - ev.clientY)),
+      }
+      setSize(next)
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      document.body.style.userSelect = ''
+      saveSize(next)
+    }
+    document.body.style.userSelect = 'none'
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
+
+  const resetSize = () => {
+    setSize(null)
+    saveSize(null)
+  }
 
   // Track whether the page itself is scrolled to the bottom (footer nav visible),
   // so the floating panel can lift above it instead of overlapping the Next button
@@ -198,11 +270,41 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
       {/* Panel */}
       {open && (
         <div
+          ref={panelRef}
+          role="dialog"
+          aria-label="AI Code Assistant"
           className={cn(
-            'fixed right-4 z-50 flex flex-col w-[640px] h-[80vh] max-h-[840px] bg-card border border-border rounded-2xl shadow-2xl transition-[bottom] duration-200',
+            'fixed right-4 z-50 flex flex-col bg-card border border-border rounded-2xl shadow-2xl transition-[bottom] duration-200',
+            !size && 'w-[640px] h-[80vh] max-h-[840px]',
             nearPageBottom ? 'bottom-24' : 'bottom-4',
           )}
+          style={{
+            ...(size ? { width: size.width, height: size.height } : {}),
+            // Stay inside the window when it gets smaller than the saved size.
+            maxWidth: 'calc(100vw - 2rem)',
+            maxHeight: nearPageBottom ? 'calc(100vh - 7rem)' : 'calc(100vh - 2rem)',
+          }}
         >
+          {/* Resize handles: left edge, top edge, top-left corner. Double-click resets. */}
+          <div
+            onPointerDown={startResize('left')}
+            onDoubleClick={resetSize}
+            title="Drag to resize · double-click to reset"
+            className="absolute left-0 top-4 bottom-4 w-1.5 -translate-x-1/2 cursor-ew-resize rounded-full hover:bg-primary/40 z-10"
+          />
+          <div
+            onPointerDown={startResize('top')}
+            onDoubleClick={resetSize}
+            title="Drag to resize · double-click to reset"
+            className="absolute top-0 left-4 right-4 h-1.5 -translate-y-1/2 cursor-ns-resize rounded-full hover:bg-primary/40 z-10"
+          />
+          <div
+            onPointerDown={startResize('corner')}
+            onDoubleClick={resetSize}
+            title="Drag to resize · double-click to reset"
+            className="absolute left-0 top-0 size-4 -translate-x-1/3 -translate-y-1/3 cursor-nwse-resize rounded-full hover:bg-primary/40 z-20"
+          />
+
           {/* Header */}
           <div className="flex items-center gap-3 px-4 py-3 border-b border-border bg-secondary/60 rounded-t-2xl flex-shrink-0">
             <div className="w-8 h-8 rounded-full bg-accent flex items-center justify-center flex-shrink-0">
@@ -225,6 +327,8 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
               variant="ghost"
               size="icon"
               onClick={() => setOpen(false)}
+              title="Close (Esc)"
+              aria-label="Close chat"
               className="w-7 h-7 text-muted-foreground hover:text-foreground"
             >
               <X className="w-4 h-4" />
