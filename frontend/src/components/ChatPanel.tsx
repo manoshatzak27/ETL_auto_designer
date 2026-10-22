@@ -144,8 +144,9 @@ export default function ChatPanel({ project, onUpdate, defaultTable }: Props) {
       if (data.code_updated && data.generated_scripts) {
         setPendingScripts(data.generated_scripts)
       }
-    } catch {
-      setError('Failed to send message. Please try again.')
+    } catch (e: unknown) {
+      const detail = (e as { response?: { data?: { detail?: unknown } } })?.response?.data?.detail
+      setError(typeof detail === 'string' && detail ? detail : 'Failed to send message. Please try again.')
       setMessages(prev => prev.slice(0, -1))
     } finally {
       setSending(false)

@@ -5,6 +5,9 @@ from pathlib import Path
 class Settings(BaseSettings):
     openai_api_key: str = ""
     openai_model: str = "gpt-4o"
+    # Context window of openai_model, in tokens. The script chat trims what it
+    # sends (history first, then the concept decisions) to stay under it.
+    openai_context_tokens: int = 128000
     # Base URL of the staged OMOP matching pipeline (pipeline/service.py in the
     # "new concept finding" project) — every concept search and the Concepts
     # step's bulk "Load concepts" go through it. Empty disables them rather than

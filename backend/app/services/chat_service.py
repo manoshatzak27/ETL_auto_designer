@@ -6,10 +6,32 @@ or return an updated version inside a ```python ... ``` fence.
 """
 import json
 import re
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, BadRequestError
 from app.config import settings
 
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\n(.*?)```", re.DOTALL)
+
+_MAX_OUTPUT_TOKENS = 16000
+# Older turns of the same table's conversation are dropped past this.
+_MAX_HISTORY_MESSAGES = 20
+
+# Only these scripts read the Concepts step's decisions; the others don't get
+# them in their prompt.
+_CONCEPT_TABLES = {
+    "stem_table",
+    "measurement",
+    "observation",
+    "drug_exposure",
+    "procedure_occurrence",
+    "condition_occurrence",
+}
+# Decision keys the UI keeps for itself ("Load concepts" alternatives, the
+# include tick) — the generated scripts never read them.
+_UI_ONLY_DECISION_KEYS = {"suggestions", "value_suggestions", "enabled"}
+
+
+class ChatContextTooLarge(Exception):
+    """The model rejected the request because the prompt exceeds its context window."""
 
 SUPPORTED_TABLES = [
     "location",
@@ -45,14 +67,57 @@ _TABLE_DEPS: dict[str, list[str]] = {
 }
 
 
-def _extract_code(text: str) -> str | None:
+def extract_code(text: str) -> str | None:
     match = _CODE_FENCE_RE.search(text)
     if match:
         return match.group(1).strip()
     return None
 
 
-def _build_system_prompt(project, table: str) -> str:
+def _estimate_tokens(text: str) -> int:
+    # JSON and code run at roughly 3–4 characters per token; err on the high side.
+    return len(text) // 3 + 1
+
+
+def _slim(value):
+    """Reduce every concept reference to its id and name, recursively.
+
+    A matched concept also carries vocabulary, domain, score and justification,
+    which the scripts don't use and which multiply the prompt size.
+    """
+    if isinstance(value, dict):
+        if "concept_id" in value:
+            return {k: value[k] for k in ("concept_id", "concept_name") if k in value}
+        return {k: _slim(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_slim(v) for v in value]
+    return value
+
+
+def _compact_decisions(decisions: dict, detail: str) -> dict:
+    """The concept decisions as the script needs them.
+
+    detail="full" keeps each value's concept; detail="variable" replaces the
+    per-value concepts with their count, for projects too large to send them all.
+    Excluded variables, UI-only keys and empty fields are left out.
+    """
+    out: dict = {}
+    for var, decision in decisions.items():
+        if not isinstance(decision, dict) or decision.get("enabled") is False:
+            continue
+        compact: dict = {}
+        for key, value in decision.items():
+            if key in _UI_ONLY_DECISION_KEYS or value is None or value == "" or value == {} or value == []:
+                continue
+            if key == "value_concepts" and detail == "variable":
+                compact["value_concept_count"] = len(value)
+                continue
+            compact[key] = _slim(value)
+        out[var] = compact
+    return out
+
+
+def _build_system_prompt(project, table: str, decision_detail: str = "full") -> str:
     code = (project.generated_scripts or {}).get(table, "")
     etl_config: dict = project.etl_config or {}
     concept_decisions: dict = project.concept_decisions or {}
@@ -143,17 +208,38 @@ def _build_system_prompt(project, table: str) -> str:
             ]
 
     # ── Concept decisions (variable-level concept mapping from Concepts step) ──
-    if concept_decisions:
-        lines += [
-            "## Concept mapping decisions (Concepts step)",
-            "These are the per-variable concept mapping decisions made by the user.",
-            "Each key is a source variable name; the value describes the mapping strategy",
-            "and the selected OMOP concept IDs.",
-            "```json",
-            json.dumps(concept_decisions, indent=2, default=str),
-            "```",
-            "",
-        ]
+    if concept_decisions and table in _CONCEPT_TABLES:
+        if decision_detail == "none":
+            lines += [
+                "## Concept mapping decisions (Concepts step)",
+                "Omitted: this project has too many to fit in the conversation. At runtime the",
+                "script reads them from the mapping CSVs listed above.",
+                "",
+            ]
+        else:
+            lines += [
+                "## Concept mapping decisions (Concepts step)",
+                "These are the per-variable concept mapping decisions made by the user.",
+                "Each key is a source variable name; the value describes the mapping strategy",
+                "and the selected OMOP concept IDs.",
+            ]
+            if decision_detail == "variable":
+                lines += [
+                    "Per-value concepts are omitted for size (value_concept_count says how many",
+                    "a variable has); at runtime the script reads them from value_mapping.csv",
+                    "and variable_value_mapping.csv.",
+                ]
+            lines += [
+                "```json",
+                json.dumps(
+                    _compact_decisions(concept_decisions, decision_detail),
+                    separators=(",", ":"),
+                    ensure_ascii=False,
+                    default=str,
+                ),
+                "```",
+                "",
+            ]
 
     # ── Extra instructions the user wrote during codegen ─────────────────────
     extra = (table_cfg or {}).get("extra_instructions", "").strip()
@@ -194,25 +280,47 @@ async def chat(
     """
     client = AsyncOpenAI(api_key=settings.openai_api_key)
 
-    system = _build_system_prompt(project, table)
+    budget = settings.openai_context_tokens - _MAX_OUTPUT_TOKENS
 
-    # Build OpenAI message list: system + previous turns + new user message
-    messages: list[dict] = [{"role": "system", "content": system}]
-    for msg in history:
-        if msg.get("role") in ("user", "assistant"):
-            messages.append({"role": msg["role"], "content": msg["content"]})
+    # Shrink the concept decisions until the system prompt and the new message
+    # fit, keeping the most detail that does.
+    for detail in ("full", "variable", "none"):
+        system = _build_system_prompt(project, table, detail)
+        used = _estimate_tokens(system) + _estimate_tokens(user_message)
+        if used <= budget:
+            break
+
+    # Previous turns of this table's conversation (the panel shows only those),
+    # newest kept, as many as still fit.
+    turns = [
+        {"role": m["role"], "content": m["content"]}
+        for m in history
+        if m.get("role") in ("user", "assistant") and m.get("table") in (None, table)
+    ][-_MAX_HISTORY_MESSAGES:]
+    while turns and used + sum(_estimate_tokens(t["content"]) for t in turns) > budget:
+        turns.pop(0)
+
+    messages: list[dict] = [{"role": "system", "content": system}, *turns]
     messages.append({"role": "user", "content": user_message})
 
-    response = await client.chat.completions.create(
-        model=settings.openai_model,
-        messages=messages,
-        temperature=0.3,
-        max_tokens=16000,
-    )
+    try:
+        response = await client.chat.completions.create(
+            model=settings.openai_model,
+            messages=messages,
+            temperature=0.3,
+            max_tokens=_MAX_OUTPUT_TOKENS,
+        )
+    except BadRequestError as e:
+        if e.code == "context_length_exceeded":
+            raise ChatContextTooLarge(
+                f"{table}.py and its configuration are too large for {settings.openai_model}'s "
+                "context window, even with the concept decisions left out."
+            ) from e
+        raise
 
     choice = response.choices[0]
     content = choice.message.content or ""
-    updated_code = _extract_code(content)
+    updated_code = extract_code(content)
 
     # A long script can get cut off before the closing ``` fence, in which case
     # no code is extracted — tell the user instead of silently dropping the update.

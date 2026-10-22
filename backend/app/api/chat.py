@@ -45,12 +45,15 @@ async def send_chat_message(
 
     history: list[dict] = list(project.chat_history or [])
 
-    result = await chat_service.chat(
-        project=project,
-        table=req.table,
-        history=history,
-        user_message=req.message,
-    )
+    try:
+        result = await chat_service.chat(
+            project=project,
+            table=req.table,
+            history=history,
+            user_message=req.message,
+        )
+    except chat_service.ChatContextTooLarge as e:
+        raise HTTPException(status_code=413, detail=str(e))
 
     # Persist new messages
     history.append({"role": "user", "content": req.message, "table": req.table})
