@@ -133,6 +133,7 @@ def copy_project(project_id: str, db: Session = Depends(get_db)):
         mapping_files={k: _rewrite_path(v) for k, v in (source.mapping_files or {}).items()},
         source_files=new_source_files,
         generated_scripts={t: _rewrite_script(code) for t, code in (source.generated_scripts or {}).items()},
+        generated_scripts_inputs=dict(source.generated_scripts_inputs or {}),
         chat_history=list(source.chat_history or []),
     )
     db.add(project)

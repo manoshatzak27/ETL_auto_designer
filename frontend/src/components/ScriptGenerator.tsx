@@ -40,6 +40,7 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
   const { isAnyGenerating, acquireLock, releaseLock } = useGeneration()
   const confirm = useConfirm()
   const chatEdited = chatEditsOverwritten(project, [table])
+  const stale = !!script && !!project.stale_scripts?.includes(table)
   const [generating, setGenerating] = useState(false)
   const [error, setError] = useState('')
   const [open, setOpen] = useState(false)
@@ -178,6 +179,11 @@ export default function ScriptGenerator({ project, table, onUpdate, beforeGenera
                   : 'Click Generate to create the Python ETL script for this table'
               }
             </p>
+            {!generating && stale && (
+              <p className="text-[11px] font-medium text-amber-700 mt-0.5">
+                Out of date: the settings changed since this script was generated. Regenerate it.
+              </p>
+            )}
             {!generating && chatEdited.length > 0 && (
               <p className="text-[11px] text-amber-700 mt-0.5">
                 {chatEdited.map(t => `${t}.py`).join(', ')} {chatEdited.length > 1 ? 'hold' : 'holds'} changes

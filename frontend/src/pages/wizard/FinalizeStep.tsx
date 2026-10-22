@@ -221,6 +221,7 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
   const allGenerated   = generatedCount === activeTables.length
   const anyGenerated   = generatedCount > 0
   const missingTables  = activeTables.filter(t => !scripts[t.key]).map(t => t.key)
+  const staleTables    = activeTables.filter(t => scripts[t.key] && project.stale_scripts?.includes(t.key)).map(t => t.key)
 
   // ── Generate several scripts in one go ───────────────────────────────────
   const confirm = useConfirm()
@@ -254,6 +255,28 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
   }
 
   const handleExecute = async () => {
+    if ((staleTables.length > 0 || project.mapping_files_stale) && !(await confirm({
+      title: 'Run with out-of-date inputs?',
+      description: (
+        <>
+          {staleTables.length > 0 && (
+            <p>
+              The settings changed since these scripts were generated, so they would run the old
+              mapping: <span className="font-mono text-foreground">{staleTables.map(t => `${t}.py`).join(', ')}</span>.
+              Use "Regenerate outdated" first to run the current settings.
+            </p>
+          )}
+          {project.mapping_files_stale && (
+            <p>
+              The concept mapping CSVs were generated from earlier Concepts decisions. Press Next on
+              the Concepts step to rebuild them.
+            </p>
+          )}
+        </>
+      ),
+      confirmLabel: 'Run anyway',
+      tone: 'default',
+    }))) return
     setExecuting(true)
     setExecError('')
     setRunStats(null)
@@ -472,8 +495,9 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
           <Card className="p-5 flex flex-col gap-4">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-semibold text-foreground">Script Status</h3>
-              <Badge variant={allGenerated ? 'success' : 'warning'}>
+              <Badge variant={allGenerated && staleTables.length === 0 ? 'success' : 'warning'}>
                 {generatedCount} / {activeTables.length} ready
+                {staleTables.length > 0 && ` · ${staleTables.length} out of date`}
               </Badge>
             </div>
 
@@ -484,16 +508,17 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
             <div className="grid grid-cols-1 gap-1.5">
               {activeTables.map(t => {
                 const has = !!scripts[t.key]
+                const stale = staleTables.includes(t.key)
                 const lineCount = has ? scripts[t.key].split('\n').length : 0
                 return (
                   <div key={t.key} className="flex items-center gap-3 px-3 py-2 rounded-lg bg-muted">
-                    {has
+                    {has && !stale
                       ? <CheckCircle className="w-4 h-4 text-success flex-shrink-0" />
                       : <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0" />
                     }
                     <span className="text-xs font-mono font-medium text-foreground">{t.label}</span>
-                    <span className="text-xs text-muted-foreground ml-auto">
-                      {has ? `${lineCount} lines` : 'not generated yet'}
+                    <span className={clsx('text-xs ml-auto', stale ? 'text-amber-700 font-medium' : 'text-muted-foreground')}>
+                      {!has ? 'not generated yet' : stale ? `out of date · ${lineCount} lines` : `${lineCount} lines`}
                     </span>
                   </div>
                 )
@@ -515,6 +540,17 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
                 <Button size="sm" onClick={() => generateMany(missingTables)} disabled={isAnyGenerating}>
                   <Sparkles className="w-3.5 h-3.5" />
                   Generate missing ({missingTables.length})
+                </Button>
+              )}
+              {staleTables.length > 0 && (
+                <Button
+                  size="sm"
+                  onClick={() => generateMany(staleTables)}
+                  disabled={isAnyGenerating}
+                  title="Regenerate the scripts whose settings changed since they were generated"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                  Regenerate outdated ({staleTables.length})
                 </Button>
               )}
               {anyGenerated && (
@@ -577,6 +613,11 @@ export default function FinalizeStep({ project, onUpdate }: Props) {
               {!allGenerated && (
                 <p className="text-xs text-amber-600">
                   Some scripts are missing — only generated tables will run.
+                </p>
+              )}
+              {staleTables.length > 0 && (
+                <p className="text-xs text-amber-600">
+                  {staleTables.length} script{staleTables.length > 1 ? 's are' : ' is'} out of date and would run the old settings.
                 </p>
               )}
 

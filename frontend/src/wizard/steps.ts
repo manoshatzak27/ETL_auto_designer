@@ -11,6 +11,10 @@
 
 import type { Project } from '../types'
 
+/** The parts of a project the step list and its progress marks read. The
+ *  Dashboard builds one from a project summary (see wizard/progress.ts). */
+export type StepProject = Pick<Project, 'source_filename' | 'etl_config' | 'generated_scripts' | 'mapping_files' | 'stale_scripts' | 'mapping_files_stale'>
+
 export type WizardSlug =
   | 'source'
   | 'location'
@@ -31,7 +35,9 @@ export interface WizardStep {
   configKey?: string              // key into project.etl_config
   scriptKey?: string              // key into project.generated_scripts for completeness
   isOptional: boolean
-  isComplete: (project: Project) => boolean
+  isComplete: (project: StepProject) => boolean
+  /** Done once, but its settings changed since: the output needs regenerating. */
+  isStale?: (project: StepProject) => boolean
 }
 
 // Tables that can be toggled on/off from the Source step's picker.
@@ -44,14 +50,17 @@ export type OptionalTable = typeof OPTIONAL_TABLES[number]
 // New projects (no config key) → return false; user must opt in via picker.
 // Existing projects (any config saved, no explicit enabled key) → return true.
 // Explicit enabled: false → return false.
-export function isOptionalTableEnabled(project: Project, table: OptionalTable): boolean {
+export function isOptionalTableEnabled(project: StepProject, table: OptionalTable): boolean {
   const cfg = project.etl_config?.[table] as { enabled?: boolean } | undefined
   if (!cfg) return false
   return cfg.enabled !== false
 }
 
-const hasScript = (key: string) => (project: Project) =>
+const hasScript = (key: string) => (project: StepProject) =>
   !!(project.generated_scripts && project.generated_scripts[key])
+
+const scriptStale = (key: string) => (project: StepProject) =>
+  !!project.stale_scripts?.includes(key)
 
 // Canonical step registry — FK-dependency order. getActiveSteps filters this.
 export const ALL_STEPS: WizardStep[] = [
@@ -70,6 +79,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'location',
     isOptional: true,
     isComplete: hasScript('location'),
+    isStale: scriptStale('location'),
   },
   {
     slug: 'care-site',
@@ -79,6 +89,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'care_site',
     isOptional: true,
     isComplete: hasScript('care_site'),
+    isStale: scriptStale('care_site'),
   },
   {
     slug: 'provider',
@@ -88,6 +99,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'provider',
     isOptional: true,
     isComplete: hasScript('provider'),
+    isStale: scriptStale('provider'),
   },
   {
     slug: 'person',
@@ -97,6 +109,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'person',
     isOptional: false,
     isComplete: hasScript('person'),
+    isStale: scriptStale('person'),
   },
   {
     slug: 'visit',
@@ -106,6 +119,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'visit_occurrence',
     isOptional: false,
     isComplete: hasScript('visit_occurrence'),
+    isStale: scriptStale('visit_occurrence'),
   },
   {
     slug: 'obs-period',
@@ -115,6 +129,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'observation_period',
     isOptional: false,
     isComplete: hasScript('observation_period'),
+    isStale: scriptStale('observation_period'),
   },
   {
     slug: 'death',
@@ -124,6 +139,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'death',
     isOptional: true,
     isComplete: hasScript('death'),
+    isStale: scriptStale('death'),
   },
   {
     slug: 'concepts',
@@ -131,6 +147,7 @@ export const ALL_STEPS: WizardStep[] = [
     short: '5',
     isOptional: false,
     isComplete: p => Object.keys(p.mapping_files || {}).length > 0,
+    isStale: p => !!p.mapping_files_stale,
   },
   {
     slug: 'stem-table',
@@ -140,6 +157,7 @@ export const ALL_STEPS: WizardStep[] = [
     scriptKey: 'stem_table',
     isOptional: false,
     isComplete: hasScript('stem_table'),
+    isStale: scriptStale('stem_table'),
   },
   {
     slug: 'finalize',
@@ -149,10 +167,11 @@ export const ALL_STEPS: WizardStep[] = [
     // "Done" once at least one script has been generated. Finer-grained
     // completion (execution succeeded, DB loaded) lives inside the page.
     isComplete: p => Object.keys(p.generated_scripts || {}).length > 0,
+    isStale: p => getActiveSteps(p).some(s => !!s.scriptKey && !!p.stale_scripts?.includes(s.scriptKey)),
   },
 ]
 
-export function getActiveSteps(project: Project): WizardStep[] {
+export function getActiveSteps(project: StepProject): WizardStep[] {
   return ALL_STEPS.filter(step => {
     if (!step.isOptional) return true
     return isOptionalTableEnabled(project, step.configKey as OptionalTable)

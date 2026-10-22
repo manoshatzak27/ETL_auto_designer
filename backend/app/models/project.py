@@ -63,6 +63,10 @@ class Project(Base):
     # applied  {table_name: {"used": int, "limit": int}}
     generated_scripts_usage: Mapped[dict] = mapped_column(JSON, default=dict)
 
+    # Fingerprint of the settings each script was generated from  {table: sha256},
+    # plus the mapping CSVs' under "__mapping_files__" (see services/script_inputs)
+    generated_scripts_inputs: Mapped[dict] = mapped_column(JSON, default=dict)
+
     # Chat history for AI code assistant  [{role, content, table?, code_updated?, code_status?}]
     chat_history: Mapped[list] = mapped_column(JSON, default=list)
 
@@ -70,3 +74,29 @@ class Project(Base):
     def chat_edited_tables(self) -> list[str]:
         from app.services.chat_service import chat_edited_tables
         return chat_edited_tables(self)
+
+    @property
+    def stale_scripts(self) -> list[str]:
+        from app.services.script_inputs import stale_scripts
+        return stale_scripts(self)
+
+    @property
+    def mapping_files_stale(self) -> bool:
+        from app.services.script_inputs import mapping_files_stale
+        return mapping_files_stale(self)
+
+    # For the Dashboard's progress line, which doesn't get the full project.
+    @property
+    def generated_tables(self) -> list[str]:
+        return list((self.generated_scripts or {}).keys())
+
+    @property
+    def enabled_tables(self) -> list[str]:
+        return [
+            t for t, cfg in (self.etl_config or {}).items()
+            if isinstance(cfg, dict) and cfg.get("enabled") is not False
+        ]
+
+    @property
+    def has_mapping_files(self) -> bool:
+        return bool(self.mapping_files)

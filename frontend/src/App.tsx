@@ -23,6 +23,7 @@ import { ConfirmProvider } from './components/ConfirmDialog'
 import { getProject } from './api/client'
 import type { Project } from './types'
 import { LEGACY_NUMERIC_SLUGS, type WizardSlug } from './wizard/steps'
+import { rememberStep } from './wizard/progress'
 
 // Map slugs → step components. Adding a new step? Register here and in
 // frontend/src/wizard/steps.ts (the ALL_STEPS registry).
@@ -45,6 +46,11 @@ function ProjectWizard() {
   const [project, setProject] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const fileSelections = useRef({ indices: {} as Record<string, number>, configs: {} as Record<string, Record<string, unknown>> })
+
+  // The Dashboard reopens the project on the step it was last open on.
+  useEffect(() => {
+    if (projectId && step && step in STEP_COMPONENTS) rememberStep(projectId, step as WizardSlug)
+  }, [projectId, step])
 
   useEffect(() => {
     if (!projectId) return

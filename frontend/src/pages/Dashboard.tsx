@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { listProjects, createProject, deleteProject, copyProject, renameProject } from '../api/client'
 import type { ProjectSummary } from '../types'
+import { forgetStep, projectProgress } from '../wizard/progress'
+import { cn } from '@/lib/utils'
 import {
   Plus,
   Trash2,
@@ -76,7 +78,7 @@ export default function Dashboard() {
     try {
       const p = await createProject(newName.trim())
       setShowForm(false)
-      navigate(`/project/${p.id}/step/1`)
+      navigate(`/project/${p.id}/step/source`)
     } catch (err: any) {
       if (err?.response?.status === 409) {
         setNameError('This project name is already taken')
@@ -131,6 +133,7 @@ export default function Dashboard() {
     setDeleting(true)
     try {
       await deleteProject(deleteTarget.id)
+      forgetStep(deleteTarget.id)
       setDeleteTarget(null)
       load()
     } finally {
@@ -215,10 +218,13 @@ export default function Dashboard() {
 
         {!loading && filtered.length > 0 && (
           <div className="grid gap-3">
-            {filtered.map(p => (
+            {filtered.map(p => {
+              const progress = projectProgress(p)
+              return (
               <Card
                 key={p.id}
-                onClick={() => navigate(`/project/${p.id}/step/1`)}
+                onClick={() => navigate(`/project/${p.id}/step/${progress.resume.slug}`)}
+                title={`Open at ${progress.resume.label}`}
                 className="group flex cursor-pointer items-center gap-4 px-5 py-4 shadow-sm transition-all hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-lg"
               >
                 <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-lg bg-secondary">
@@ -244,6 +250,22 @@ export default function Dashboard() {
                     <span className="flex items-center gap-1 text-xs text-muted-foreground">
                       <Clock className="size-3" />
                       {new Date(p.updated_at + 'Z').toLocaleDateString()} {new Date(p.updated_at + 'Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    </span>
+                  </div>
+                  {/* Wizard progress: one segment per step, as in the wizard's step bar. */}
+                  <div className="mt-2 flex items-center gap-3">
+                    <div className="flex w-40 flex-shrink-0 gap-0.5" aria-hidden>
+                      {progress.steps.map(s => (
+                        <span
+                          key={s.step.slug}
+                          title={`${s.step.label}: ${s.done ? 'done' : s.stale ? 'out of date' : 'not done'}`}
+                          className={cn('h-1.5 flex-1 rounded-full', s.done ? 'bg-primary' : s.stale ? 'bg-amber-400' : 'bg-muted')}
+                        />
+                      ))}
+                    </div>
+                    <span className="truncate text-xs text-muted-foreground">
+                      {progress.doneCount} of {progress.steps.length} steps done
+                      {progress.staleCount > 0 && <span className="text-amber-700"> · {progress.staleCount} out of date</span>}
                     </span>
                   </div>
                 </div>
@@ -288,7 +310,8 @@ export default function Dashboard() {
                   <ChevronRight className="size-4 text-muted-foreground transition-colors group-hover:text-primary" />
                 </div>
               </Card>
-            ))}
+              )
+            })}
           </div>
         )}
       </main>

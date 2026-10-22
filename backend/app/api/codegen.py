@@ -4,6 +4,7 @@ from app.config import settings
 from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import GenerateCodeRequest, ProjectResponse
+from app.services import script_inputs
 from app.services.code_generator import (
     generate_table_script,
     generate_all_table_scripts,
@@ -84,6 +85,7 @@ async def generate_single_table(
 
     project.generated_scripts = scripts
     project.generated_scripts_usage = usage_by_table
+    script_inputs.record(project, [table, *(_DOMAIN_TABLES if table == "stem_table" else [])])
 
     project.last_execution_status = ""
     db.commit()
@@ -125,6 +127,7 @@ async def generate_all_tables(
 
     project.generated_scripts = scripts
     project.generated_scripts_usage = usage_by_table
+    script_inputs.record(project, list(tables_to_gen) if tables_to_gen else list(scripts))
     project.last_execution_status = ""
     db.commit()
     db.refresh(project)

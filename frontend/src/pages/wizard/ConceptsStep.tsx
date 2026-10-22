@@ -4738,13 +4738,17 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   const autosavePendingRef = useRef(false)
   const latestDecisionsRef = useRef(decisions)
   latestDecisionsRef.current = decisions
+  // The saved project carries whether the mapping CSVs and the stem table
+  // script are now out of date, which the step chips show.
+  const onUpdateRef = useRef(onUpdate)
+  onUpdateRef.current = onUpdate
   useEffect(() => {
     if (loading) return
     if (skipNextAutosaveRef.current) { skipNextAutosaveRef.current = false; return }
     autosavePendingRef.current = true
     const timer = setTimeout(() => {
       autosavePendingRef.current = false
-      saveConceptDecisions(project.id, decisions as Record<string, unknown>).catch((e: unknown) => {
+      saveConceptDecisions(project.id, decisions as Record<string, unknown>).then(onUpdateRef.current).catch((e: unknown) => {
         const err = e as { response?: { data?: { detail?: string } } }
         setGenError(err?.response?.data?.detail || 'Failed to save concept decisions.')
       })

@@ -84,27 +84,39 @@ export default function WizardLayout({
         <div className="flex items-stretch gap-2 pb-3">
           {activeSteps.map(step => {
             const active = step.slug === currentSlug
-            const done = !active && step.isComplete(project)
+            const complete = step.isComplete(project)
+            const stale = complete && !!step.isStale?.(project)
+            const done = !active && complete && !stale
+            const outdated = !active && stale
             return (
               <button
                 key={step.slug}
                 onClick={() => leave(() => navigate(`/project/${project.id}/step/${step.slug}`))}
+                title={stale
+                  ? (step.slug === 'concepts'
+                    ? 'Decisions changed since the mapping CSVs were generated: press Next on this step to rebuild them'
+                    : step.slug === 'finalize'
+                      ? 'Some scripts are out of date: regenerate them here'
+                      : 'Settings changed since the script was generated: regenerate it')
+                  : undefined}
                 className={clsx(
                   'flex flex-1 min-w-0 items-center justify-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium shadow-sm transition-all',
                   active && 'border-primary bg-primary text-primary-foreground shadow-md',
-                  !active && done && 'border-border bg-card text-secondary-foreground hover:-translate-y-0.5 hover:shadow-md',
-                  !active && !done && 'border-border bg-card text-muted-foreground hover:-translate-y-0.5 hover:shadow-md',
+                  done && 'border-border bg-card text-secondary-foreground hover:-translate-y-0.5 hover:shadow-md',
+                  outdated && 'border-amber-300 bg-card text-secondary-foreground hover:-translate-y-0.5 hover:shadow-md',
+                  !active && !done && !outdated && 'border-border bg-card text-muted-foreground hover:-translate-y-0.5 hover:shadow-md',
                 )}
               >
                 <span
                   className={clsx(
                     'flex h-5 w-5 items-center justify-center rounded-full text-xs font-bold',
                     active && 'bg-card text-primary',
-                    !active && done && 'bg-primary text-primary-foreground',
-                    !active && !done && 'bg-muted text-muted-foreground',
+                    done && 'bg-primary text-primary-foreground',
+                    outdated && 'bg-amber-400 text-white',
+                    !active && !done && !outdated && 'bg-muted text-muted-foreground',
                   )}
                 >
-                  {done ? '✓' : step.short}
+                  {done ? '✓' : outdated ? '!' : step.short}
                 </span>
                 <span className="hidden sm:inline">{step.label}</span>
               </button>

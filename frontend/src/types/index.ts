@@ -24,6 +24,12 @@ export interface ProjectSummary {
   updated_at: string
   source_filename: string
   last_execution_status: string
+  // Enough of the project to show its wizard progress on the Dashboard.
+  generated_tables: string[]
+  enabled_tables: string[]
+  has_mapping_files: boolean
+  stale_scripts: string[]
+  mapping_files_stale: boolean
 }
 
 export interface Project {
@@ -49,6 +55,10 @@ export interface Project {
   source_files: SourceFile[]
   /** Tables whose script currently holds a change applied from the AI chat. */
   chat_edited_tables?: string[]
+  /** Scripts whose settings changed since they were generated. */
+  stale_scripts?: string[]
+  /** The mapping CSVs were generated from different Concepts decisions. */
+  mapping_files_stale?: boolean
 }
 
 // ---- Per-table config shapes ----

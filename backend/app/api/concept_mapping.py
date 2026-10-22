@@ -40,6 +40,7 @@ from app.models.project import Project
 from app.schemas.project import ProjectResponse
 from app.services.column_descriptions import parse_descriptions
 from app.services.mapping_generator import generate_mapping_csvs, generate_mapping_summary_excel
+from app.services import script_inputs
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["concept-mapping"])
@@ -1507,6 +1508,7 @@ def generate_csvs(project_id: str, db: Session = Depends(get_db)):
         )
 
     project.mapping_files = files
+    script_inputs.record_mapping_files(project, script_inputs.mapping_files_fingerprint(project))
     db.commit()
     db.refresh(project)
     return project

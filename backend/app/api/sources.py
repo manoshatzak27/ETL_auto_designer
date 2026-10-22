@@ -13,6 +13,7 @@ from app.database import get_db
 from app.models.project import Project
 from app.schemas.project import ProjectResponse, UploadSourcesResponse
 from app.services.schema_inferrer import infer_schema, detect_pid_transform
+from app.services import script_inputs
 from app.config import settings
 
 router = APIRouter(prefix="/projects", tags=["sources"])
@@ -36,6 +37,7 @@ def _reset_project_state(project: Project) -> None:
     project.concept_decisions = {}
     project.etl_config = {}
     project.generated_scripts = {}
+    project.generated_scripts_inputs = {}
     project.mapping_files = {}
     project.generated_code = ""
     project.last_execution_log = ""
@@ -572,6 +574,8 @@ async def upload_mapping_csv(
     mapping_files = dict(project.mapping_files or {})
     mapping_files[mapping_type] = str(dest)
     project.mapping_files = mapping_files
+    # Not built from the decisions, so whether they match them is unknown.
+    script_inputs.record_mapping_files(project, None)
     db.commit()
     db.refresh(project)
     return project
@@ -635,6 +639,7 @@ def load_mappings_from_dir(
         )
 
     project.mapping_files = mapping_files
+    script_inputs.record_mapping_files(project, None)
     db.commit()
     db.refresh(project)
     return project

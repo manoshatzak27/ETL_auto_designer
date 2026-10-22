@@ -37,6 +37,10 @@ class ProjectResponse(BaseModel):
     source_files: list[dict[str, Any]] = []
     # Tables whose script currently holds a change applied from the chat.
     chat_edited_tables: list[str] = []
+    # Scripts whose settings changed since they were generated, and whether
+    # the mapping CSVs lag behind the Concepts decisions.
+    stale_scripts: list[str] = []
+    mapping_files_stale: bool = False
 
     model_config = {"from_attributes": True}
 
@@ -70,6 +74,12 @@ class ProjectSummary(BaseModel):
     updated_at: datetime
     source_filename: str
     last_execution_status: str
+    # Enough of the project to show its wizard progress on the Dashboard.
+    generated_tables: list[str] = []
+    enabled_tables: list[str] = []
+    has_mapping_files: bool = False
+    stale_scripts: list[str] = []
+    mapping_files_stale: bool = False
 
     model_config = {"from_attributes": True}
 
