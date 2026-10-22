@@ -4406,11 +4406,21 @@ function BatchPanel({
         Object.keys(existing.value_concepts).length > 0
       )) continue
 
+      const variable_concept = (strategy === 'map_variable' || strategy === 'map_both') ? batchConcept : null
+      const value_concepts = (strategy === 'map_values' || strategy === 'map_both') ? { ...valueConcepts } : {}
+      // A concept set here settles the "Load concepts" alternatives it was chosen over.
+      const valueSuggestions = Object.fromEntries(
+        Object.entries(existing.value_suggestions ?? {}).filter(([v]) => !(v in value_concepts)),
+      )
+      // Merged into the existing decision so the variable keeps its unit, route,
+      // type concept, date columns and instructions.
       updates[col] = {
+        ...existing,
         strategy,
-        variable_concept: (strategy === 'map_variable' || strategy === 'map_both') ? batchConcept : null,
-        value_concepts: (strategy === 'map_values' || strategy === 'map_both') ? { ...valueConcepts } : {},
-        domain_id: existing.domain_id ?? null,
+        variable_concept,
+        value_concepts,
+        suggestions: variable_concept ? undefined : existing.suggestions,
+        value_suggestions: Object.keys(valueSuggestions).length > 0 ? valueSuggestions : undefined,
       }
     }
     onApply(updates)
