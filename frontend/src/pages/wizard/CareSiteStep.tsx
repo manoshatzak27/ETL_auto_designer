@@ -13,6 +13,7 @@ import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 import { PLACE_OF_SERVICE_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { FileText, Info } from 'lucide-react'
@@ -227,7 +228,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
   }
 
   // ── Save ───────────────────────────────────────────────────────────────
-  const saveConfig = async () => {
+  const buildPayload = (): CareSiteConfig => {
     const snapped = activeFilename ? { ...fileConfigs, [activeFilename]: activeCfg } : fileConfigs
 
     const locCfgSave = (project.etl_config?.location ?? {}) as LocationConfig
@@ -245,24 +246,32 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
       })
     )
 
-    const payload: CareSiteConfig = {
+    return {
       enabled: true,
       source_files: selectedFiles,
       file_configs: allFileConfigs,
       person_id_auto_increment: locAutoIncSave || personIdMode === 'auto_increment',
       extra_instructions: extraInstructions,
     }
+  }
+  const autosave = useStepAutosave(buildPayload(), loaded, async payload => {
     const p = await updateTableConfig(project.id, 'care_site', payload)
     onUpdate(p)
-    setFileConfigs(allFileConfigs)
-  }
+    setFileConfigs(payload.file_configs ?? {})
+  })
+  const saveConfig = autosave.flush
 
   const { prev, next } = getAdjacentSlugs(project, 'care-site')
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -303,7 +312,7 @@ export default function CareSiteStep({ project, onUpdate }: Props) {
       currentSlug="care-site"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next →"
       saving={saving}
     >

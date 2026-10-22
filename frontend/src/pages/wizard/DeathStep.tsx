@@ -17,6 +17,7 @@ import { useSourceFile } from '../../hooks/useSourceFile'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 
 interface Props {
   project: Project
@@ -65,17 +66,24 @@ export default function DeathStep({ project, onUpdate }: Props) {
     }).finally(() => setLoaded(true))
   }, [project.id])
 
-  const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'death', { ...cfg, extra_instructions: extraInstructions, source_filename: selectedFile?.filename ?? null })
-    onUpdate(p)
-  }
+  const autosave = useStepAutosave(
+    { ...cfg, extra_instructions: extraInstructions, source_filename: selectedFile?.filename ?? null },
+    loaded,
+    async payload => onUpdate(await updateTableConfig(project.id, 'death', payload)),
+  )
+  const saveConfig = autosave.flush
 
   const { prev, next } = getAdjacentSlugs(project, 'death')
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -113,7 +121,7 @@ export default function DeathStep({ project, onUpdate }: Props) {
       currentSlug="death"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next →"
       saving={saving}
     >

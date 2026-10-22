@@ -4708,10 +4708,15 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
   // change, domain override, batch apply, …) so mapping work survives a refresh or crash
   // without requiring the user to click Next. Skipped right after data loads in, since
   // that update isn't a user edit.
+  const autosavePendingRef = useRef(false)
+  const latestDecisionsRef = useRef(decisions)
+  latestDecisionsRef.current = decisions
   useEffect(() => {
     if (loading) return
     if (skipNextAutosaveRef.current) { skipNextAutosaveRef.current = false; return }
+    autosavePendingRef.current = true
     const timer = setTimeout(() => {
+      autosavePendingRef.current = false
       saveConceptDecisions(project.id, decisions as Record<string, unknown>).catch((e: unknown) => {
         const err = e as { response?: { data?: { detail?: string } } }
         setGenError(err?.response?.data?.detail || 'Failed to save concept decisions.')
@@ -4719,6 +4724,30 @@ export default function ConceptsStep({ project, onUpdate }: Props) {
     }, 800)
     return () => clearTimeout(timer)
   }, [decisions, loading, project.id])
+
+  // A change still waiting for the timer above is saved when the step unmounts
+  // (header ←, browser back), and closing or reloading the tab asks first.
+  const projectIdRef = useRef(project.id)
+  projectIdRef.current = project.id
+  useEffect(() => {
+    const savePending = () => {
+      if (!autosavePendingRef.current) return false
+      autosavePendingRef.current = false
+      saveConceptDecisions(projectIdRef.current, latestDecisionsRef.current as Record<string, unknown>).catch(() => {})
+      return true
+    }
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (!autosavePendingRef.current) return
+      savePending()
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => {
+      window.removeEventListener('beforeunload', onBeforeUnload)
+      savePending()
+    }
+  }, [])
 
   // Track which source file each column was last active in, so StemTableStep
   // can filter to only show variables belonging to its selected file.

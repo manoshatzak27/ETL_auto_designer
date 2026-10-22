@@ -13,6 +13,7 @@ import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 import {
   PLACE_OF_SERVICE_CONCEPTS,
   VISIT_CONCEPTS as VISIT_VOCABULARY,
@@ -407,7 +408,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
   const autoMatchExclude = [...crossUsed, ...extractMappedCols(cfg)]
 
   // ── Save ──────────────────────────────────────────────────────────────────
-  const saveConfig = async () => {
+  const buildPayload = () => {
     const currentFc = buildCurrentFileConfig()
     const updatedConfigs = activeFilename ? { ...fileConfigs, [activeFilename]: currentFc } : fileConfigs
 
@@ -424,16 +425,26 @@ export default function VisitStep({ project, onUpdate }: Props) {
       source_filename: activeFilename || null,
       file_configs: fileConfigsArr,
     }
-    const p = await updateTableConfig(project.id, 'visit_occurrence', cfgToSave)
-    onUpdate(p)
+    return cfgToSave
   }
+  const autosave = useStepAutosave(
+    buildPayload(),
+    loaded,
+    async payload => onUpdate(await updateTableConfig(project.id, 'visit_occurrence', payload)),
+  )
+  const saveConfig = autosave.flush
 
   const { prev, next } = getAdjacentSlugs(project, 'visit')
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -453,7 +464,7 @@ export default function VisitStep({ project, onUpdate }: Props) {
       currentSlug="visit"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next →"
       saving={saving}
     >

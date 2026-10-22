@@ -16,6 +16,7 @@ import { useSourceFile } from '../../hooks/useSourceFile'
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary, ColumnSuggestion } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 import { Plus, X } from 'lucide-react'
 
 interface Props {
@@ -78,21 +79,28 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
     })
   }
 
-  const saveConfig = async () => {
-    const p = await updateTableConfig(project.id, 'observation_period', {
+  const autosave = useStepAutosave(
+    {
       ...cfg,
       extra_instructions: extraInstructions,
       source_filename: isMultiFile ? null : (files[0]?.filename ?? null),
-    })
-    onUpdate(p)
-  }
+    },
+    loaded,
+    async payload => onUpdate(await updateTableConfig(project.id, 'observation_period', payload)),
+  )
+  const saveConfig = autosave.flush
 
   const { prev, next } = getAdjacentSlugs(project, 'obs-period')
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -181,7 +189,7 @@ export default function ObsPeriodStep({ project, onUpdate }: Props) {
       currentSlug="obs-period"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next →"
       saving={saving}
     >

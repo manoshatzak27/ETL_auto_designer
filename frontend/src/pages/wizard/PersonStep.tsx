@@ -17,6 +17,7 @@ import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 import { useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { FileText, Info } from 'lucide-react'
 
@@ -428,7 +429,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
   autoMatch.setTargets(autoMatchTargets)
 
   // ── Save ──────────────────────────────────────────────────────────────
-  const saveConfig = async () => {
+  const buildPayload = (): PersonConfig => {
     const currentCfg: PersonFileConfig = { ...activeCfg, gender_mode: genderMode, race_mode: raceMode, ethnicity_mode: ethnicityMode }
     const snapped = activeFilename ? { ...fileConfigs, [activeFilename]: currentCfg } : fileConfigs
 
@@ -455,17 +456,20 @@ export default function PersonStep({ project, onUpdate }: Props) {
       primaryCfg.mappings.year_of_birth.source_col,
     ].filter(Boolean) as string[]
 
-    const payload: PersonConfig = {
+    return {
       enabled: true,
       source_files: selectedFiles,
       file_configs: allFileConfigs,
       required_source_cols: required,
       extra_instructions: extraInstructions,
     }
+  }
+  const autosave = useStepAutosave(buildPayload(), loaded, async payload => {
     const p = await updateTableConfig(project.id, 'person', payload)
     onUpdate(p)
-    setFileConfigs(allFileConfigs)
-  }
+    setFileConfigs(payload.file_configs ?? {})
+  })
+  const saveConfig = autosave.flush
 
   const validatePidMapped = (allFileConfigs: Record<string, PersonFileConfig>): string[] => {
     const locCfgVal = (project.etl_config?.location ?? {}) as LocationConfig
@@ -492,8 +496,13 @@ export default function PersonStep({ project, onUpdate }: Props) {
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -516,7 +525,7 @@ export default function PersonStep({ project, onUpdate }: Props) {
       currentSlug="person"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next →"
       saving={saving}
     >

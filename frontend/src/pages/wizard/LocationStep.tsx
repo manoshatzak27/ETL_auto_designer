@@ -14,6 +14,7 @@ import { ConceptAutoFillButton, ConceptAutoFillSummary } from '../../components/
 import { ColumnAutoMatchControls, ColumnAutoMatchSummary } from '../../components/ColumnAutoMatch'
 import { useColumnAutoMatch, type ColumnTarget } from '../../hooks/useColumnAutoMatch'
 import { useAutoRunStep } from '../../hooks/useAutoRunStep'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 import { COUNTRY_CONCEPTS, useConceptAutoFill, type AutoFillTarget } from '../../hooks/useConceptAutoFill'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -413,28 +414,35 @@ export default function LocationStep({ project, onUpdate }: Props) {
   }
 
   // ── Save ───────────────────────────────────────────────────────────────
-  const saveConfig = async () => {
+  const buildPayload = (): LocationConfig => {
     const currentCfg: LocationFileConfig = { ...activeCfg, country_mode: countryMode, cs_country_mode: csCountryMode }
     const allFileConfigs = activeFilename ? { ...fileConfigs, [activeFilename]: currentCfg } : fileConfigs
-
-    const payload: LocationConfig = {
+    return {
       enabled: true,
       source_files: selectedFiles,
       file_configs: allFileConfigs,
       person_id_auto_increment: personIdMode === 'auto_increment',
       extra_instructions: extraInstructions,
     }
+  }
+  const autosave = useStepAutosave(buildPayload(), loaded, async payload => {
     const p = await updateTableConfig(project.id, 'location', payload)
     onUpdate(p)
-    setFileConfigs(allFileConfigs)
-  }
+    setFileConfigs(payload.file_configs ?? {})
+  })
+  const saveConfig = autosave.flush
 
   const { prev, next } = getAdjacentSlugs(project, 'location')
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -463,7 +471,7 @@ export default function LocationStep({ project, onUpdate }: Props) {
       currentSlug="location"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next →"
       saving={saving}
     >

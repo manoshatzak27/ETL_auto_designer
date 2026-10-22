@@ -8,6 +8,7 @@ import { getAdjacentSlugs } from '../../wizard/steps'
 import ExtraInstructions from '../../components/ExtraInstructions'
 import ScriptGenerator from '../../components/ScriptGenerator'
 import { CheckCircle, AlertCircle } from 'lucide-react'
+import { useStepAutosave } from '../../hooks/useStepAutosave'
 import { Card } from '../../components/ui/card'
 
 interface Props {
@@ -29,6 +30,9 @@ export default function StemTableStep({ project, onUpdate }: Props) {
   const [cfg, setCfg] = useState<StemTableConfig>(DEFAULTS)
   const [saving, setSaving] = useState(false)
   const [extraInstructions, setExtraInstructions] = useState('')
+  // Only once the saved config has arrived — until then autosave stays off, so
+  // a failed load can't overwrite it with the defaults.
+  const [loaded, setLoaded] = useState(false)
 
   const mappingFiles = project.mapping_files || {}
   const hasMappings = Object.values(mappingFiles).some(v => !!v)
@@ -55,6 +59,7 @@ export default function StemTableStep({ project, onUpdate }: Props) {
         setCfg({ ...DEFAULTS, ...ex })
       }
       setRawDecisions(decisions)
+      setLoaded(true)
     })
   }, [project.id])
 
@@ -105,8 +110,8 @@ export default function StemTableStep({ project, onUpdate }: Props) {
     })
   }
 
-  const saveConfig = async () => {
-    const updatedCfg = {
+  const autosave = useStepAutosave(
+    {
       ...cfg,
       concept_mapping_csvs: {
         variable_mapping: mappingFiles.variable_mapping || '',
@@ -114,17 +119,23 @@ export default function StemTableStep({ project, onUpdate }: Props) {
         variable_value_mapping: mappingFiles.variable_value_mapping || '',
       },
       extra_instructions: extraInstructions,
-    }
-    const p = await updateTableConfig(project.id, 'stem_table', updatedCfg)
-    onUpdate(p)
-  }
+    },
+    loaded,
+    async payload => onUpdate(await updateTableConfig(project.id, 'stem_table', payload)),
+  )
+  const saveConfig = autosave.flush
 
   const { prev, next } = getAdjacentSlugs(project, 'stem-table')
 
   const handleNext = async () => {
     setSaving(true)
-    await saveConfig()
-    setSaving(false)
+    try {
+      await saveConfig()
+    } catch {
+      return
+    } finally {
+      setSaving(false)
+    }
     if (next) navigate(`/project/${project.id}/step/${next}`)
   }
 
@@ -137,7 +148,7 @@ export default function StemTableStep({ project, onUpdate }: Props) {
       currentSlug="stem-table"
       onBack={prev ? () => navigate(`/project/${project.id}/step/${prev}`) : undefined}
       onNext={handleNext}
-      onBeforeStepChange={saveConfig}
+      autosave={autosave}
       nextLabel="Next: Generate &amp; Load →"
       saving={saving}
     >

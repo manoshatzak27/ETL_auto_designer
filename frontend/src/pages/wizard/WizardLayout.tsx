@@ -1,9 +1,10 @@
 import type { ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import clsx from 'clsx'
-import { ArrowLeft, Loader2 } from 'lucide-react'
+import { AlertCircle, ArrowLeft, Check, Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import ConceptMatcherIndicator from '../../components/ConceptMatcherIndicator'
+import type { StepAutosave } from '../../hooks/useStepAutosave'
 import type { Project } from '../../types'
 import { getActiveSteps, type WizardSlug } from '../../wizard/steps'
 
@@ -13,7 +14,10 @@ interface Props {
   children: ReactNode
   onNext?: () => void
   onBack?: () => void
+  /** Runs before leaving the step; defaults to `autosave.flush`. A rejection keeps the user on the step. */
   onBeforeStepChange?: () => Promise<void>
+  /** The step's autosave, shown in the header. */
+  autosave?: StepAutosave
   nextLabel?: string
   nextDisabled?: boolean
   saving?: boolean
@@ -28,6 +32,7 @@ export default function WizardLayout({
   onNext,
   onBack,
   onBeforeStepChange,
+  autosave,
   nextLabel = 'Next',
   nextDisabled,
   saving,
@@ -36,6 +41,17 @@ export default function WizardLayout({
   const navigate = useNavigate()
   const activeSteps = getActiveSteps(project)
 
+  const beforeLeave = onBeforeStepChange ?? autosave?.flush
+  // A failed save keeps the user here; the step or the header shows the error.
+  const leave = async (go: () => void) => {
+    try {
+      await beforeLeave?.()
+    } catch {
+      return
+    }
+    go()
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-gradient-to-br from-background via-background to-secondary/60">
       {/* Header */}
@@ -43,7 +59,8 @@ export default function WizardLayout({
         <Button
           variant="ghost"
           size="icon"
-          onClick={() => navigate('/')}
+          aria-label="Back to projects"
+          onClick={() => leave(() => navigate('/'))}
           className="text-muted-foreground hover:text-foreground"
         >
           <ArrowLeft />
@@ -56,7 +73,8 @@ export default function WizardLayout({
             <span className="font-semibold text-primary">OMOP</span> ETL Designer
           </p>
         </div>
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-4">
+          {autosave && <AutosaveStatus autosave={autosave} />}
           <ConceptMatcherIndicator />
         </div>
       </header>
@@ -70,10 +88,7 @@ export default function WizardLayout({
             return (
               <button
                 key={step.slug}
-                onClick={async () => {
-                  await onBeforeStepChange?.()
-                  navigate(`/project/${project.id}/step/${step.slug}`)
-                }}
+                onClick={() => leave(() => navigate(`/project/${project.id}/step/${step.slug}`))}
                 className={clsx(
                   'flex flex-1 min-w-0 items-center justify-center gap-2 rounded-xl border px-2 py-2 text-sm font-medium shadow-sm transition-all',
                   active && 'border-primary bg-primary text-primary-foreground shadow-md',
@@ -107,10 +122,7 @@ export default function WizardLayout({
       <footer className="flex items-center justify-between border-t border-border bg-card/60 px-6 py-4">
         <Button
           variant="outline"
-          onClick={async () => {
-            await onBeforeStepChange?.()
-            onBack?.()
-          }}
+          onClick={() => leave(() => onBack?.())}
           disabled={!onBack}
         >
           Back
@@ -123,5 +135,28 @@ export default function WizardLayout({
         )}
       </footer>
     </div>
+  )
+}
+
+function AutosaveStatus({ autosave }: { autosave: StepAutosave }) {
+  const { state, error, flush } = autosave
+  if (state === 'idle') return null
+  if (state === 'error') {
+    return (
+      <span role="alert" className="flex items-center gap-1.5 text-xs text-destructive" title={error}>
+        <AlertCircle className="h-3.5 w-3.5" />
+        Save failed
+        <button type="button" onClick={() => flush().catch(() => {})} className="font-medium underline underline-offset-2">
+          Retry
+        </button>
+      </span>
+    )
+  }
+  return (
+    <span aria-live="polite" className="flex items-center gap-1.5 text-xs text-muted-foreground">
+      {state === 'saving'
+        ? <><Loader2 className="h-3.5 w-3.5 animate-spin" />Saving…</>
+        : <><Check className="h-3.5 w-3.5" />All changes saved</>}
+    </span>
   )
 }
